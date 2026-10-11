@@ -1,0 +1,1516 @@
+#!/usr/bin/env python3
+"""Run a sprint's role lanes in parallel, each in its own session and worktree.
+
+Source of truth: automate.bashburn.com / plugins/valesor-dev/bin/coordinator.
+Vendored into target repos as .claude/bin/coordinator. Don't edit it there.
+
+    coordinator plan   [--roles implementation,sre,pm] [--max-lanes 3] [--json]
+    coordinator run    [same flags] [--apply] [--timeout-min 90] [--budget-usd 15]
+    coordinator status
+    coordinator clean  [--apply]
+
+It is a script, not a model: it reads the board, decides which lanes can start,
+launches one `claude -p` session per lane, and reports from live state. The same
+command works from a terminal, cron, or a systemd timer. `run` without --apply
+prints the plan and stops.
+
+Lanes (only roles with a charter in .claude/roles/ run; Brian runs the rest,
+architecture above all, in his own sessions):
+
+  implementation   one lane per story: sprint stories at `ready` (or `in-progress`
+                   with no live lane or open PR), blockers at `review` or later,
+                   Rank order. No two lanes share a Component.
+  sre              one lane running /sre-start-sprint when the sprint has drafts to
+                   review, stories at review to verify, or SRE stories to build.
+  pm               one lane running /pm-start-sprint when `sprint-state` says
+                   first, closed, or planned. A finished sprint is reported, never
+                   closed, unless --pm-close.
+
+Each lane is a separate session: the coordinator picks a session id, records the
+role for it (`role set`), adds a detached worktree at origin/main under
+.claude/worktrees/, and starts `claude -p` there, so the role hooks (ownership,
+review gate, story guard) bind that session exactly as they bind yours. Lanes run
+with --permission-mode dontAsk: whatever the repo's and the user's Claude settings
+don't allow is denied, not prompted, so a lane never waits on a person. This command grants
+no permissions of its own. A lane therefore can't `git push` or `gh pr create` unless those
+settings allow it; it commits locally and reports what it was denied. (Granting push to
+lane sessions is a separate, reviewed change.) A deny-list
+for merge, close, review and force pushes is always passed. It matches command
+prefixes, so it is a backstop, not a boundary (`gh --repo x pr merge` isn't matched):
+the role hooks and the repo's own settings remain the gate.
+
+A lane ends at an open PR that /pre-pr has taken through Codex's review. A lane that makes
+no PR (SRE, PM) is done only on the exact result `nothing to do` with no PR; its other words
+never count as success. A story resumed after an earlier lane reuses that lane's worktree; any
+other lane moves a clean old worktree to origin/main, and fails on one holding unpushed work. The
+coordinator never merges. After each lane it re-reads the board, the PR and
+Codex's status, and reports those, not the lane's own summary.
+
+A role whose board hasn't changed since its last finished lane isn't started again
+(stories, statuses and lanes are hashed). The story listing can lag a create by
+minutes, so `story` retries misses and the coordinator waits for it.
+
+State: <git-common-dir>/claude-coordinator/ (lock, active lanes, runs/<id>/).
+Exit 0 on a finished run, 1 when a lane failed or needs Brian, 2 for usage or
+environment errors.
+"""
+from __future__ import annotations
+
+import argparse
+import fcntl
+import hashlib
+import importlib.machinery
+import importlib.util
+import json
+import os
+import re
+import shutil
+import shlex
+import signal
+import subprocess
+import sys
+import time
+import uuid
+from datetime import datetime, timezone
+from pathlib import Path
+
+
+def _load(name: str, file: str):
+    path = Path(__file__).resolve().with_name(file)
+    loader = importlib.machinery.SourceFileLoader(name, str(path))
+    mod = importlib.util.module_from_spec(importlib.util.spec_from_loader(name, loader))
+    sys.modules[name] = mod
+    sys.dont_write_bytecode = True
+    loader.exec_module(mod)
+    return mod
+
+
+story = _load("valesor_story", "story")
+role = story.role
+
+# How a role runs as a lane. A charter's frontmatter overrides these (and can add a role):
+#   sprint_run: story | session   one lane per story, or one session per role
+#   start_skill: <skill>          the skill the lane follows
+#   inbox: true                   story roles: also start a lane for questions addressed to the role
+#   approval: <text>              what Brian still has to approve when the lane's PR is open
+#   watch_label: <label>          session roles: run when issues with this label are open
+#   watch_pr_section: <heading>   ...or when a merged role:<role> PR has this heading in its body
+#   lane_allow: [Bash(<cmd> <verb>:*), ...]  extra commands this role's lanes may run
+RUN_DEFAULTS = {
+    "implementation": {"sprint_run": "story", "start_skill": "impl-start-sprint"},
+    "sre": {"sprint_run": "session", "start_skill": "sre-start-sprint"},
+    "pm": {"sprint_run": "session", "start_skill": "pm-start-sprint"},
+}
+ROLE_ORDER = ["implementation", "visual-designer", "product", "sre", "pm"]   # the order lanes are planned in
+DEFAULT_ROLES = ["implementation", "sre", "pm"]
+
+
+def role_settings(meta: dict, name: str) -> dict:
+    cfg = {"sprint_run": None, "start_skill": None, "inbox": False, "approval": None,
+           "watch_label": None, "watch_pr_section": None, "lane_allow": []}
+    cfg.update(RUN_DEFAULTS.get(name, {}))
+    for k in ("sprint_run", "start_skill", "approval", "watch_label", "watch_pr_section"):
+        if meta.get(k):
+            cfg[k] = ", ".join(meta[k]) if isinstance(meta[k], list) else meta[k]
+    if cfg["sprint_run"]:   # case doesn't matter, and a role can opt out in so many words
+        cfg["sprint_run"] = str(cfg["sprint_run"]).strip().lower()
+        if cfg["sprint_run"] in ("none", "false", "no", "off", ""):
+            cfg["sprint_run"] = None
+    extra = meta.get("lane_allow") or []
+    cfg["lane_allow"] = [extra] if isinstance(extra, str) else list(extra)
+    if "inbox" in meta:
+        cfg["inbox"] = str(meta["inbox"]).strip().lower() in ("true", "yes", "1", "on")
+    return cfg
+
+
+SESSION_TRIGGERS = ("sre", "pm")   # session roles the coordinator knows when to start
+PICKABLE_BLOCKER = {"review", "done"}
+KILL_GRACE = 5  # seconds between SIGTERM and SIGKILL for a lane past its deadline
+HANDOFF_RETRY_DELAY = 3  # seconds between re-checks of a handoff: GitHub's search index lags a create
+RUN_TIMEOUT = 300  # seconds any single git/gh call may take; a hung one must not freeze the poll loop
+DENY = ["Bash(gh pr merge:*)", "Bash(gh pr close:*)", "Bash(gh pr review:*)", "Bash(gh pr ready:*)",
+        "Bash(git push --force:*)", "Bash(git push -f:*)", "Bash(git push --force-with-lease:*)",
+        "Bash(git push origin main:*)", "Bash(git push origin HEAD:main:*)", "Bash(git reset --hard:*)",
+        "Bash(git push origin HEAD:refs/heads/main:*)", "Bash(git push origin refs/heads/main:*)",
+        "EnterWorktree", "ExitWorktree"]   # a lane stays in the worktree the coordinator records
+
+# What a lane may run without asking (`--allowedTools`; a lane has no one to ask, so anything else is
+# denied). Lane sessions only: it widens nothing for a person's session. Every Bash entry names a
+# command and a verb or an exact form, never a bare `git:*` or `gh:*`. This is the outer layer; the
+# `bin/role` Bash hook (COORDINATOR_LANE set) is the one that judges flags, remotes, refs and API
+# endpoints on the tokenized command, and the ownership hook decides which paths an edit may touch.
+LANE_ALLOW = [
+    "Edit", "Write", "MultiEdit",                  # which paths: the hooks decide (own worktrees only)
+    "Agent", "Task",                               # /pre-pr's reviewer subagent
+    "Bash(.claude/bin/role require:*)", "Bash(.claude/bin/role show:*)", "Bash(.claude/bin/role owners:*)",
+    "Bash(.claude/bin/role check-cmd:*)", "Bash(.claude/bin/role reviewed:*)",   # never `role set/clear`
+    "Bash(.claude/bin/story:*)", "Bash(.claude/bin/sprint-state:*)", "Bash(.claude/bin/codex-review:*)",
+    "Bash(git status:*)", "Bash(git diff:*)", "Bash(git log:*)", "Bash(git show:*)",
+    "Bash(git fetch)", "Bash(git fetch origin:*)",
+    "Bash(git branch --show-current:*)", "Bash(git branch --list:*)", "Bash(git switch:*)",
+    "Bash(git checkout -b:*)", "Bash(git add:*)", "Bash(git commit:*)",
+    "Bash(git push origin:*)", "Bash(git push -u origin:*)",   # always with the branch named
+    "Bash(git merge-base:*)", "Bash(git rev-parse:*)", "Bash(git rev-list:*)", "Bash(git ls-files:*)",
+    "Bash(git worktree add:*)", "Bash(git worktree remove:*)", "Bash(git worktree list:*)",
+    "Bash(git worktree prune:*)",
+    "Bash(gh pr create:*)", "Bash(gh pr view:*)", "Bash(gh pr list:*)", "Bash(gh pr diff:*)",
+    "Bash(gh pr checks:*)", "Bash(gh pr comment:*)", "Bash(gh api:*)",
+]
+WATCH_ALLOW = [   # added for a role that works an issue queue (product): plain issues, never stories
+    "Bash(gh issue list:*)", "Bash(gh issue view:*)", "Bash(gh issue comment:*)", "Bash(gh issue close:*)",
+    "Bash(gh issue create:*)",
+]
+NEVER_ALLOW = {"rm", "sudo", "su", "sh", "bash", "zsh", "dash", "fish", "eval", "exec", "curl", "wget", "ssh",
+               "scp", "rsync", "nc", "dd", "chmod", "chown", "kill", "pkill", "xargs", "env", "cat", "find",
+               "tee", "cp", "mv", "ln", "git", "gh", "mkfs", "mount", "docker", "kubectl", "awk", "sed",
+               "timeout", "nice", "ionice", "nohup", "setsid", "command", "builtin", "script", "watch", "time",
+               "strace", "ltrace", "stdbuf", "busybox", "tar", "rg", "ripgrep", "zip", "unzip", "npx", "pnpx",
+               "bunx", "dlx", "uvx", "ksh", "mksh", "ash", "csh", "tcsh", "pwsh", "powershell", "nu", "nushell",
+               "elvish", "xonsh", "rc", "es"}   # shells, wrappers, interpreters, file tools: git and gh are the coordinator's
+NEVER_RE = re.compile(r"(?:python|pypy|node|nodejs|deno|bun|lua|perl|ruby|php|tclsh|expect)[\d.]*")
+NEVER_VERBS = {"exec", "x", "dlx", "eval", "run-script"}
+NEVER_VERBS_FOR = {"go": {"run", "generate", "tool"}, "cargo": {"run", "install", "script"},
+                   "uv": {"run", "pip", "tool", "x"}, "pipx": {"run", "install"},
+                   "pip": {"install", "download"}, "pip3": {"install", "download"}}   # they run fetched code
+
+
+def check_allow_entry(entry: str) -> str | None:
+    """Why a charter's `lane_allow` entry is refused, or None: one `Bash(<command> <verb>:*)` rule, a
+    command that isn't a shell, an interpreter, or a file tool, with nothing that could carry a second
+    command, rule, or path (`; & | $ ` < > , ( ) *` and quotes), and never git or gh."""
+    m = re.fullmatch(r"Bash\(([^()]+?)(?::\*)?\)", entry.strip())
+    if not m:
+        return "only one Bash(<command> <verb>:*) entry is allowed"
+    body = m.group(1)
+    if re.search(r"[;&|$`<>,()*\"'\\\n]", body) or ".." in body:
+        return "no shell syntax, quoting, wildcards, or `..` in an entry"
+    words = body.split()
+    if re.search(r"(?i)\.claude", body):
+        return "repo tools are the coordinator's list, not a charter's"
+    for w in words:
+        base = os.path.basename(w)
+        if base in NEVER_ALLOW or NEVER_RE.fullmatch(base):
+            return f"`{base}` is a shell, wrapper, interpreter, or file tool: too broad for a lane"
+        if w.startswith("-"):
+            return "no options in an entry (the rule already takes any arguments after it)"
+    if words[0] != os.path.basename(words[0]):
+        return "name the command, not a path to it"
+    if len(words) < 2:
+        return "name a command and a verb (`make check`), not a whole command"
+    if words[1] in NEVER_VERBS or words[1] in NEVER_VERBS_FOR.get(os.path.basename(words[0]), ()):
+        return f"`{words[0]} {words[1]}` runs arbitrary code"
+    return None
+
+
+class CoordError(Exception):
+    pass
+
+
+# ------------------------------------------------------------------ shell
+
+class Shell:
+    """Subprocess seam. Tests replace it."""
+
+    def run(self, cmd: list[str], cwd: Path | None = None, check: bool = False,
+            env: dict | None = None) -> subprocess.CompletedProcess:
+        try:
+            r = subprocess.run(cmd, cwd=cwd, capture_output=True, text=True, env=env,
+                               stdin=subprocess.DEVNULL, timeout=RUN_TIMEOUT)
+        except subprocess.TimeoutExpired:
+            r = subprocess.CompletedProcess(cmd, 124, "", f"timed out after {RUN_TIMEOUT}s")
+        if check and r.returncode != 0:
+            raise CoordError(f"{' '.join(cmd[:3])}…: {(r.stderr or r.stdout).strip()}")
+        return r
+
+    def start(self, cmd: list[str], cwd: Path, env: dict, log: Path) -> subprocess.Popen:
+        with open(log, "wb") as f:
+            return subprocess.Popen(cmd, cwd=cwd, env=env, stdin=subprocess.DEVNULL, stdout=f,
+                                    stderr=subprocess.STDOUT, start_new_session=True)
+
+
+# ------------------------------------------------------------------ model
+
+class Story:
+    def __init__(self, it: dict, blockers: list[tuple[str, str]]):
+        f = it["fields"]
+        self.id, self.number, self.title = it["id"], it["number"], it["title"]
+        self.status = f.get("Status") or "-"
+        self.lane = f.get("Lane") or "-"
+        self.sprint = f.get("Sprint")
+        self.rank = f.get("Rank")
+        self.component = f.get("Component") or "-"
+        self.blockers = blockers  # [(story id or #n, status)]
+        self.notes = ""           # digest of the issue body and comments: handoffs and contract edits
+        self.comments: list[str] = []
+        self.body = ""
+
+    def unmet(self) -> list[tuple[str, str]]:
+        return [(i, s) for i, s in self.blockers if s not in PICKABLE_BLOCKER]
+
+
+_FOR = re.compile(r"\*\*For ([\w-]+):\*\*")
+_RECORD = re.compile(r"\*\*[^*\n]+\(([\w-]+)\):\*\*")
+_FROM = re.compile(r"<!-- from: ([\w-]+) -->")
+
+
+def _answers(c: str, role_name: str, asker: str | None) -> bool:
+    """Is this comment the role answering the asker? The answer is the role's own handoff back
+    to whoever asked (`story comment --to <asker>`), so a punt to Brian or architecture, or a
+    record, leaves the question open. An older comment has no author stamp: a record by the
+    role, or a handoff to someone else, counts."""
+    frm, to = _FROM.search(c), _FOR.match(c.strip())
+    if frm:
+        return frm.group(1) == role_name and bool(to) and (to.group(1) == asker if asker
+                                                           else to.group(1) != role_name)
+    rec = _RECORD.match(c.strip())
+    return bool((rec and rec.group(1) == role_name) or (to and to.group(1) != role_name))
+
+
+def questions_for(role_name: str, stories: list[Story]) -> list[str]:
+    """Open stories where the latest `**For <role>:**` comment has no reply from the role after it."""
+    out = []
+    for s in stories:
+        if s.status == "done":
+            continue
+        asks = [i for i, c in enumerate(s.comments)
+                if (m := _FOR.match(c.strip())) and m.group(1) == role_name]
+        asker = (_FROM.search(s.comments[asks[-1]]) or [None, None])[1] if asks else None
+        if asks and not any(_answers(c, role_name, asker) for c in s.comments[asks[-1] + 1:]):
+            out.append(s.id)
+    return out
+
+
+def inbox_digests(role_name: str, stories: list[Story], ids: list[str] | None = None) -> dict[str, str]:
+    """For each open question to a role, a digest of what the asker and anyone but the role has put on
+    the story. The role's own comments (its answer, its punt to Brian) don't count, so a lane that
+    handled a question doesn't change it; a new comment from anyone else does."""
+    open_q = set(questions_for(role_name, stories))
+    out = {}
+    for s in stories:
+        if s.id in open_q and (ids is None or s.id in ids):
+            others = [c for c in s.comments if ((_FROM.search(c) or [None, None])[1]) != role_name]
+            out[s.id] = hashlib.sha256(json.dumps([s.body, others]).encode()).hexdigest()[:12]
+    return out
+
+
+def sprint_number(v) -> int | None:
+    if isinstance(v, (int, float)):
+        return int(v)
+    m = re.search(r"(\d+)$", str(v or ""))
+    return int(m.group(1)) if m else None
+
+
+def select(stories: list[Story], state: dict, roles: list[str], running: set[str],
+           max_lanes: int, open_pr: set[str] = frozenset(), pm_close: bool = False,
+           unchanged: set[str] = frozenset(), kinds: dict | None = None,
+           inbox: dict | None = None, tried: set[str] = frozenset(),
+           watch: dict | None = None) -> tuple[list[dict], list[dict]]:
+    """Which lanes can start now, and what everything else is waiting on.
+
+    `running` holds the story ids and role names with a live lane. `open_pr` holds
+    story ids that already have an open PR. `unchanged` holds the session roles whose
+    board hasn't changed since their last finished lane. `kinds` maps a role to `story` or
+    `session` (default: implementation is per story, sre and pm per session); `inbox` maps a
+    role to the stories holding questions addressed to it, `tried` the roles whose inbox lane
+    already ran on exactly these questions, `watch` maps a watching session role to the items
+    in its queue (issue and PR refs). Pure: no I/O.
+    """
+    kinds = kinds if kinds is not None else {r: c["sprint_run"] for r, c in RUN_DEFAULTS.items()}
+    inbox = inbox or {}
+    watch = watch or {}
+    lanes: list[dict] = []
+    waiting: list[dict] = []
+    cur = sprint_number(state.get("current"))
+    st = state.get("state")
+    active = st == "active" and cur is not None
+    sprint = [s for s in stories if active and sprint_number(s.sprint) == cur]
+
+    def wait(s: Story, why: str, on: str):
+        waiting.append({"story": s.id, "status": s.status, "lane": s.lane, "why": why, "on": on})
+
+    story_roles = [r for r in roles if kinds.get(r) == "story"]
+
+    answering: set[str] = set()   # roles busy answering: their own backlog waits
+    held: dict[str, str] = {}     # story id -> the role whose answer it waits for
+    for r in story_roles:  # questions addressed to a role block the builders: answer them first
+        if not inbox.get(r):
+            continue
+        for sid in inbox[r]:
+            held.setdefault(sid, r)
+        if f"{r}:inbox" in running:
+            answering.add(r)
+        elif r in tried:
+            waiting.append({"story": ", ".join(inbox[r]), "status": "-", "lane": r, "on": "Brian",
+                            "why": "a lane already tried these questions and nothing has changed"})
+        elif len(lanes) + len(running) < max_lanes:
+            lanes.append({"role": r, "story": None, "resume": False, "component": None, "inbox": True,
+                          "asked": list(inbox[r])})
+            answering.add(r)
+
+    for r in story_roles:
+        # a Component held by a live lane stays taken, whichever run started that lane
+        taken_components: set[str] = {s.component for s in sprint
+                                      if s.id in running and s.lane == r and s.component}
+        order = sorted((s for s in sprint if s.lane == r),
+                       key=lambda s: (s.status != "in-progress",          # carryover first
+                                      s.rank is None, s.rank or 0, s.id))
+        for s in order:
+            if s.status == "done":
+                continue
+            if s.status == "review":
+                wait(s, "in review", "§8 review / merge")
+            elif s.id in running:
+                wait(s, "lane running", r)
+            elif s.id in held:
+                wait(s, f"question for {held[s.id]} unanswered", held[s.id])
+            elif r in answering:
+                wait(s, "answering questions first", "this run")
+            elif s.status == "draft":
+                wait(s, "contract review pending", "architecture")
+            elif s.status == "blocked":
+                wait(s, "marked blocked", "pm")
+            elif s.status == "in-progress" and s.id in open_pr:
+                wait(s, "PR open", "review")
+            elif s.status not in ("ready", "in-progress"):
+                wait(s, f"status {s.status}", "pm")
+            elif s.unmet():
+                wait(s, "blocked by " + ", ".join(f"{i} ({x})" for i, x in s.unmet()), "blocker")
+            elif s.component in taken_components:
+                wait(s, f"component {s.component} already has a lane", "this run")
+            elif len(lanes) + len(running) >= max_lanes:
+                wait(s, "no lane free", "this run")
+            else:
+                taken_components.add(s.component)
+                lanes.append({"role": r, "story": s.id, "resume": s.status == "in-progress",
+                              "component": s.component})
+    for s in sprint:
+        # the PM lane handles sprint transitions, never a story, so PM-owned stories are Brian's to see
+        if (s.lane not in roles or s.lane == "pm") and s.status not in ("done",):
+            wait(s, f"lane {s.lane}", s.lane if s.status != "review" else "§8 review / merge")
+
+    if "sre" in roles and kinds.get("sre") == "session" and active and "sre" not in running:
+        work = [s for s in sprint if s.status == "draft" or s.status == "review"
+                or (s.lane == "sre" and s.status in ("ready", "in-progress"))]
+        if not work:
+            pass
+        elif "sre" in unchanged:
+            waiting.append({"story": "-", "status": "-", "lane": "sre", "on": "a board change",
+                            "why": "nothing changed since SRE's last lane"})
+        elif len(lanes) + len(running) >= max_lanes:
+            waiting.append({"story": "-", "status": "-", "lane": "sre", "why": "no lane free",
+                            "on": "this run"})
+        else:
+            lanes.append({"role": "sre", "story": None, "resume": False, "component": None})
+
+    if "pm" in roles and kinds.get("pm") == "session" and "pm" not in running:
+        if st in ("first", "closed", "planned"):
+            if "pm" in unchanged:
+                waiting.append({"story": "-", "status": "-", "lane": "pm", "on": "a board change",
+                                "why": "nothing changed since PM's last lane"})
+            elif len(lanes) + len(running) < max_lanes:
+                lanes.append({"role": "pm", "story": None, "resume": False, "component": None})
+        elif active and sprint and all(s.status == "done" for s in sprint):
+            if pm_close and len(lanes) + len(running) >= max_lanes:
+                waiting.append({"story": "-", "status": "-", "lane": "pm", "why": "no lane free",
+                                "on": "this run"})
+            elif pm_close:
+                lanes.append({"role": "pm", "story": None, "resume": False, "component": None,
+                              "close": True})
+            else:
+                waiting.append({"story": "-", "status": "-", "lane": "pm", "on": "Brian",
+                                "why": "every sprint story is done: run /pm-close-sprint"})
+    for r in roles:  # session roles that watch a queue (product: its issues and handoffs)
+        if kinds.get(r) != "session" or r in SESSION_TRIGGERS or not watch.get(r) or r in running:
+            continue
+        if len(lanes) + len(running) >= max_lanes:
+            waiting.append({"story": "-", "status": "-", "lane": r, "why": "no lane free", "on": "this run"})
+        else:
+            lanes.append({"role": r, "story": None, "resume": False, "component": None,
+                          "watch": list(watch[r])})
+
+    return lanes, waiting
+
+
+def board_signature(stories: list[Story], state: dict, roles: list[str] | None = None) -> str:
+    rows = sorted((s.id, s.status, s.lane, str(s.sprint), tuple(s.blockers), s.notes) for s in stories)
+    return hashlib.sha256(json.dumps([state.get("state"), state.get("current"), rows],
+                                     default=str).encode()).hexdigest()[:16]
+
+
+# ------------------------------------------------------------------ context
+
+class Ctx:
+    def __init__(self, root: Path, sh: Shell, gh=None, claude: str | None = None):
+        self.root, self.sh = root, sh
+        self.cfg = role.Roles(root).repo
+        self.roles = role.Roles(root)
+        self.claude = claude or os.environ.get("COORDINATOR_CLAUDE", "claude")
+        self.dir = role.state_dir(root).parent / "claude-coordinator"
+        self.bin = Path(__file__).resolve().parent
+        self._gh = gh
+        self._board = None
+        self.lane_allow = True   # --no-lane-allow turns the allow-list off
+
+    def settings(self, name: str) -> dict:
+        """How `name` runs as a lane: its charter's frontmatter over the defaults."""
+        resolved = self.roles.resolve(name)
+        meta = self.roles.roles[resolved][0] if resolved in self.roles.roles else {}
+        return role_settings(meta, resolved or name)
+
+    def check_lane_role(self, name: str) -> None:
+        cfg = self.settings(name)
+        if cfg["sprint_run"] not in ("story", "session"):
+            raise CoordError(f"role {name!r} can't run as a lane: sprint_run is {cfg['sprint_run']!r}; "
+                             f"set `sprint_run: story` or `session` in its charter")
+        for entry in cfg["lane_allow"]:
+            why = check_allow_entry(entry)
+            if why:
+                raise CoordError(f"role {name!r}: lane_allow entry {entry!r} refused: {why}")
+        if not cfg["start_skill"]:
+            raise CoordError(f"role {name!r} has no start_skill: add `start_skill: <skill>` to its charter")
+        if cfg["inbox"] and cfg["sprint_run"] != "story":
+            raise CoordError(f"role {name!r}: `inbox: true` is for story roles; a session role "
+                             f"reads its queue with `watch_label`")
+        if cfg["sprint_run"] == "session" and name not in SESSION_TRIGGERS and not cfg["watch_label"]:
+            raise CoordError(f"role {name!r} is a session lane but has no trigger: set `watch_label:` "
+                             f"in its charter ({', '.join(SESSION_TRIGGERS)} have built-in ones)")
+
+    def lane_problems(self) -> dict[str, str]:
+        """Roles whose charter sets `sprint_run` to something the coordinator can't run."""
+        out = {}
+        for r in self.roles.roles:
+            try:
+                if self.settings(r)["sprint_run"] is not None:
+                    self.check_lane_role(r)
+            except CoordError as e:
+                out[r] = str(e)
+        return out
+
+    def lane_roles(self) -> list[str]:
+        """Roles with a charter here that run as lanes, in planning order."""
+        bad = self.lane_problems()
+        have = [r for r in self.roles.roles if self.settings(r)["sprint_run"] is not None and r not in bad]
+        return sorted(have, key=lambda r: (ROLE_ORDER.index(r) if r in ROLE_ORDER else len(ROLE_ORDER), r))
+
+    def require_github_board(self):
+        if self.cfg.get("stories") != "github" or self.cfg.get("sprints") != "project":
+            raise CoordError("this repo's _repo.md needs `stories: github` and `sprints: project`; "
+                             "the coordinator works the GitHub board")
+        if not self.cfg.get("project") or not self.cfg.get("github_repo"):
+            raise CoordError("_repo.md needs `project:` and `github_repo:`")
+
+    @property
+    def board(self):
+        if self._board is None:
+            comps = self.cfg.get("story_components")
+            self._board = story.Board(self._gh or story.GH(), self.cfg["github_repo"], self.cfg["project"],
+                                      self.cfg.get("story_prefix", ""),
+                                      comps if isinstance(comps, list) else None)
+        return self._board
+
+    def sprint_state(self) -> dict:
+        r = self.sh.run([sys.executable, str(self.bin / "sprint-state")], cwd=self.root)
+        out = {}
+        for line in r.stdout.splitlines():
+            m = re.match(r"^(state|current|next):\s*(\S+)", line)
+            if m:
+                out[m.group(1)] = m.group(2)
+        if r.returncode not in (0,) or "state" not in out or out["state"] == "invalid":
+            raise CoordError(f"sprint-state: {(r.stdout + r.stderr).strip()[:400]}")
+        return out
+
+    def stories(self, sprint: int | None) -> list[Story]:
+        b = self.board
+        out = []
+        for it in b.items():
+            if not it["id"].startswith(f"{b.prefix}-") or sprint is None \
+                    or sprint_number(it["fields"].get("Sprint")) != sprint:
+                continue
+            deps = b.gh.api("GET", f"/repos/{it['repo']}/issues/{it['number']}/dependencies/blocked_by",
+                            paginate=True) or []
+            by_issue = {i["issue_id"]: i for i in b.items()}
+            bl = []
+            for d in deps:
+                bi = by_issue.get(d.get("id"))
+                bl.append((bi["id"], bi["fields"].get("Status") or "-") if bi and bi["id"]
+                          else (f"#{d.get('number')}", "done" if d.get("state") == "closed" else "open"))
+            st_ = Story(it, bl)
+            issue = b.gh.api("GET", f"/repos/{it['repo']}/issues/{it['number']}") or {}
+            comments = b.gh.api("GET", f"/repos/{it['repo']}/issues/{it['number']}/comments",
+                                paginate=True) or []
+            st_.comments = [c.get("body") or "" for c in comments]
+            st_.body = issue.get("body") or ""
+            st_.notes = hashlib.sha256(json.dumps([issue.get("body"), [c.get("body") for c in comments]])
+                                       .encode()).hexdigest()[:12]
+            out.append(st_)
+        return out
+
+
+# ------------------------------------------------------------------ run state
+
+def now() -> str:
+    return datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
+
+
+def pid_alive(pid: int) -> bool:
+    try:
+        os.kill(pid, 0)
+    except ProcessLookupError:
+        return False
+    except PermissionError:
+        return True
+    return True
+
+
+def read_json(p: Path, default=None):
+    try:
+        return json.loads(p.read_text())
+    except (OSError, ValueError):
+        return default
+
+
+def active_lanes(ctx: Ctx, prune: bool = False) -> list[dict]:
+    """Lanes whose claude process is alive. Only a run, which holds the lock, prunes the
+    records of dead ones: between a lane exiting and its run finalising it, status and plan
+    must still see it."""
+    d = ctx.dir / "active"
+    out = []
+    for f in sorted(d.glob("*.json")) if d.is_dir() else []:
+        rec = read_json(f, {})
+        pid = rec.get("pid") if isinstance(rec, dict) else None
+        if isinstance(pid, int) and pid > 0 and pid_alive(pid):
+            out.append(rec)
+        elif prune:
+            f.unlink(missing_ok=True)  # that lane's process is gone; its worktree stays for `clean`
+    return out
+
+
+class Lock:
+    """One coordinator run at a time, by flock on <state>/lock. The kernel drops the lock when
+    the holder dies, so there is no stale-lock or pid-reuse case; the file only names the holder."""
+
+    def __init__(self, ctx: Ctx):
+        self.f, self.fd = ctx.dir / "lock", None
+
+    def __enter__(self):
+        self.f.parent.mkdir(parents=True, exist_ok=True)
+        fd = os.open(self.f, os.O_CREAT | os.O_RDWR, 0o644)
+        try:
+            fcntl.flock(fd, fcntl.LOCK_EX | fcntl.LOCK_NB)
+        except BlockingIOError:
+            holder = read_json(self.f, {}) or {}
+            os.close(fd)
+            raise CoordError(f"another coordinator run is active (pid {holder.get('pid', '?')}, since "
+                             f"{holder.get('since', '?')}); `coordinator status` shows its lanes") from None
+        os.ftruncate(fd, 0)
+        os.write(fd, json.dumps({"pid": os.getpid(), "since": now()}).encode())
+        self.fd = fd
+        return self
+
+    def __exit__(self, *a):
+        if self.fd is not None:
+            os.close(self.fd)  # releases the flock; the file stays
+
+
+def last_signature(ctx: Ctx, role_name: str) -> str | None:
+    f = ctx.dir / "signatures.json"
+    return (read_json(f, {}) or {}).get(role_name)
+
+
+def last_pr(ctx: Ctx, role_name: str) -> int | None:
+    return (read_json(ctx.dir / "signatures.json", {}) or {}).get(role_name + ":pr")
+
+
+def save_signature(ctx: Ctx, role_name: str, sig: str, pr: int | None = None) -> None:
+    f = ctx.dir / "signatures.json"
+    d = read_json(f, {}) or {}
+    d[role_name], d[role_name + ":pr"] = sig, pr
+    _write_state(f, d)
+
+
+# ------------------------------------------------------------------ lanes
+
+def slug(s: str) -> str:
+    return re.sub(r"[^a-z0-9]+", "-", s.lower()).strip("-")
+
+
+def prompt_for(lane: dict, run_id: str, ctx: Ctx) -> str:
+    r = lane["role"]
+    skill = ctx.settings(r)["start_skill"]
+    if not skill:
+        raise CoordError(f"role {r!r} has no start_skill; add `start_skill:` to its charter")
+    if lane.get("close"):
+        skill = "pm-close-sprint"
+    head = (f"You are the `{r}` lane of automated sprint run {run_id}, started by the coordinator. "
+            f"Your role is already set. Brian isn't watching: don't wait for him, and don't ask "
+            f"questions. If something needs a decision, record it on the story with "
+            f"`.claude/bin/story comment <ID> --to <role>` (or in the PR for repo-wide choices) and stop. "
+            f"Never merge, close, or approve a PR. Work from origin/main in this worktree. "
+            f"If a tool call is denied by the permission mode, don't look for another way to do the "
+            f"same thing: commit what you have, and end with `LANE RESULT: blocked: <what was denied>`.")
+    if lane.get("inbox"):
+        body = (f" Read .claude/skills/{skill}/SKILL.md and do only the part that answers questions "
+                f"addressed to `{r}` (stories {', '.join(lane.get('asked') or [])} have one waiting). "
+                f"Answer each as that skill says, but a decision that is Brian's call (direction, "
+                f"palette, type, marks, voice) is not yours: reply `story comment <ID> --to brian` with "
+                f"one recommendation, leave that question unanswered, and never decide it yourself. "
+                f"Take any doc change an answer needs through "
+                f"`.claude/skills/pre-pr/SKILL.md` including section 6 (Codex), then stop: "
+                f"do not take carryover or backlog stories, other lanes do.")
+        tail = (" Your last message is one line: `LANE RESULT: answered <n>` (n questions answered), "
+                "`LANE RESULT: <PR url>` if a doc change needed a PR, or `LANE RESULT: blocked: <reason>`.")
+        return head + body + tail
+    if lane["story"]:
+        body = (f" Read .claude/skills/{skill}/SKILL.md and follow it for exactly one story, "
+                f"{lane['story']}: skip its question-answering, Carryover and Backlog selection "
+                f"(other lanes do those) and take this story "
+                f"({'resume it: it is already in progress' if lane.get('resume') else 'start it'}). "
+                f"When its PR is open, `/pre-pr` takes it through the review gate and Codex's review "
+                f"(read .claude/skills/pre-pr/SKILL.md and follow it, including section 6). "
+                f"Stop when the PR is Codex-clean or something blocks you.")
+    else:
+        body = (f" Read .claude/skills/{skill}/SKILL.md and follow it. Where it ends in a PR, take the "
+                f"PR through `.claude/skills/pre-pr/SKILL.md` including section 6 (Codex).")
+        if lane.get("watch"):
+            body += (f" Your queue: {', '.join(lane['watch'])}. Handle every item: an issue you read and "
+                     f"leave without a comment or a close counts as not done.")
+    tail = (" Your last message is one line: `LANE RESULT: <PR url>` or `LANE RESULT: blocked: <reason>` "
+            "or `LANE RESULT: nothing to do`" + (", or `LANE RESULT: triaged <n>` (n items handled, no PR)."
+                                                 if lane.get("watch") else "."))
+    return head + body + tail
+
+
+def lane_allow(ctx: Ctx, lane: dict) -> list[str]:
+    cfg = ctx.settings(lane["role"])
+    allow = list(LANE_ALLOW)
+    check = role.check_command(ctx.roles)   # the repo's own check command (`make check`)
+    if check and check_allow_entry(f"Bash({check}:*)") is None:
+        allow.append(f"Bash({check}:*)")
+    if cfg["watch_label"]:
+        allow += WATCH_ALLOW
+    allow += cfg["lane_allow"]
+    return list(dict.fromkeys(allow))
+
+
+def hook_settings(ctx: Ctx, run_dir: Path) -> Path:
+    """Settings that run the role hooks from the run directory, not from the lane's checkout: a
+    checkout can be moved to a commit without .claude/, and a hook whose file is missing doesn't
+    run, which allows. The copy is the main checkout's `role` (the same file the lane vendors)."""
+    hooks = run_dir / "hooks"
+    hooks.mkdir(parents=True, exist_ok=True)
+    script = hooks / "role"
+    if not script.exists():
+        shutil.copyfile(ctx.bin / "role", script)
+        script.chmod(0o755)
+    roles = hooks / "roles"   # policy (prefixes, github_repo, writes) from the main checkout, not the lane's
+    if not roles.exists():
+        shutil.copytree(ctx.root / ".claude" / "roles", roles)
+    f = hooks / "settings.json"
+    if not f.exists():
+        cmd = f'python3 "{script}" '
+        f.write_text(json.dumps({"hooks": {"PreToolUse": [
+            {"matcher": "Edit|Write|MultiEdit|NotebookEdit|Read|NotebookRead|Glob|Grep|LS",
+             "hooks": [{"type": "command", "command": cmd + "hook-pre-tool-use"}]},
+            {"matcher": "Bash", "hooks": [{"type": "command", "command": cmd + "hook-pre-bash"}]}]}}, indent=1))
+    return f
+
+
+def claude_cmd(ctx: Ctx, lane: dict, sid: str, run_id: str, budget: float,
+               settings: Path | None = None) -> list[str]:
+    cmd = [ctx.claude, "-p", prompt_for(lane, run_id, ctx), "--session-id", sid,
+           "--output-format", "json", "--permission-mode", "dontAsk",
+           "--max-budget-usd", str(budget),
+           "--disallowedTools", ",".join(DENY)]
+    if settings:
+        cmd += ["--settings", str(settings)]
+    if ctx.lane_allow:
+        cmd += ["--allowedTools", ",".join(lane_allow(ctx, lane))]
+    return cmd
+
+
+def lane_name(lane: dict) -> str:
+    if lane.get("inbox"):  # one worktree per inbox lane: an earlier one may still hold a doc PR
+        return f"{lane['role']}-inbox" + (f"-{lane['stamp']}" if lane.get("stamp") else "")
+    if lane.get("watch") and lane.get("stamp"):   # the last lane's PR may still hold its commits
+        return f"{lane['role']}-{lane['stamp']}"
+    return f"{lane['role']}-{slug(lane['story'])}" if lane["story"] else lane["role"]
+
+
+def exclude_worktrees(ctx: Ctx, wt_dir: Path) -> None:
+    """Keep lane worktrees out of the repo's `git status` (and out of `git add .claude/`)."""
+    if wt_dir.resolve() != (ctx.root / ".claude" / "worktrees").resolve():
+        return
+    f = role.state_dir(ctx.root).parent / "info" / "exclude"
+    line = ".claude/worktrees/"
+    have = f.read_text().splitlines() if f.is_file() else []
+    if line not in have:
+        f.parent.mkdir(parents=True, exist_ok=True)
+        f.write_text("\n".join(have + [line]) + "\n")
+
+
+def setup_worktree(ctx: Ctx, lane: dict, sid: str, wt_dir: Path) -> tuple[Path, bool]:
+    """The lane's worktree, and whether this call created it. A story resumed after an
+    earlier lane left commits uses that lane's worktree, so the commits carry over."""
+    resolved = ctx.roles.resolve(lane["role"])
+    if resolved is None:
+        raise CoordError(f"no charter for role {lane['role']!r} in .claude/roles/")
+    f = ctx.sh.run(["git", "fetch", "origin", "--quiet"], cwd=ctx.root)
+    if f.returncode != 0:
+        raise CoordError(f"git fetch origin failed: {(f.stderr or f.stdout).strip()[:200]}")
+    path = wt_dir / lane_name(lane)
+    fresh = not path.exists()
+    if fresh:
+        wt_dir.mkdir(parents=True, exist_ok=True)
+        exclude_worktrees(ctx, wt_dir)
+        ctx.sh.run(["git", "worktree", "prune"], cwd=ctx.root)  # a directory deleted by hand
+        ctx.sh.run(["git", "worktree", "add", "--detach", str(path), "refs/remotes/origin/main"], cwd=ctx.root, check=True)
+    elif not (path / ".git").exists():
+        raise CoordError(f"{path} exists but isn't a worktree; move it aside")
+    elif not lane.get("resume"):
+        # A lane that isn't continuing earlier work starts from origin/main: move a clean
+        # leftover worktree there, and refuse one that holds work nothing else carries.
+        dirty = ctx.sh.run(["git", "status", "--porcelain"], cwd=path).stdout.strip()
+        ahead = ctx.sh.run(["git", "rev-list", "--count", "refs/remotes/origin/main..HEAD"], cwd=path).stdout.strip()
+        if dirty or ahead != "0":
+            raise CoordError(f"{path} has uncommitted work or commits origin/main doesn't: resume it "
+                             f"(the story is in-progress), or `coordinator clean` once it's carried")
+        ctx.sh.run(["git", "switch", "--detach", "refs/remotes/origin/main", "--quiet"], cwd=path, check=True)
+    role.put_role(ctx.root, sid, resolved, pinned=True)   # `role set/clear` refuse a pinned session
+    return path, fresh
+
+
+def inspect(ctx: Ctx, lane: dict, wt: Path, outcome: dict) -> dict:
+    """What is true now, read from GitHub and the board, not from the lane's own words."""
+    res = dict(outcome)
+    branch = ctx.sh.run(["git", "branch", "--show-current"], cwd=wt).stdout.strip()
+    res["branch"] = branch or None
+    res["pr"] = None
+    dirty = ctx.sh.run(["git", "status", "--porcelain"], cwd=wt)
+    ahead = ctx.sh.run(["git", "rev-list", "--count", "refs/remotes/origin/main..HEAD"], cwd=wt)
+    res["dirty"] = dirty.returncode != 0 or bool(dirty.stdout.strip())  # unreadable counts as dirty
+    res["tree_clean"] = (not res["dirty"] and ahead.returncode == 0 and ahead.stdout.strip() == "0")
+    res["pr_unknown"] = False
+    if branch:
+        head = ctx.sh.run(["git", "rev-parse", "HEAD"], cwd=wt).stdout.strip()
+        r = ctx.sh.run(["gh", "pr", "list", "--head", branch, "--state", "all", "--json",
+                        "number,state,url,headRefOid,labels,mergedAt", "--limit", "1"], cwd=wt)
+        try:
+            prs = json.loads(r.stdout or "[]") if r.returncode == 0 else None
+        except ValueError:
+            prs = None
+        res["pr_unknown"] = prs is None
+        if prs:
+            pr = prs[0]
+            res["pr"] = {"number": pr["number"], "state": pr["state"], "url": pr["url"],
+                         "current": pr.get("headRefOid") == head,
+                         "labelled": f"role:{lane['role']}" in [l["name"] for l in pr.get("labels", [])]}
+            c = ctx.sh.run([sys.executable, str(ctx.bin / "codex-review"), "status", str(pr["number"])],
+                           cwd=wt)
+            try:
+                cx = json.loads(c.stdout)
+                res["codex"] = {"state": cx["state"], "findings": len(cx["findings"]),
+                                "handled": int(cx.get("handled") or 0)}
+            except (ValueError, KeyError):
+                res["codex"] = {"state": "unknown", "findings": None}
+    if lane["story"]:
+        try:
+            ctx.board.refresh()  # the plan's listing is minutes old; the lane changed the board
+            res["story_status"] = ctx.board.find(lane["story"])["fields"].get("Status")
+        except story.StoryError as e:
+            res["story_status"] = f"unreadable: {e}"[:80]
+    if lane.get("watch"):  # was every queued item handled? read the queue, not the lane's words
+        before = lane.get("watch_updated") or {}
+
+        def reread():
+            now = {i["ref"]: i["updated"] for i in watch_items(ctx, lane["role"])}
+            # untouched: an issue still open and unchanged, or a handoff still owed
+            return now, [ref for ref in lane["watch"] if ref in now and now[ref] == before.get(ref)]
+        try:
+            now_items, untouched = reread()
+            for _ in range(3):   # GitHub's search index trails a create: give a handoff time to show
+                if not any(ref.startswith("PR#") for ref in untouched):
+                    break
+                time.sleep(HANDOFF_RETRY_DELAY)
+                now_items, untouched = reread()
+            res["untouched"] = untouched
+            res["watch_seen"] = {ref: now_items[ref] for ref in lane["watch"] if ref in now_items}
+            res["watch_stuck"] = {ref: now_items[ref] for ref in untouched}
+            res["watch_open"] = {ref: now_items[ref] for ref in lane["watch"]       # commented on, not closed:
+                                 if ref.startswith("#") and ref in now_items and ref not in untouched}  # Brian's
+        except CoordError:
+            res["untouched"] = None
+    if lane.get("inbox"):  # did the questions get answered? read the board, not the lane's words
+        try:
+            ctx.board.refresh()
+            state = ctx.sprint_state()
+            stories = ctx.stories(sprint_number(state.get("current")) if state["state"] == "active" else None)
+            res["still_asked"] = [i for i in questions_for(lane["role"], stories) if i in (lane.get("asked") or [])]
+        except (CoordError, story.StoryError, OSError):
+            res["still_asked"] = None
+    res["verdict"], res["ok"] = verdict(lane, res)
+    approval = ctx.settings(lane["role"])["approval"]
+    if res["ok"] and res["pr"] and approval:
+        res["approval"] = approval  # the lane is done; the decision it left is Brian's
+    return res
+
+
+def verdict(lane: dict, res: dict) -> tuple[str, bool]:
+    """(what to say, whether it counts as done). ok comes from live state: only a PR that is
+    open, labelled, at the lane's HEAD, and Codex-clean; or, for a lane that makes no PR
+    (SRE, PM), the exact result `nothing to do` with no PR on its branch."""
+    if res.get("error"):
+        return f"failed: {res['error']}", False
+    pr, cx = res.get("pr"), res.get("codex") or {}
+    if lane.get("watch") and res.get("untouched") is None:
+        return "couldn't re-read the queue after the lane", False
+    if lane.get("watch") and res["untouched"]:
+        return f"left untouched: {', '.join(res['untouched'])}", False
+    if lane.get("inbox") and res.get("still_asked") is None:
+        return "couldn't re-read the questions after the lane", False
+    if lane.get("inbox") and res["still_asked"]:
+        return f"{len(res['still_asked'])} question(s) still waiting: {', '.join(res['still_asked'])}", False
+    if pr and pr["state"] == "OPEN":
+        if not pr["current"]:
+            return "PR head differs from the lane's HEAD (an older PR on this branch?)", False
+        if not pr["labelled"]:
+            return f"PR open without role:{lane['role']} label", False
+        if res.get("dirty"):
+            return "PR open, but the worktree has uncommitted or untracked files (or couldn't be read)", False
+        if cx.get("state") == "completed" and cx.get("findings") == 0:
+            return "PR open, Codex clean", True
+        return f"PR open, Codex {cx.get('state', 'unknown')}" + (
+            f" ({cx['findings']} unhandled)" if cx.get("findings") else ""), False
+    if pr and pr["state"] == "MERGED":
+        return "PR already merged", False
+    line = res.get("result_line")
+    if lane["story"]:  # a story lane's work is its PR
+        return "no PR: " + (line or "see log"), False
+    clean = not res.get("pr_unknown") and res.get("tree_clean")
+    if lane.get("watch") and line and re.fullmatch(r"triaged \d+\.?", line.strip().lower()):
+        n = int(re.search(r"\d+", line).group())
+        if n != len(lane["watch"]):
+            return f"said triaged {n}, but the queue had {len(lane['watch'])}", False
+        return (line.strip().rstrip("."), True) if clean else (
+            "said triaged, but left commits, uncommitted files, or an unreadable PR lookup", False)
+    if lane.get("inbox"):
+        if line and re.fullmatch(r"answered \d+\.?", line.strip().lower()):
+            return (line.strip().rstrip("."), True) if clean else (
+                "said answered, but left commits, uncommitted files, or an unreadable PR lookup", False)
+        return line or "no result line", False
+    if line and line.strip().rstrip(".").lower() == "nothing to do":
+        if res.get("pr_unknown"):
+            return "nothing to do, but the PR lookup failed", False
+        if not res.get("tree_clean"):
+            return "said nothing to do, but left commits or uncommitted files", False
+        return "nothing to do", True
+    return line or "no result line", False
+
+
+# What a lane inherits: the tools' own needs and the user's credentials for them, not the coordinator's
+# whole environment (cloud keys, database URLs). `COORDINATOR_ENV_PASS=A,B` adds variables by name.
+ENV_KEEP = {"PATH", "HOME", "USER", "LOGNAME", "SHELL", "LANG", "LANGUAGE", "TERM", "TMPDIR", "TZ",
+            "SSH_AUTH_SOCK", "GH_TOKEN", "GITHUB_TOKEN", "GH_HOST", "CLAUDE_CONFIG_DIR", "NO_COLOR",
+            "HTTP_PROXY", "HTTPS_PROXY", "NO_PROXY", "http_proxy", "https_proxy", "no_proxy",
+            "SSL_CERT_FILE", "REQUESTS_CA_BUNDLE", "NODE_EXTRA_CA_CERTS"}
+ENV_KEEP_PREFIX = ("LC_", "XDG_", "ANTHROPIC_", "CLAUDE_CODE_")
+
+
+ENV_PASS_REFUSED = re.compile(r"^(?:GIT_|CLAUDE_|COORDINATOR_|LD_|DYLD_|BASH_|XDG_|GH_CONFIG_DIR$|ENV$|PATH$|HOME$|"
+                              r"SHELL$|PAGER$|EDITOR$|VISUAL$|TMPDIR$|IFS$|PS4$|PROMPT_COMMAND$)")
+
+
+def lane_env(base: dict) -> dict:
+    extra = {n.strip() for n in base.get("COORDINATOR_ENV_PASS", "").split(",") if n.strip()}
+    for n in sorted(extra):
+        if ENV_PASS_REFUSED.match(n):
+            raise CoordError(f"COORDINATOR_ENV_PASS can't carry {n}: it changes what git, gh, the shell, or the "
+                             f"hooks do in a lane")
+    return {k: v for k, v in base.items()
+            if k != "COORDINATOR_ENV_PASS" and (k in ENV_KEEP or k in extra or k.startswith(ENV_KEEP_PREFIX))}
+
+
+def run_lane(ctx: Ctx, lane: dict, run_id: str, run_dir: Path, args, wt_dir: Path, pending: list) -> None:
+    sid = str(uuid.uuid4())
+    name = lane_name(lane)
+    wt, fresh = setup_worktree(ctx, lane, sid, wt_dir)
+    log = run_dir / f"{name}.log"
+    cmd = claude_cmd(ctx, lane, sid, run_id, args.budget_usd, hook_settings(ctx, run_dir))
+    env = lane_env(dict(os.environ))
+    env.update(COORDINATOR_RUN=run_id, COORDINATOR_LANE=name)
+    # Between the process existing and the run owning it, a signal must wait: the handler
+    # below only notes it, and it is raised once the lane is in `pending` (or has been stopped).
+    deferred: list[int] = []
+    note = lambda *_: deferred.append(1)  # noqa: E731
+    old_int, old_term = signal.signal(signal.SIGINT, note), signal.signal(signal.SIGTERM, note)
+    try:
+        try:
+            proc = ctx.sh.start(cmd, wt, env, log)
+        except OSError as e:
+            role.put_role(ctx.root, sid, None)
+            if fresh:
+                ctx.sh.run(["git", "worktree", "remove", "--force", str(wt)], cwd=ctx.root)
+            raise CoordError(f"couldn't start {cmd[0]}: {e}") from e
+        rec = {"lane": name, "role": lane["role"], "story": lane["story"], "inbox": bool(lane.get("inbox")),
+               "session": sid, "pid": proc.pid,
+               "worktree": str(Path(wt).resolve()), "started": now(), "run": run_id}
+        h = {"lane": lane, "proc": proc, "rec": rec, "wt": wt, "log": log, "t0": time.monotonic()}
+        pending.append(h)  # from here on the run's interrupt handler owns it
+        try:
+            (ctx.dir / "active").mkdir(parents=True, exist_ok=True)
+            (ctx.dir / "active" / f"{name}.json").write_text(json.dumps(rec))
+        except OSError as e:  # the lane is running but nothing would track it
+            pending.remove(h)
+            terminate(proc)
+            role.put_role(ctx.root, sid, None)
+            raise CoordError(f"couldn't record lane {name}: {e}") from e
+    finally:
+        signal.signal(signal.SIGINT, old_int)
+        signal.signal(signal.SIGTERM, old_term)
+        if deferred:
+            raise KeyboardInterrupt
+
+
+def group_alive(proc: subprocess.Popen) -> bool:
+    proc.poll()  # reap the leader so it doesn't keep the group "alive" as a zombie
+    try:
+        os.killpg(proc.pid, 0)
+        return True
+    except ProcessLookupError:
+        return False
+
+
+def terminate(*procs: subprocess.Popen) -> None:
+    """Stop lanes' whole process groups: SIGTERM to all of them, then SIGKILL to any group
+    that still has a member after KILL_GRACE. Waiting on a leader alone would miss children
+    that ignore SIGTERM; a group with no member is left alone (its pid may be reused)."""
+    for sig in (signal.SIGTERM, signal.SIGKILL):
+        live = [p for p in procs if group_alive(p)]
+        for p in live:
+            try:
+                os.killpg(p.pid, sig)
+            except ProcessLookupError:
+                pass
+        end = time.monotonic() + KILL_GRACE
+        while live and time.monotonic() < end:
+            live = [p for p in live if group_alive(p)]
+            if live:
+                time.sleep(0.05)
+    for p in procs:
+        try:
+            p.wait(KILL_GRACE)
+        except subprocess.TimeoutExpired:
+            pass
+
+
+def parse_lane_log(text: str) -> dict:
+    """The JSON object `claude -p --output-format json` wrote, which shares the log with stderr
+    (a startup warning may precede it): the last line that is a JSON object."""
+    for line in reversed([l for l in text.splitlines() if l.strip()]):
+        if line.lstrip().startswith("{"):
+            try:
+                data = json.loads(line)
+            except ValueError:
+                continue
+            if isinstance(data, dict):
+                return data
+    raise ValueError("no JSON object in the log")
+
+
+def clean_line(s: str) -> str:
+    """A lane's result line as the report may carry it: one line, no table or code syntax, short."""
+    return re.sub(r"\s+", " ", re.sub(r"[|`\r\n\t]", " ", s)).strip()[:120]
+
+
+def finish_lane(ctx: Ctx, h: dict, timed_out: bool) -> dict:
+    proc, log = h["proc"], h["log"]
+    out: dict = {"lane": h["rec"]["lane"], "session": h["rec"]["session"], "log": str(log)}
+    if timed_out:
+        terminate(proc)
+        out["error"] = "timed out"
+    elif proc.returncode != 0:
+        out["error"] = f"claude exited {proc.returncode}"
+    try:
+        data = parse_lane_log(log.read_text())
+        out["cost_usd"] = data.get("total_cost_usd")
+        out["turns"] = data.get("num_turns")
+        text = data.get("result") or ""
+        m = re.findall(r"LANE RESULT:\s*(.+)", text)
+        out["result_line"] = clean_line(m[-1]) if m else None
+        if data.get("is_error") and "error" not in out:
+            out["error"] = (text or "claude reported an error")[:120]
+    except ValueError:
+        out.setdefault("error", "no JSON result in the log")
+    (ctx.dir / "active" / f"{h['rec']['lane']}.json").unlink(missing_ok=True)
+    if role.get_role(ctx.root, h["rec"]["session"]) != h["rec"]["role"]:
+        out.setdefault("error", "the lane changed its own role")   # a bypass: the report says so
+    role.put_role(ctx.root, h["rec"]["session"], None)
+    return inspect(ctx, h["lane"], h["wt"], out)
+
+
+# ------------------------------------------------------------------ commands
+
+def gather(ctx: Ctx, a, prune: bool = False) -> tuple[dict, list[Story], list[dict], list[dict], list[str]]:
+    ctx.require_github_board()
+    named = [r.strip() for r in a.roles.split(",") if r.strip()] if a.roles else ctx.lane_roles()
+    missing = [r for r in named if r == role.UNRESTRICTED or ctx.roles.resolve(r) is None]
+    if missing:
+        raise CoordError(f"no charter for {', '.join(missing)} in .claude/roles/ (roles: {ctx.roles.names()})")
+    roles = []
+    for r in named:  # aliases (`design`, `impl`) mean the role; a story's lane is always its full name
+        full = ctx.roles.resolve(r)
+        if full not in roles:
+            roles.append(full)
+    problems = {} if a.roles else ctx.lane_problems()   # by default one odd charter must not stop the rest
+    if not roles and not problems:
+        raise CoordError("no role here runs as a lane: a charter needs `sprint_run: story|session` "
+                         "(implementation, sre and pm have it built in)")
+    for r in roles:
+        ctx.check_lane_role(r)
+    a.ran_roles = roles
+    state = ctx.sprint_state()
+    cur = sprint_number(state.get("current")) if state["state"] == "active" else None
+    stories = ctx.stories(cur)
+    live = active_lanes(ctx, prune)
+    running = {l["story"] for l in live if l["story"]} \
+        | {l["role"] + (":inbox" if l.get("inbox") else "") for l in live if not l["story"]}
+    kinds = {r: ctx.settings(r)["sprint_run"] for r in roles}
+    inbox = {r: q for r in roles if ctx.settings(r)["inbox"] and (q := questions_for(r, stories))}
+    seen_q = {r: state_get(ctx, f"{r}:inbox", {}) or {} for r in inbox}
+    tried = {r for r in inbox
+             if all(seen_q[r].get(i) == d for i, d in inbox_digests(r, stories).items())}
+    open_pr = set()
+    for s in stories:
+        if s.status == "in-progress":
+            r = ctx.sh.run(["gh", "pr", "list", "--state", "open", "--search", f"\"Story: {s.id}\" in:body",
+                            "--json", "number", "--limit", "1"], cwd=ctx.root)
+            try:
+                found = json.loads(r.stdout or "[]") if r.returncode == 0 else None
+            except ValueError:
+                found = None
+            if found is None:  # unknown is not "no PR": a second lane on a story with a PR open is worse
+                raise CoordError(f"couldn't list the open PRs for {s.id} "
+                                 f"({(r.stderr or r.stdout or 'bad output').strip()[:120]})")
+            if found:
+                open_pr.add(s.id)
+    sig = board_signature(stories, state)
+    open_items, unreadable, queue = {}, {}, {}
+    for r in roles:
+        if kinds[r] != "session" or not ctx.settings(r)["watch_label"]:
+            continue
+        try:
+            open_items[r] = watch_items(ctx, r)
+        except CoordError as e:   # this role waits, the others still run
+            unreadable[r] = str(e)
+            continue
+        seen = state_get(ctx, f"{r}:seen", {})
+        queue[r] = [i for i in open_items[r] if seen.get(i["ref"]) != i["updated"]]
+    unchanged = {r for r in roles if kinds[r] == "session" and r not in open_items and r not in unreadable
+                 and last_signature(ctx, r) == sig
+                 and not pr_closed_unmerged(ctx, last_pr(ctx, r))}
+    lanes, waiting = select(stories, state, roles, running, a.max_lanes, open_pr,
+                            getattr(a, "pm_close", False), unchanged, kinds, inbox, tried,
+                            {r: [i["ref"] for i in v] for r, v in queue.items()})
+    for lane in lanes:
+        if lane.get("inbox"):   # the questions as this lane is given them (not as they stand after it)
+            lane["asked_digests"] = inbox_digests(lane["role"], stories, lane["asked"])
+        if lane.get("watch"):   # remember what each queued item looked like, to see it was touched
+            lane["watch_updated"] = {i["ref"]: i["updated"] for i in queue[lane["role"]]}
+    for r, why in {**problems, **unreadable}.items():
+        waiting.append({"story": "-", "status": "-", "lane": r, "why": why, "on": "Brian"})
+    for r, items in open_items.items():   # what a lane left alone, or left open for a decision
+        now = {i["ref"]: i["updated"] for i in items}
+        for key, why in (("stuck", "left untouched by the last lane"),
+                         ("open", "left open for Brian's decision")):
+            for ref, upd in (state_get(ctx, f"{r}:{key}", {}) or {}).items():
+                if now.get(ref) == upd:
+                    waiting.append({"story": ref, "status": "-", "lane": r, "on": "Brian", "why": why})
+    return state, stories, lanes, waiting, live, sig
+
+
+def planners_named(body: str, heading: str) -> int:
+    """How many planners a PR's "Release changes" section asks something of: its bullets (at least 1)."""
+    after = body.split(heading, 1)[1] if heading in body else ""
+    section = re.split(r"\n#{1,6} ", after, maxsplit=1)[0]
+    return max(1, len(re.findall(r"(?m)^\s*[-*]\s+\S", section)))
+
+
+def watch_items(ctx: Ctx, role_name: str) -> list[dict]:
+    """What a watching role has waiting: open issues with its label, and merged role PRs whose
+    body owes a handoff. A gh failure raises: an unread queue must not look empty."""
+    cfg = ctx.settings(role_name)
+    r = ctx.sh.run(["gh", "issue", "list", "--label", cfg["watch_label"], "--state", "open",
+                    "--json", "number,updatedAt", "--limit", "100"], cwd=ctx.root)
+    try:
+        issues = json.loads(r.stdout or "[]") if r.returncode == 0 else None
+    except ValueError:
+        issues = None
+    if issues is None:
+        raise CoordError(f"couldn't list the `{cfg['watch_label']}` issues for {role_name} "
+                         f"({(r.stderr or r.stdout or 'bad output').strip()[:120]})")
+    if len(issues) >= 100:   # gh would silently drop the rest
+        raise CoordError(f"100 or more open `{cfg['watch_label']}` issues for {role_name}: "
+                         f"triage some by hand first")
+    items = [{"ref": f"#{i['number']}", "updated": i.get("updatedAt")} for i in issues]
+    section = cfg["watch_pr_section"]
+    if section:
+        r = ctx.sh.run(["gh", "pr", "list", "--state", "merged", "--label", f"role:{role_name}",
+                        "--json", "number,url,body", "--limit", "10"], cwd=ctx.root)
+        try:
+            prs = json.loads(r.stdout or "[]") if r.returncode == 0 else None
+        except ValueError:
+            prs = None
+        if prs is None:
+            raise CoordError(f"couldn't list {role_name}'s merged PRs "
+                             f"({(r.stderr or r.stdout or 'bad output').strip()[:120]})")
+        owner = (ctx.cfg.get("github_repo") or "").split("/")[0]
+        for p in prs:
+            if section not in (p.get("body") or ""):
+                continue
+            h = ctx.sh.run(["gh", "search", "issues", "--owner", owner, "--label", "release-change",
+                            "--json", "number", "--limit", "50", "--", p["url"]], cwd=ctx.root)
+            try:
+                opened = json.loads(h.stdout or "[]") if h.returncode == 0 else None
+            except ValueError:
+                opened = None
+            if opened is None:
+                raise CoordError(f"couldn't check the handoffs of PR #{p['number']} "
+                                 f"({(h.stderr or h.stdout or 'bad output').strip()[:120]})")
+            if len(opened) < planners_named(p.get("body") or "", section):   # one issue per planner
+                items.append({"ref": f"PR#{p['number']}", "updated": "merged"})
+    return items
+
+
+def state_get(ctx: Ctx, key: str, default=None):
+    return (read_json(ctx.dir / "signatures.json", {}) or {}).get(key, default)
+
+
+def _write_state(f: Path, d: dict) -> None:
+    f.parent.mkdir(parents=True, exist_ok=True)
+    tmp = f.with_suffix(".tmp")
+    tmp.write_text(json.dumps(d))
+    os.replace(tmp, f)   # a crash mid-write must not leave half a state file
+
+
+def state_put(ctx: Ctx, key: str, value) -> None:
+    f = ctx.dir / "signatures.json"
+    d = read_json(f, {}) or {}
+    d[key] = value
+    _write_state(f, d)
+
+
+def kinds_of(lane: dict) -> str:
+    """`story` for a lane on one story, `inbox` for a question lane, else `session`."""
+    return "story" if lane["story"] else "inbox" if lane.get("inbox") else "session"
+
+
+def board_now(ctx: Ctx) -> str:
+    """The board's signature as it is now. A lane that moves its own story changes the board,
+    so the signature saved after it is this one, not the one taken before it started."""
+    ctx.board.refresh()
+    state = ctx.sprint_state()
+    cur = sprint_number(state.get("current")) if state["state"] == "active" else None
+    return board_signature(ctx.stories(cur), state)
+
+
+def pr_closed_unmerged(ctx: Ctx, number: int | None) -> bool:
+    """The lane that set this role's signature opened a PR. If Brian closed it unmerged, the
+    board is unchanged but the work isn't there, so the role runs again."""
+    if number is None:
+        return False
+    r = ctx.sh.run(["gh", "pr", "view", str(number), "--json", "state"], cwd=ctx.root)
+    try:
+        return r.returncode == 0 and json.loads(r.stdout).get("state") == "CLOSED"
+    except ValueError:
+        return False
+
+
+def render_plan(state, stories, lanes, waiting, live) -> str:
+    out = [f"Sprint: {state.get('state')}" + (f" ({state['current']})" if state.get("current") else "")
+           + f"; {len(stories)} stories on the board for it"]
+    if live:
+        out.append("Running: " + ", ".join(l["lane"] for l in live))
+    out.append("")
+    if lanes:
+        out.append("Lanes to start:")
+        for l in lanes:
+            what = l["story"] or ("triage " + ", ".join(l["watch"]) if l.get("watch") else
+                                  "close the sprint" if l.get("close") else
+                                  "answer questions on " + ", ".join(l.get("asked") or []) if l.get("inbox")
+                                  else "session")
+            out.append(f"  {l['role']:15} {what}" + (" (resume)" if l.get("resume") else ""))
+    else:
+        out.append("No lane can start.")
+    if waiting:
+        out += ["", "Not starting:"]
+        for w in waiting:
+            out.append(f"  {w['story']:12} {w['status']:11} {w['lane']:15} {w['why']}  [waiting on {w['on']}]")
+    return "\n".join(out)
+
+
+def cmd_plan(ctx: Ctx, a) -> int:
+    state, stories, lanes, waiting, live, _ = gather(ctx, a)
+    if a.json:
+        print(json.dumps({"state": state, "lanes": lanes, "waiting": waiting,
+                          "running": [l["lane"] for l in live]}, indent=2))
+    else:
+        print(render_plan(state, stories, lanes, waiting, live))
+    return 0
+
+
+def render_report(run_id, results, waiting, state, ran=None) -> str:
+    ran = DEFAULT_ROLES if ran is None else ran
+    rows = ["| Lane | Story now | Result | PR | Codex | Cost |", "|---|---|---|---|---|---|"]
+    for r in results:
+        pr = r.get("pr")
+        rows.append(f"| {r['lane']} | {r.get('story_status', '-')} | {r['verdict']} | "
+                    f"{pr['url'] if pr else '-'} | {(r.get('codex') or {}).get('state', '-')} | "
+                    f"{('$%.2f' % r['cost_usd']) if r.get('cost_usd') is not None else '-'} |")
+    out = [f"# Run {run_id}", "", f"Sprint: {state.get('state')} {state.get('current', '')}".strip(), ""]
+    out += rows if results else ["No lanes ran."]
+    needs = [f"- {r['lane']}: {r['verdict']} (log: {r['log']})" for r in results if not r.get("ok")]
+    needs += [f"- {r['lane']}: {r['pr']['url']} awaits you: {r['approval']}" for r in results
+              if r.get("ok") and r.get("approval") and r.get("pr")]
+    needs += [f"- {r['lane']}: {r['codex']['handled']} Codex threads answered by the lane (a reply is not a "
+              f"fix; read them on {r['pr']['url'] if r.get('pr') else 'the PR'})"
+              for r in results if (r.get("codex") or {}).get("handled")]
+    needs += [f"- {w['story']}: {w['why']} — waiting on {w['on']}" for w in waiting
+              if w["on"] in ("architecture", "Brian", "pm", "§8 review / merge") or w["lane"] not in ran]
+    if needs:
+        out += ["", "## Needs attention", ""] + needs
+    return "\n".join(out)
+
+
+def failed(lane_name_: str, why: str, log: str = "-") -> dict:
+    return {"lane": lane_name_, "log": log, "error": why, "verdict": f"failed: {why}", "ok": False}
+
+
+def write_report(run_dir: Path, report: str, results: list[dict]) -> None:
+    (run_dir / "report.md").write_text(report)
+    (run_dir / "results.json").write_text(json.dumps(results, indent=2, default=str))
+
+
+def main_protection(ctx: Ctx) -> str | None:
+    """Why origin's main isn't safe to run lanes against, or None: a lane's own code (its check
+    command, CI) runs with the person's credentials, so main must take only reviewed pull requests."""
+    def count(rows) -> int:
+        return max([int((r.get("parameters") or {}).get("required_approving_review_count") or 0)
+                    for r in rows if r.get("type") == "pull_request"] or [0])
+    try:
+        r = ctx.sh.run(["gh", "api", "repos/{owner}/{repo}/rules/branches/main"], cwd=ctx.root)
+        n = count(json.loads(r.stdout)) if r.returncode == 0 else 0
+        if n < 1:
+            r = ctx.sh.run(["gh", "api", "repos/{owner}/{repo}/branches/main/protection"], cwd=ctx.root)
+            if r.returncode == 0:
+                n = int(((json.loads(r.stdout).get("required_pull_request_reviews") or {})
+                         .get("required_approving_review_count")) or 0)
+    except (ValueError, OSError, AttributeError):
+        n = 0
+    if n >= 1:
+        return None
+    return ("origin's main is not protected: lanes run unattended only when a ruleset or branch protection "
+            "requires a pull request with at least one approving review (a lane's own code runs with your "
+            "credentials, and a merged lane commit is a person's responsibility)")
+
+
+def cmd_run(ctx: Ctx, a) -> int:
+    ctx.lane_allow = not getattr(a, "no_lane_allow", False)
+    with Lock(ctx):
+        state, stories, lanes, waiting, live, sig = gather(ctx, a, prune=True)
+        print(render_plan(state, stories, lanes, waiting, live))
+        if not a.apply or not lanes:
+            if lanes:
+                print("\n(dry run: add --apply to start these lanes)")
+            return 0
+        why = main_protection(ctx)
+        if why:
+            print(f"{'WARNING' if a.unprotected_main else 'refusing to run'}: {why}"
+                  + ("" if a.unprotected_main else " (--unprotected-main starts the lanes anyway)"))
+            if not a.unprotected_main:
+                return 1
+        if not (os.environ.get("GH_TOKEN") or os.environ.get("GITHUB_TOKEN")):
+            print("note: GH_TOKEN isn't set, so lanes use gh's keyring token with every scope it has; "
+                  "a token scoped to this repo is safer")
+        try:
+            lane_env(dict(os.environ))
+        except CoordError as e:
+            print(f"refusing to run: {e}")
+            return 1
+        run_id = datetime.now(timezone.utc).strftime("%Y%m%d-%H%M%S") + "-" + uuid.uuid4().hex[:4]
+        run_dir = ctx.dir / "runs" / run_id
+        run_dir.mkdir(parents=True)
+        wt_dir = Path(a.worktrees) if a.worktrees else ctx.root / ".claude" / "worktrees"
+        results, pending = [], []
+        deadline = a.timeout_min * 60
+        prev_int = signal.getsignal(signal.SIGINT)
+        prev = signal.signal(signal.SIGTERM, lambda *_: (_ for _ in ()).throw(KeyboardInterrupt()))
+        try:
+            for lane in lanes:  # one lane failing to start doesn't strand or skip the others
+                lane["stamp"] = run_id
+                try:
+                    run_lane(ctx, lane, run_id, run_dir, a, wt_dir, pending)
+                    print(f"started {lane_name(lane)}")
+                except (CoordError, OSError) as e:
+                    results.append(failed(lane_name(lane), str(e)))
+            while pending:
+                for h in list(pending):
+                    exited = h["proc"].poll() is not None
+                    over = not exited and time.monotonic() - h["t0"] > deadline
+                    if not (exited or over):
+                        continue
+                    try:
+                        r = finish_lane(ctx, h, over)
+                    except Exception as e:  # a failed inspection must not lose the other lanes' results
+                        r = failed(h["rec"]["lane"], f"inspection failed: {e}", str(h["log"]))
+                        (ctx.dir / "active" / f"{h['rec']['lane']}.json").unlink(missing_ok=True)
+                    pending.remove(h)  # only now: an interrupt before this still cleans the lane up
+                    results.append(r)
+                    if h["lane"].get("inbox") and not r.get("error"):
+                        ir = h["lane"]["role"]   # tried, ok or not: not run again until a comment changes it
+                        state_put(ctx, f"{ir}:inbox", {**(state_get(ctx, f"{ir}:inbox", {}) or {}),
+                                                       **h["lane"].get("asked_digests", {})})
+                    if h["lane"].get("watch") and r.get("watch_seen") is not None and not r.get("error"):
+                        wr = h["lane"]["role"]   # tried, ok or not: not queued again until it changes.
+                        # (A crash or timeout says nothing about the items: they stay queued.)
+                        state_put(ctx, f"{wr}:seen", {**state_get(ctx, f"{wr}:seen", {}), **r["watch_seen"]})
+                        # keep earlier untouched items; this lane's own queue is re-judged
+                        old_stuck = {k: v for k, v in (state_get(ctx, f"{wr}:stuck", {}) or {}).items()
+                                     if k not in h["lane"]["watch"]}
+                        state_put(ctx, f"{wr}:stuck", {**old_stuck, **r["watch_stuck"]})
+                        state_put(ctx, f"{wr}:open", {**(state_get(ctx, f"{wr}:open", {}) or {}),
+                                                      **r["watch_open"]})
+                    if (h["lane"].get("watch") or h["lane"].get("inbox")) and r.get("tree_clean") \
+                            and not r.get("error"):   # one worktree per such lane: nothing here to keep
+                        ctx.sh.run(["git", "worktree", "remove", str(h["wt"])], cwd=ctx.root)
+                    elif kinds_of(h["lane"]) == "session" and r.get("ok"):
+                        try:
+                            after = board_now(ctx)
+                        except (CoordError, story.StoryError, OSError):
+                            after = sig  # can't re-read: the older signature only errs toward a rerun
+                        save_signature(ctx, h["lane"]["role"], after, (r.get("pr") or {}).get("number"))
+                if pending:
+                    time.sleep(a.poll)
+        except BaseException:
+            # Interrupted: a second Ctrl-C or SIGTERM must not abandon the cleanup halfway.
+            signal.signal(signal.SIGINT, signal.SIG_IGN)
+            signal.signal(signal.SIGTERM, signal.SIG_IGN)
+            terminate(*[h["proc"] for h in pending])
+            for h in pending:
+                (ctx.dir / "active" / f"{h['rec']['lane']}.json").unlink(missing_ok=True)
+                role.put_role(ctx.root, h["rec"]["session"], None)
+                results.append(failed(h["rec"]["lane"], "interrupted", str(h["log"])))
+            write_report(run_dir, render_report(run_id, results, waiting, state, getattr(a, "ran_roles", None)), results)
+            raise
+        finally:
+            signal.signal(signal.SIGINT, prev_int)
+            signal.signal(signal.SIGTERM, prev)
+        try:  # lanes changed the board: report the sprint and what waits as they are now
+            state, _, _, waiting, _, _ = gather(ctx, a)
+        except (CoordError, story.StoryError, OSError):
+            pass
+        report = render_report(run_id, results, waiting, state, getattr(a, "ran_roles", None))
+        write_report(run_dir, report, results)
+        print("\n" + report)
+        return 0 if all(r.get("ok") for r in results) else 1
+
+
+def cmd_status(ctx: Ctx, a) -> int:
+    live = active_lanes(ctx)
+    for l in live:
+        print(f"running  {l['lane']:30} pid {l['pid']}  since {l['started']}  run {l['run']}")
+    if not live:
+        print("no lanes running")
+    runs = sorted((ctx.dir / "runs").glob("*/report.md")) if (ctx.dir / "runs").is_dir() else []
+    if runs:
+        print(f"\nlast report: {runs[-1]}")
+    return 0
+
+
+def cmd_clean(ctx: Ctx, a) -> int:
+    """Remove lane worktrees that hold nothing the repo doesn't: no uncommitted or untracked
+    files, no commits that neither origin/main nor a merged/closed PR at this very commit
+    carries, no open PR, and no running lane."""
+    with Lock(ctx):   # a run starting meanwhile would lose a fresh, still-empty worktree
+        return _clean(ctx, a)
+
+
+def _clean(ctx: Ctx, a) -> int:
+    wt_dir = Path(a.worktrees) if getattr(a, "worktrees", None) else ctx.root / ".claude" / "worktrees"
+    live = {str(Path(l["worktree"]).resolve()) for l in active_lanes(ctx)}
+    ctx.sh.run(["git", "fetch", "origin", "--quiet"], cwd=ctx.root)
+    n = 0
+    for p in sorted(wt_dir.glob("*")) if wt_dir.is_dir() else []:
+        if str(p.resolve()) in live or not (p / ".git").exists():
+            continue
+        branch = ctx.sh.run(["git", "branch", "--show-current"], cwd=p).stdout.strip()
+        head = ctx.sh.run(["git", "rev-parse", "HEAD"], cwd=p).stdout.strip()
+        dirty = ctx.sh.run(["git", "status", "--porcelain"], cwd=p).stdout.strip()
+        ahead = ctx.sh.run(["git", "rev-list", "--count", "refs/remotes/origin/main..HEAD"], cwd=p).stdout.strip()
+        ahead = int(ahead) if ahead.isdigit() else 1  # can't tell: assume work
+        pr = None
+        if branch:
+            r = ctx.sh.run(["gh", "pr", "list", "--head", branch, "--state", "all", "--json",
+                            "state,headRefOid", "--limit", "1"], cwd=ctx.root)
+            try:
+                prs = json.loads(r.stdout or "[]") if r.returncode == 0 else []
+            except ValueError:
+                prs = []
+            pr = prs[0] if prs else None
+        state = pr["state"] if pr else None
+        carried = bool(pr) and state in ("MERGED", "CLOSED") and pr.get("headRefOid") == head
+        stranded = ahead > 0 and not carried
+        removable = not dirty and not stranded and state != "OPEN"
+        why = ", ".join(x for x in (state or "no PR", "uncommitted or untracked files" if dirty else "",
+                                    f"{ahead} unpushed commit(s)" if stranded else "") if x)
+        print(f"{'remove' if removable else 'keep  '}  {p.name}  ({why})")
+        if removable and a.apply:
+            ctx.sh.run(["git", "worktree", "remove", str(p)], cwd=ctx.root, check=True)
+            n += 1
+    if n:
+        print(f"removed {n}")
+    return 0
+
+
+def parser() -> argparse.ArgumentParser:
+    ap = argparse.ArgumentParser(prog="coordinator", description=__doc__.split("\n\n")[0])
+    sub = ap.add_subparsers(dest="cmd", required=True)
+    for name in ("plan", "run"):
+        s = sub.add_parser(name)
+        s.add_argument("--roles", default=None,
+                       help="comma-separated; default: every role with a charter here that runs as a lane")
+        s.add_argument("--max-lanes", type=int, default=3)
+        s.add_argument("--pm-close", action="store_true")
+        if name == "plan":
+            s.add_argument("--json", action="store_true")
+        else:
+            s.add_argument("--apply", action="store_true")
+            s.add_argument("--timeout-min", type=float, default=90)
+            s.add_argument("--budget-usd", type=float, default=15)
+            s.add_argument("--no-lane-allow", action="store_true",
+                           help="start lanes with only the repo's own permissions (no allow-list)")
+            s.add_argument("--unprotected-main", action="store_true",
+                           help="start lanes although origin's main takes unreviewed pushes or merges")
+            s.add_argument("--worktrees")
+            s.add_argument("--poll", type=float, default=15)
+    sub.add_parser("status")
+    s = sub.add_parser("clean")
+    s.add_argument("--apply", action="store_true")
+    s.add_argument("--worktrees")
+    return ap
+
+
+def main(argv: list[str], gh=None, sh: Shell | None = None, claude: str | None = None) -> int:
+    a = parser().parse_args(argv)
+    root = role.repo_root(Path.cwd())
+    if root is None:
+        print("coordinator: not inside a git repository", file=sys.stderr)
+        return 2
+    try:
+        ctx = Ctx(root, sh or Shell(), gh, claude)
+        return {"plan": cmd_plan, "run": cmd_run, "status": cmd_status, "clean": cmd_clean}[a.cmd](ctx, a)
+    except (CoordError, story.StoryError, OSError) as e:
+        print(f"coordinator: {e}", file=sys.stderr)
+        return 2
+
+
+if __name__ == "__main__":
+    sys.exit(main(sys.argv[1:]))

@@ -182,10 +182,19 @@ def parse_frontmatter(text: str) -> tuple[dict, str]:
     return meta, body
 
 
+def lane_roles_dir() -> Path | None:
+    """In a coordinator lane, the role files the coordinator copied next to this hook when it
+    started the run: the lane's checkout is the lane's to edit, so policy never comes from it."""
+    if not os.environ.get("COORDINATOR_LANE"):
+        return None
+    d = Path(__file__).resolve().parent / "roles"
+    return d if d.is_dir() else None
+
+
 class Roles:
     def __init__(self, root: Path):
         self.root = root
-        self.dir = root / ".claude" / "roles"
+        self.dir = lane_roles_dir() or root / ".claude" / "roles"
         self.roles: dict[str, tuple[dict, str]] = {}
         self.alias: dict[str, str] = {}
         self.repo: dict = {}
@@ -246,14 +255,25 @@ def get_role(root: Path, sid: str) -> str | None:
     return f.read_text().strip() if f.is_file() else None
 
 
-def put_role(root: Path, sid: str, role: str | None) -> None:
+def pin_file(root: Path, sid: str) -> Path:
+    return state_dir(root) / ".pinned" / _check_session(sid)
+
+
+def put_role(root: Path, sid: str, role: str | None, pinned: bool = False) -> None:
+    """Record a session's role. `pinned` (the coordinator, for a lane) fixes it: the `role set` and
+    `role clear` commands refuse a pinned session, so a lane can't re-role itself. Only this
+    function, called by the coordinator, writes or releases a pin."""
     d = state_dir(root)
     f = d / _check_session(sid)
     if role is None:
         f.unlink(missing_ok=True)
+        pin_file(root, sid).unlink(missing_ok=True)
         return
     d.mkdir(parents=True, exist_ok=True)
     f.write_text(role + "\n")
+    if pinned:
+        pin_file(root, sid).parent.mkdir(parents=True, exist_ok=True)
+        pin_file(root, sid).write_text("coordinator\n")
 
 
 def head_sha(root: Path) -> str | None:
@@ -346,6 +366,9 @@ def cmd_set(args: list[str]) -> int:
     if role is None:
         print(f"role: unknown role {args[0]!r}. Choose one of: {roles.names()}", file=sys.stderr)
         return 1
+    if pin_file(root, args[1]).exists():
+        print("role: this session's role is fixed (a coordinator lane); it can't be changed", file=sys.stderr)
+        return 1
     prev = get_role(root, args[1])
     put_role(root, args[1], role)
     if prev and prev != role:
@@ -380,7 +403,11 @@ def cmd_clear(args: list[str]) -> int:
     if len(args) != 1:
         print("usage: role clear <session_id>", file=sys.stderr)
         return 2
-    put_role(_root_or_die(), args[0], None)
+    root = _root_or_die()
+    if pin_file(root, args[0]).exists():
+        print("role: this session's role is fixed (a coordinator lane); it can't be cleared", file=sys.stderr)
+        return 1
+    put_role(root, args[0], None)
     print("role cleared")
     return 0
 
@@ -482,15 +509,56 @@ def _decision(kind: str, reason: str) -> int:
     return 0
 
 
+LANE_READ_TOOLS = {"Read", "NotebookRead", "Glob", "Grep", "LS"}
+
+
+def lane_read_problem(tool: str, ti: dict, cwd: Path) -> str | None:
+    """A lane reads inside the worktree it runs in (its .claude/ skills included), judged on the
+    resolved path: never /proc, credentials, the main checkout, or anything else on the machine."""
+    here = repo_root(cwd)
+    if here is None:
+        return f"{cwd} is not inside the lane's repo"
+    here = here.resolve()
+    targets = [ti.get(k) for k in ("file_path", "notebook_path", "path") if ti.get(k)]
+    for k in ("pattern", "glob"):   # Glob's pattern and Grep's glob are paths; Grep's pattern is a regex
+        v = ti.get(k)
+        if v and (tool == "Glob" or k == "glob"):
+            fixed = re.split(r"[*?\[{]", v, maxsplit=1)[0]
+            targets.append(fixed or ".")
+    for t in targets or ["."]:
+        if t.startswith("~") or "$" in t:
+            return f"a lane reads files from its worktree only, not {t!r}"
+        p = Path(t) if os.path.isabs(t) else cwd / t
+        try:
+            r = Path(os.path.normpath(p)).resolve()
+        except (OSError, RuntimeError):
+            return f"can't resolve {t!r}"
+        if not r.is_relative_to(here):
+            return f"a lane reads files from its worktree only, not {t!r}"
+    return None
+
+
 def hook_pre_tool_use(_: list[str]) -> int:
     data = _hook_input()
+    if os.environ.get("COORDINATOR_LANE") and not data:
+        return _decision("deny", "coordinator lane: the hook's input couldn't be read; failing closed")
     ti = data.get("tool_input") or {}
+    if data.get("tool_name") in LANE_READ_TOOLS:
+        if not os.environ.get("COORDINATOR_LANE"):
+            return 0   # a person's session reads anything
+        cwd = Path(data.get("cwd") or os.getcwd())
+        problem = _lane_machinery_problem(cwd) or lane_read_problem(data["tool_name"], ti, cwd)
+        return _decision("deny", f"coordinator lane: {problem}") if problem else 0
     target = ti.get("file_path") or ti.get("notebook_path")
     if not target:
         return 0
     cwd = Path(data.get("cwd") or os.getcwd())
     path = Path(target) if os.path.isabs(target) else cwd / target
     path = Path(os.path.normpath(path))
+    if os.environ.get("COORDINATOR_LANE"):
+        problem = _lane_machinery_problem(cwd) or lane_edit_problem(path, cwd)
+        if problem:
+            return _decision("deny", f"coordinator lane: {problem}")
     root = repo_root(path)
     if root is None:
         return 0  # outside any repo: not ours to police
@@ -672,9 +740,10 @@ def _split_opts(args: list[str], with_value: set[str]) -> tuple[list[tuple[str, 
 
 class Gated:
     def __init__(self, kind: str, where: Path, args: list[str], issue: str | None = None,
-                 repo: str | None = None):
+                 repo: str | None = None, via: list[str] | None = None):
         self.kind, self.where, self.args = kind, where, args
         self.issue, self.repo = issue, repo
+        self.via = via or []   # env assignments and wrapper words the command was reached through
 
 
 def _path(base: Path, p: str) -> Path:
@@ -752,24 +821,33 @@ def gated_commands(command: str, cwd: Path, depth: int = 0) -> list[Gated]:
             cwd = scopes.pop() if scopes else cwd
             continue
         where = cwd
+        via: list[str] = []
         while seg:
             m = VAR_RE.match(seg[0])
             if m:
                 if m.group(1) == "GIT_DIR":
                     where = _git_dir_worktree(_path(cwd, m.group(2)))
-                seg = seg[1:]
+                via.append(seg[0]); seg = seg[1:]
             elif seg[0] in PREFIX_WORDS:
                 seg = seg[1:]
             elif os.path.basename(seg[0]) in WRAPPERS:
                 # skip to the command it runs: the first git/gh/shell/eval word
+                via.append(seg[0])
                 nxt = next((k for k, t in enumerate(seg[1:], 1)
-                            if os.path.basename(t) in {"git", "gh", "pkill", "eval", *SHELLS}), None)
+                            if os.path.basename(t) in {"git", "gh", "pkill", "eval", *SHELLS, "python", "python3"}
+                            or "/.claude/bin/" in t or t.startswith(".claude/bin/")), None)
                 seg = seg[nxt:] if nxt else []
             else:
                 break
         if not seg:
+            if via:
+                found.append(Gated("prefix", where, [], via=via))   # a bare assignment: a lane judges the name
             continue
         head, rest = os.path.basename(seg[0]), seg[1:]
+        if "/.claude/bin/" in seg[0] or seg[0].startswith(".claude/bin/"):
+            found.append(Gated("repo tool", where, [head, *rest], via=via))      # only a coordinator lane cares
+        if head in ("python", "python3") and rest and ".claude/bin/" in rest[0]:
+            found.append(Gated("repo tool", where, [os.path.basename(rest[0]), *rest[1:]], via=via))
         if head in ("cd", "pushd"):
             dirs = [t for t in rest if t == "-" or not t.startswith("-")]
             target = oldpwd if dirs[:1] == ["-"] else _path(cwd, dirs[0]) if dirs else None
@@ -791,32 +869,49 @@ def gated_commands(command: str, cwd: Path, depth: int = 0) -> list[Gated]:
                                     where, depth + 1)
         elif head == "git":
             found += _gated_git(rest, where, depth)
+            found.append(Gated("git any", where, rest, via=via))
         elif head == "pkill":
-            found.append(Gated("pkill", where, rest))
+            found.append(Gated("pkill", where, rest, via=via))
         elif head == "gh":
+            found.append(Gated("gh any", where, rest, via=via))
             opts, pos = _split_opts(rest, GH_OPTS_WITH_VALUE)
             repo = next((v for n, v in opts if n in ("-R", "--repo")), None)
             if len(pos) >= 2 and pos[0] == "pr" and pos[1] in ("create", "new"):
-                found.append(Gated("gh pr create", where, rest))
+                found.append(Gated("gh pr create", where, rest, via=via))
             elif len(pos) >= 2 and pos[0] == "issue":
                 iopts, ipos = _split_opts(rest[rest.index("issue") + 1:], GH_ISSUE_OPTS_WITH_VALUE)
                 repo = next((v for n, v in iopts if n in ("-R", "--repo")), repo)
                 if ipos[:1] == ["edit"] and any(n in ("--add-project", "--remove-project")
                                                 for n, _ in iopts):
-                    found.append(Gated("gh issue edit --project", where, rest))
+                    found.append(Gated("gh issue edit --project", where, rest, via=via))
                 elif ipos[:1] and ipos[0] in GH_ISSUE_WRITES:
                     refs = ipos[1:2] if ipos[0] == "transfer" else ipos[1:]  # transfer <issue> <repo>
                     found.append(Gated(f"gh issue {ipos[0]}", where, rest,
                                        issue=refs or None, repo=repo))
                 elif ipos[:1] == ["create"] and any(n in ("-p", "--project") for n, _ in iopts):
-                    found.append(Gated("gh issue create --project", where, rest))
+                    found.append(Gated("gh issue create --project", where, rest, via=via))
             elif len(pos) >= 2 and pos[0] == "project" and pos[1] not in GH_PROJECT_READS:
-                found.append(Gated(f"gh project {pos[1]}", where, rest))
+                found.append(Gated(f"gh project {pos[1]}", where, rest, via=via))
             elif pos[:1] == ["api"]:
-                g = _gh_api_mutation(rest[rest.index("api") + 1:], where)
+                api_args = rest[rest.index("api") + 1:]
+                g = _gh_api_mutation(api_args, where)
                 if g:
                     found.append(g)
+                if _api_method_endpoint(api_args)[0] not in (None, "GET"):
+                    found.append(Gated("gh api write", where, api_args, via=via))  # only a coordinator lane cares
     return found
+
+
+def _api_method_endpoint(args: list[str]) -> tuple[str | None, str]:
+    """(HTTP method, endpoint) of a `gh api` call; `-f`/`-F`/`--input` make it a POST."""
+    opts, pos = _split_opts(args, GH_API_OPTS_WITH_VALUE)
+    if not pos:
+        return None, ""
+    method = next((v for n, v in opts if n in ("-X", "--method")), None)
+    if method is None:
+        has_body = any(n in ("-f", "--raw-field", "-F", "--field", "--input") for n, _ in opts)
+        method = "POST" if has_body else "GET"
+    return method.upper(), pos[0].lstrip("/").split("?", 1)[0]
 
 
 def _gh_api_mutation(args: list[str], where: Path) -> Gated | None:
@@ -871,7 +966,7 @@ def _cleared(root: Path, sha: str) -> bool:
     """Reviewed by /pre-pr, or already on origin/main (merged, so reviewed there)."""
     if is_reviewed(root, sha):
         return True
-    return subprocess.run(["git", "-C", str(root), "merge-base", "--is-ancestor", sha, "origin/main"],
+    return subprocess.run(["git", "-C", str(root), "merge-base", "--is-ancestor", sha, "refs/remotes/origin/main"],
                           capture_output=True).returncode == 0
 
 
@@ -1135,12 +1230,527 @@ def guard_problem(g: Gated) -> str | None:
             f"(`! git …` in the prompt).")
 
 
+LANE_ONLY = {"gh api write", "git any", "gh any", "repo tool"}   # looked at only inside a lane
+LANE_MAX_COMMAND, LANE_MAX_SEGMENTS = 8000, 12
+LANE_ENV_RE = re.compile(
+    r"\b(?:CLAUDE_SESSION_ID|CLAUDE_PROJECT_DIR|CLAUDE_ENV_FILE|COORDINATOR_[A-Z_]+)\b\s*=|"
+    r"\b(?:unset|export|declare|typeset|readonly)\b[^;&|\n]*\b(?:CLAUDE_|COORDINATOR_)|"
+    r"\benv\b[^;&|\n]*\s-(?:u|-unset)\b")
+LANE_DANGER_VAR = re.compile(r"^(?:GIT_|GH_|CLAUDE_|COORDINATOR_|LD_|XDG_|DYLD_|BASH_|ZDOTDIR|PATH|HOME|TMPDIR|"
+                             r"PAGER|EDITOR|VISUAL|SHELL|IFS|PS4|ENV|PROMPT_COMMAND|CDPATH|PYTHON|PERL|NODE|RUBY)")
+LANE_SHELL_BUILTINS = {"export", "declare", "typeset", "readonly", "unset", "source", ".", "eval", "alias",
+                       "enable", "trap", "exec", "env", "local", "setenv", "hash"}
+LANE_SUBST_OK = {"git", "gh", "mktemp", "date", "basename", "dirname", "pwd", "echo", "printf", "true"}
+LANE_READERS = {"wc", "head", "tail", "cut", "tr", "sort", "uniq", "grep", "cat"}   # in-worktree files only
+LANE_VAR_OK = {"CLAUDE_SESSION_ID", "CLAUDE_PROJECT_DIR", "PWD", "OLDPWD", "HOME", "TMPDIR", "USER"}
+LANE_VAR_RE = re.compile(r"\$(?:\{[#!]?)?([A-Za-z_][A-Za-z0-9_]*)")
+LANE_ROLE_VERBS = {"require", "show", "owners", "check-cmd", "reviewed", "list"}
+LANE_TOOLS = {"role", "story", "sprint-state", "codex-review"}
+LANE_GIT_GLOBAL_OK = {"--no-pager", "-P", "--no-optional-locks"}
+LANE_GIT_SUBS = {"status", "diff", "log", "show", "fetch", "branch", "switch", "checkout", "add", "commit",
+                 "push", "merge-base", "rev-parse", "rev-list", "ls-files", "worktree"}
+LANE_GIT_DENIED_LONG = ("--output", "--upload-pack", "--receive-pack", "--exec", "--exec-path", "--ext-diff",
+                        "--textconv", "--open-files-in-pager", "--git-dir", "--work-tree", "--config-env", "--no-index")
+SAFE_REF = re.compile(r"[A-Za-z0-9._/-]+")
+LANE_GH_VALUE_OPTS = GH_ISSUE_OPTS_WITH_VALUE | GH_API_OPTS_WITH_VALUE | {
+    "--json", "-q", "--jq", "--head", "-H", "--state", "-s", "--limit", "-L", "--base", "-B", "--search",
+    "-S", "--author", "-A", "--app", "--hostname", "--cache", "--template", "-t", "--title"}
+_PR_CREATE_OK = {"-t", "--title", "-b", "--body", "-F", "--body-file", "-l", "--label", "-B", "--base", "-H",
+                 "--head", "-d", "--draft", "-f", "--fill", "--fill-first", "--fill-verbose", "-T", "--template",
+                 "--no-maintainer-edit"}
+_COMMENT_OK = {"-b", "--body", "-F", "--body-file"}
+LANE_GH_WRITE_OPTS = {   # the only options a lane passes to gh's writes (no --dry-run push, no
+    ("pr", "create"): _PR_CREATE_OK, ("pr", "new"): _PR_CREATE_OK,     # --delete-last, no --parent)
+    ("pr", "comment"): _COMMENT_OK, ("issue", "comment"): _COMMENT_OK,
+    ("issue", "create"): {"-t", "--title", "-b", "--body", "-F", "--body-file", "-l", "--label"},
+    ("issue", "close"): {"-c", "--comment", "-r", "--reason"},
+}
+LANE_GH_VERBS = {"pr": {"create", "new", "view", "list", "diff", "checks", "comment", "status"},
+                 "issue": {"list", "view", "comment", "close", "create"}}
+LANE_API_READ = re.compile(r"(?:pulls|issues|commits|compare|branches)(?:/.*)?")
+LANE_API_REPLY = re.compile(r"(?:pulls/\d+/comments/\d+/replies|issues/\d+/comments)")
+LANE_WORKFLOW_DIRS = (".github/workflows/", ".github/actions/")
+
+
+def _lane_file_problem(value: str, where: Path) -> str | None:
+    """A file a lane hands to git, gh, or story must be inside its own worktree (or stdin): anything
+    else is a local file (credentials, /proc/self/environ) that the command would publish."""
+    if value == "-":
+        return None
+    if value.startswith(("~", "<", ">", "(")) or "$" in value or "`" in value:
+        return f"a lane reads files from its worktree only, not {value!r}"
+    root = repo_root(where)
+    p = Path(os.path.normpath(value if os.path.isabs(value) else where / value))
+    try:
+        inside = root is not None and p.resolve().is_relative_to(root.resolve())
+    except OSError:
+        inside = False
+    return None if inside else f"a lane reads files from its worktree only, not {value!r}"
+
+
+def _option_files(args: list[str], long_names: set[str], short_names: set[str]) -> list[str]:
+    """Values of file-taking options, in every spelling (`--f x`, `--f=x`, `-Fx`, `-F x`)."""
+    out, i = [], 0
+    while i < len(args):
+        a = args[i]
+        name, eq, val = a.partition("=")
+        if name in long_names or name in short_names:
+            out.append(val if eq else (args[i + 1] if i + 1 < len(args) else ""))
+            i += 0 if eq else 1
+        elif a.startswith("-") and not a.startswith("--") and len(a) > 2 and a[:2] in short_names:
+            out.append(a[2:].removeprefix("="))
+        i += 1
+    return out
+
+
+def _denied_long(name: str) -> bool:
+    """A long option git would read as one of the dangerous ones, abbreviation included."""
+    return name.startswith("--") and len(name) >= 4 and any(f.startswith(name) for f in LANE_GIT_DENIED_LONG)
+
+
+def _split_git(args: list[str]) -> tuple[list[str], str | None, list[str]]:
+    i, glob = 0, []
+    while i < len(args) and args[i].startswith("-"):
+        glob.append(args[i])
+        if args[i] in GIT_OPTS_WITH_VALUE and i + 1 < len(args):
+            glob.append(args[i + 1]); i += 1
+        i += 1
+    return glob, (args[i] if i < len(args) else None), args[i + 1:]
+
+
+def _lane_branch_prefix(g: Gated, sid: str) -> tuple[Path | None, str | None, str | None]:
+    root = repo_root(g.where)
+    if root is None:
+        return None, None, None
+    roles = Roles(root)
+    role = hook_role(root, sid)
+    return root, role, (roles.roles[role][0].get("branch_prefix") if role in roles.roles else None)
+
+
+def lane_push_problem(g: Gated, sid: str, args: list[str]) -> str | None:
+    """A lane pushes `origin` only, flags from a short whitelist, refspecs of plain branch names whose
+    destination is under the role's `branch_prefix`, and never workflow changes."""
+    root, role, prefix = _lane_branch_prefix(g, sid)
+    if root is None:
+        return "can't tell which repo this push is for"
+    if not prefix:
+        return f"role {role!r} has no branch_prefix, so a lane can't push"
+    opts, pos = _split_opts(args, PUSH_OPTS_WITH_VALUE)
+    for n, _ in opts:
+        if n not in ("--set-upstream", "--quiet", "--verbose") and \
+                not (re.fullmatch(r"-[uqv]+", n)):
+            return f"a lane pushes with -u/-q/-v only, not {n}"
+    if pos and pos[0] != "origin":
+        return f"a lane pushes to origin only, not {pos[0]!r}"
+    specs = pos[1:]
+    if not specs:   # git follows push.default and the upstream: name the branch, or it can reach main
+        return "name the branch: git push -u origin <branch> (a bare push follows push.default)"
+    for spec in specs:
+        if spec.startswith(("+", ":")) or not re.fullmatch(r"[A-Za-z0-9._/-]+(?::[A-Za-z0-9._/-]+)?", spec):
+            return f"a lane pushes plain branch names, not {spec!r}"
+        src, _, dst = spec.partition(":")
+        dst = (dst or src).removeprefix("refs/heads/")
+        cur = ""
+        try:
+            cur = _git(g.where, "branch", "--show-current").strip()
+        except (subprocess.CalledProcessError, OSError):
+            pass
+        dst = cur if dst == "HEAD" else dst
+        if dst in ("main", "master", "HEAD") or not prefix.endswith("/"):
+            return f"a lane never pushes {dst or '?'} (its role's branch_prefix must end in `/`: {prefix!r})"
+        if ".." in dst or not dst.startswith(prefix):
+            return f"a {role} lane pushes only branches under {prefix} (this goes to {dst or '?'})"
+        srcref = cur if src == "HEAD" else src.removeprefix("refs/heads/")
+        sha = _commit(root, srcref)
+        try:
+            changed = _git(g.where, "diff", "--name-only", "--no-renames",
+                           f"refs/remotes/origin/main...{sha}").splitlines() if sha else None
+        except (subprocess.CalledProcessError, OSError):
+            changed = None
+        if changed is None:
+            return f"can't compare {srcref!r} with origin/main to check what it changes"
+        if any(p.startswith(LANE_WORKFLOW_DIRS) for p in changed):
+            return ("this push changes a GitHub workflow (.github/workflows or actions), which runs "
+                    "with the repo's secrets: a person pushes those")
+    return None
+
+
+def _lane_new_branch_problem(g: Gated, sid: str, name: str) -> str | None:
+    root, role, prefix = _lane_branch_prefix(g, sid)
+    if root is None or not prefix:
+        return f"role {role!r} has no branch_prefix, so a lane can't create a branch"
+    if not SAFE_REF.fullmatch(name) or name.startswith(("origin/", "refs/", "-")) or name in ("HEAD", "main"):
+        return f"a lane's branch is a plain name under {prefix!r}, not {name!r}"
+    if not prefix.endswith("/") or not name.startswith(prefix):
+        return f"a lane's branches start with {prefix!r}, not {name!r}"
+    return None
+
+
+def lane_git_problem(g: Gated, sid: str) -> str | None:
+    glob, sub, args = _split_git(g.args)
+    bad = [x for x in glob if x not in LANE_GIT_GLOBAL_OK]
+    if bad:
+        return f"a lane runs git without {bad[0]} (config, paths, and exec options are set by the repo)"
+    if sub not in LANE_GIT_SUBS:
+        return f"git {sub} isn't something a lane runs"
+    for a in args:
+        if a == "--":
+            break
+        if _denied_long(a.split("=", 1)[0]):
+            return f"a lane never passes {a.split('=', 1)[0]} to git (it writes files or runs commands)"
+    opts, pos = _split_opts(args, {"-m", "-F", "-C", "-c", "-b", "-B", "--format", "--pretty", "-n", "-U", "-S"})
+    names = [n for n, _ in opts]
+    if sub in ("diff", "log", "show", "ls-files"):
+        # git diff reads two paths outside the repo as --no-index, and its output is publishable
+        for a in pos:
+            if a.startswith(("/", "~")) or "$" in a or ".." in a.split("/"):
+                why = _lane_file_problem(a, g.where)
+                if why:
+                    return why
+    if sub in ("commit", "add"):
+        for f in _option_files(args, {"--file", "--template", "--pathspec-from-file"}, {"-F", "-t"}):
+            why = _lane_file_problem(f, g.where)
+            if why:
+                return why
+    if sub == "push":
+        return lane_push_problem(g, sid, args)
+    if sub == "fetch":
+        if any(n not in ("-q", "--quiet", "-v", "--verbose") for n in names):
+            return "a lane fetches with -q/-v only"
+        if pos and pos[0] != "origin":
+            return f"a lane fetches origin only, not {pos[0]!r}"
+        if pos[1:] not in ([], ["main"]):   # a refspec can bring in a fork's or a PR's commits
+            return "a lane fetches `origin` or `origin main`, no other refspec"
+    elif sub in ("checkout", "switch"):
+        # A new branch at HEAD, or (switch only) one of the role's own branches whose tree still
+        # carries .claude/: moving the checkout to a commit without it drops the hooks.
+        if len(args) == 2 and args[0] in ("-b", "-c", "--create"):
+            return _lane_new_branch_problem(g, sid, args[1])
+        if sub == "switch" and len(args) == 1 and not args[0].startswith("-"):
+            why = _lane_new_branch_problem(g, sid, args[0])
+            if why:
+                return why
+            for p in (".claude/bin/role", ".claude/roles"):
+                if subprocess.run(["git", "-C", str(g.where), "cat-file", "-e", f"refs/heads/{args[0]}:{p}"],
+                                  capture_output=True).returncode != 0:
+                    return f"a lane switches only to a branch that carries {p} (so the hooks stay), not {args[0]!r}"
+            return None
+        return ("a lane creates a branch at HEAD with `git switch -c <name>` or `git checkout -b <name>`, or "
+                "switches to one of its own branches; it never moves its checkout elsewhere")
+    elif sub == "branch":
+        if not args or any(a not in ("--show-current", "--list", "-a", "-r", "-v", "-vv") for a in args):
+            return "a lane reads branches (--show-current, --list); it doesn't delete or move them"
+    elif sub == "worktree":
+        verb = pos[0] if pos else None
+        if verb not in ("add", "list", "remove", "prune"):
+            return "a lane uses git worktree add, list, remove, or prune"
+        if any(n in ("-f", "--force", "--lock") or re.fullmatch(r"-[a-z]*f[a-z]*", n) for n in names):
+            return "a lane never forces a worktree add or remove"
+        if verb in ("remove", "add"):
+            try:
+                lanes = (_common_dir(g.where).parent / ".claude" / "worktrees").resolve()
+                for target in pos[1:]:
+                    if "$" in target or "`" in target:
+                        continue    # `$(mktemp -d)/review`: /pre-pr's reviewer; the path isn't the lanes' dir
+                    t = Path(os.path.normpath(target if os.path.isabs(target) else g.where / target)).resolve()
+                    if t == lanes or t.is_relative_to(lanes):
+                        return f"a lane never {verb}s a worktree under the lanes' directory (.claude/worktrees)"
+            except (subprocess.CalledProcessError, OSError):
+                return "can't tell which worktree that is"
+    return None
+
+
+def lane_tool_problem(args: list[str], where: Path) -> str | None:
+    tool, rest = args[0], args[1:]
+    if tool not in LANE_TOOLS:
+        return f".claude/bin/{tool} isn't a lane's tool"
+    if tool == "role":
+        verb = next((a for a in rest if not a.startswith("-")), None)
+        if verb not in LANE_ROLE_VERBS:
+            return "a lane can't change roles or sessions (role set/clear)"
+    if tool == "story":
+        if any(re.fullmatch(r"--s(?:i(?:d)?)?(?:=.*)?", a) for a in rest):   # argparse accepts abbreviations
+            return "a lane acts as its own session; story --sid is for people"
+        for f in _option_files(rest, {"--body-file", "--file"}, set()):
+            why = _lane_file_problem(f, where)
+            if why:
+                return why
+    return None
+
+
+def lane_gh_problem(g: Gated, sid: str) -> str | None:
+    root = repo_root(g.where)
+    repo = (Roles(root).repo.get("github_repo") if root else None) or ""
+    opts, pos = _split_opts(g.args, LANE_GH_VALUE_OPTS)
+    for n, _ in opts:
+        if n in ("-R", "--repo", "--hostname") or re.fullmatch(r"-R.+", n):
+            return "a lane talks to this repo only (no --repo/-R/--hostname)"
+    if not pos:
+        return "gh needs a verb"
+    head, verb = pos[0], (pos[1] if len(pos) > 1 else None)
+    if head in LANE_GH_VERBS:
+        if verb not in LANE_GH_VERBS[head]:
+            return f"gh {head} {verb} isn't a lane's (it never merges, closes a PR, or approves)"
+        if any(not re.fullmatch(r"\d+", x) for x in pos[2:]):
+            return "a lane names pull requests and issues by number (no URLs, owner/repo#N, or branch names)"
+        if any(n in ("-S", "--search") for n, _ in opts):
+            return "a lane doesn't search (a search qualifier can reach other repos)"
+        allowed = LANE_GH_WRITE_OPTS.get((head, verb))
+        if allowed is not None:
+            bad = [n for n, _ in opts if n not in allowed]
+            if bad:
+                return (f"gh {head} {verb} in a lane takes {', '.join(sorted(o for o in allowed if o.startswith('--')))} "
+                        f"only, not {bad[0]}")
+        if head == "pr" and verb in ("create", "new"):
+            for n, v in opts:
+                if n in ("-H", "--head") and ":" in v:
+                    return "a lane opens a pull request from its own branch (no <owner>:<branch> head)"
+        for f in _option_files(g.args, {"--body-file", "--template", "--recover"}, {"-F", "-T"}):
+            why = _lane_file_problem(f, g.where)
+            if why:
+                return why
+        return None
+    if head != "api":
+        return f"gh {head} isn't a lane's"
+    api = g.args[g.args.index("api") + 1:]
+    aopts, apos = _split_opts(api, GH_API_OPTS_WITH_VALUE)
+    if sum(1 for n, _ in aopts if n in ("-X", "--method")) > 1:
+        return "gh api with more than one method"
+    method, endpoint = _api_method_endpoint(api)
+    if re.search(r"\.\.|%|//|#|\\", endpoint):
+        return "a lane's gh api endpoint has no `..`, encoding, `//`, or `#` in it"
+    for v in _option_files(api, {"--field"}, {"-F"}):
+        if "=@" in v:
+            why = _lane_file_problem(v.split("=@", 1)[1], g.where)
+            if why:
+                return why
+    for f in _option_files(api, {"--input"}, set()):
+        why = _lane_file_problem(f, g.where)
+        if why:
+            return why
+    m = re.fullmatch(r"repos/([^/]+/[^/]+)/(.+)", endpoint)
+    if not m or (m.group(1) != repo and m.group(1) != "{owner}/{repo}"):
+        return "a lane's gh api calls stay inside this repo (repos/<this repo>/...)"
+    tail = m.group(2)
+    if method == "GET":
+        return None if LANE_API_READ.fullmatch(tail) else "a lane reads pulls, issues, commits, compare, and branches through the API"
+    if method == "POST" and LANE_API_REPLY.fullmatch(tail):
+        return None
+    return ("a lane may only read the API and reply to PR comments (POST repos/<this repo>/pulls/N/"
+            "comments/ID/replies or issues/N/comments); it never merges, closes, approves, or deletes")
+
+
+def _substitutions(text: str) -> list[str]:
+    """Bodies of every `$(...)`, backtick, `<(...)` and `>(...)` outside single quotes, nested ones
+    included (the shell runs them all, quoted or not)."""
+    out: list[str] = []
+    quote, i, n = None, 0, len(text)
+    while i < n:
+        c = text[i]
+        if c == "\\" and quote != "'" and i + 1 < n:
+            i += 2; continue
+        if quote == "'":
+            quote = None if c == "'" else quote
+            i += 1; continue
+        if c == "'" and quote is None:
+            quote = c; i += 1; continue
+        if c == '"':
+            quote = None if quote == '"' else '"'
+            i += 1; continue
+        if (text.startswith("$(", i) and not text.startswith("$((", i)) or (quote is None and text.startswith(("<(", ">("), i)):
+            j = _close_paren(text, i + 2)
+            j = n if j < 0 else j
+            body = text[i + 2:j]
+            out.append(body); out += _substitutions(body)
+            i = j + 1; continue
+        if c == "`":
+            j = text.find("`", i + 1)
+            j = n if j < 0 else j
+            body = text[i + 1:j]
+            out.append(body); out += _substitutions(body)
+            i = j + 1; continue
+        i += 1
+    return out
+
+
+def _simple_commands(text: str) -> list[list[str]]:
+    """Every simple command in `text`, leading shell keywords dropped (assignment prefixes kept)."""
+    out: list[list[str]] = []
+    for seg in _segments(_tokens(_prescan(_strip_heredocs(text))[0])):
+        if seg is OPEN or seg is CLOSE or not seg:
+            continue
+        out.append([t for t in seg if t not in PREFIX_WORDS] or seg)
+    return out
+
+
+def _lane_var_problem(command: str) -> str | None:
+    """A `$NAME` the lane's environment has (GH_TOKEN, ANTHROPIC_API_KEY, ...) would put its value
+    in a comment, a commit or a PR. Single-quoted text isn't expanded; `$WT` the lane set itself is
+    fine, and so are a few names that are paths or ids, not secrets."""
+    quote, out = None, []
+    for i, c in enumerate(command):
+        if c == "'" and quote != '"' and (i == 0 or command[i - 1] != "\\"):
+            quote = None if quote == "'" else "'"
+            continue
+        if c == '"' and quote != "'":
+            quote = None if quote == '"' else '"'
+        out.append(" " if quote == "'" else c)
+    for m in LANE_VAR_RE.finditer("".join(out)):
+        if m.group(1) in os.environ and m.group(1) not in LANE_VAR_OK:
+            return f"a lane doesn't expand ${m.group(1)} (it is in the lane's environment and may be a credential)"
+    return None
+
+
+def lane_shell_problem(command: str, where: Path) -> str | None:
+    """Shell syntax a lane may not use: builtins that change the environment or run text, a
+    command substitution running anything but a reader, and redirections outside the worktree."""
+    why = _lane_var_problem(command)
+    if why:
+        return why
+    for seg in _simple_commands(command):
+        if os.path.basename(seg[0]) in LANE_SHELL_BUILTINS:
+            return f"a lane doesn't run the shell builtin {seg[0]!r}"
+    for body in _substitutions(command):
+        for seg in _simple_commands(body):
+            h = os.path.basename(seg[0])
+            if VAR_RE.match(seg[0]):
+                return f"a lane sets no variables inside a command substitution ({seg[0].split('=', 1)[0]})"
+            if h in LANE_READERS:
+                for t in seg[1:]:
+                    if not t.startswith("-") and _lane_file_problem(t, where):
+                        return f"a lane reads files from its worktree only, not {t!r}"
+            elif h not in LANE_SUBST_OK and ".claude/bin/" not in seg[0]:
+                return f"a lane runs {seg[0]!r} as a command, not inside $(...) or backticks where it isn't judged"
+    return _lane_redirect_problem(command, where)
+
+
+def _lane_redirect_problem(command: str, where: Path) -> str | None:
+    texts = [command, *_substitutions(command)]
+    for text in texts:
+        toks = _tokens(_prescan(_strip_heredocs(text))[0])
+        for k, t in enumerate(toks):
+            if not t or not all(ch in PUNCT for ch in t) or not ("<" in t or ">" in t):
+                continue
+            if "(" in t:
+                return "a lane doesn't use process substitution (`<(...)`, `>(...)`)"
+            op = t.lstrip("&") if t.startswith("&") else t
+            nxt = toks[k + 1] if k + 1 < len(toks) else ""
+            if "<<<" in op or op.startswith("<<"):      # here-string or here-doc marker: not a file
+                continue
+            if op.endswith("&") and (nxt.isdigit() or nxt == "-"):   # fd duplication: 2>&1, >&2
+                continue
+            target = nxt.rstrip("&") if nxt else ""
+            if not target:
+                return "a lane's redirection names its file"
+            if target.startswith(("(", "\0")):
+                return "a lane doesn't use process substitution (`<(...)`, `>(...)`)"
+            if target in ("/dev/null", "/dev/stdout", "/dev/stderr"):
+                continue
+            why = _lane_file_problem(target, where)
+            if why:
+                return f"a lane redirects to and from files in its worktree only, not {target!r}"
+            root = repo_root(where)
+            rel = Path(os.path.normpath(target if os.path.isabs(target) else where / target)).resolve()
+            parts = rel.relative_to(root.resolve()).parts if root else ()
+            if parts and parts[0] in (".git", ".claude"):
+                return f"a lane never redirects into {parts[0]}/ ({target!r}): that is the repo's own machinery"
+    return None
+
+
+def lane_problem(g: Gated, sid: str) -> str | None:
+    """What a coordinator lane (COORDINATOR_LANE set) may not do, judged on the tokenized command, not
+    a prefix match. The allow-list the coordinator passes is a second layer: this is the one that
+    knows which flags, remotes, endpoints, and refs are fine."""
+    if g.kind == "prefix":   # `NAME=value` on its own: fine unless it changes a variable commands read
+        for a in g.via:
+            name = a.split("=", 1)[0]
+            if name in os.environ or LANE_DANGER_VAR.match(name) or not VAR_RE.match(a):
+                return f"a lane doesn't set {name} (it is in the lane's environment, or a shell wrapper)"
+        return None
+    if g.via:
+        return (f"a lane runs git, gh, and the repo's tools directly, not through {g.via[0]!r} "
+                f"(an env prefix or a wrapper changes what they do)")
+    if g.kind == "repo tool":
+        return lane_tool_problem(g.args, g.where)
+    if g.kind == "git any":
+        return lane_git_problem(g, sid)
+    if g.kind == "gh any":
+        return lane_gh_problem(g, sid)
+    return None
+
+
+def _common_dir(r: Path) -> Path:
+    d = Path(_git(r, "rev-parse", "--git-common-dir"))
+    return (d if d.is_absolute() else r / d).resolve()
+
+
+def _lane_machinery_problem(cwd: Path) -> str | None:
+    """A lane whose checkout no longer carries the role files (a checkout moved to a commit without
+    .claude/) has lost the hooks' ground truth: nothing it does can be judged."""
+    root = repo_root(cwd)
+    if root is None:
+        return f"{cwd} is not inside the lane's repo"
+    if not (root / ".claude" / "roles").is_dir() or not Roles(root).roles \
+            or not (root / ".claude" / "bin" / "role").is_file():
+        return "this checkout has no .claude/roles or .claude/bin/role: a lane can't work from a tree without them"
+    return None
+
+
+def lane_edit_problem(path: Path, cwd: Path) -> str | None:
+    """A lane edits files inside its own repo's worktrees: not outside any repo, not another repo,
+    and not the main checkout where a person works."""
+    try:
+        path = path.resolve()    # a symlink is judged by where it points
+    except (OSError, RuntimeError):
+        return f"can't resolve {path}"
+    here, there = repo_root(cwd), repo_root(path)
+    if there is None or here is None:
+        return f"a lane edits files inside its repo's worktrees, not {path}"
+    try:
+        common = _common_dir(here)
+        same = common == _common_dir(there)
+    except (subprocess.CalledProcessError, OSError):
+        return "can't tell which repo that path belongs to"
+    main_root = common.parent
+    lanes = main_root / ".claude" / "worktrees"
+    if same and there.resolve().is_relative_to(lanes) and there.resolve() != here.resolve():
+        return f"{path} is another lane's worktree: a lane edits its own"
+    if not same or there.resolve() != here.resolve():
+        return (f"{path} is outside this lane's worktree: a lane edits the worktree it runs in, "
+                f"never a throwaway one, another repo, or the main checkout")
+    parts = path.relative_to(there.resolve()).parts
+    if parts and parts[0] in (".claude", ".git"):
+        return f"{path} is the repo's own machinery ({parts[0]}/): a lane never edits it"
+    return None
+
+
 def hook_pre_bash(_: list[str]) -> int:
     data = _hook_input()
     command = (data.get("tool_input") or {}).get("command") or ""
     cwd = Path(data.get("cwd") or os.getcwd())
     asks: list[str] = []
+    lane = os.environ.get("COORDINATOR_LANE")
+    if lane and len(command) > LANE_MAX_COMMAND:   # parsing cost grows with it; a hook that times out allows
+        return _decision("deny", f"coordinator lane {lane}: command too long ({len(command)} > "
+                                 f"{LANE_MAX_COMMAND} characters); split it")
     found = gated_commands(command, cwd)
+    if lane and sum(1 for g in found if g.kind in ("git any", "gh any", "repo tool")) > LANE_MAX_SEGMENTS:
+        return _decision("deny", f"coordinator lane {lane}: too many git/gh/tool commands in one call "
+                                 f"(more than {LANE_MAX_SEGMENTS}); split it")
+    if lane:  # set by the coordinator for the sessions it starts, never by a lane itself
+        if not data:
+            return _decision("deny", f"coordinator lane {lane}: the hook's input couldn't be read; failing closed")
+        if LANE_ENV_RE.search(command):
+            return _decision("deny", f"coordinator lane {lane}: a lane doesn't set or unset the session "
+                                     f"variables (CLAUDE_*, COORDINATOR_*)")
+        problem = lane_shell_problem(command, cwd) or _lane_machinery_problem(cwd)
+        if problem:
+            return _decision("deny", f"coordinator lane {lane}: {problem}")
+        for g in found:
+            problem = lane_problem(g, data.get("session_id", ""))
+            if problem:
+                return _decision("deny", f"coordinator lane {lane}: {problem}")
+    found = [g for g in found if g.kind not in LANE_ONLY and g.kind != "prefix"]
     for g in found:  # guards apply in every mode, with or without a role or a role repo
         if g.kind == "pkill" or g.kind.removeprefix("git ") in GUARDED_GIT:
             problem = guard_problem(g)
@@ -1219,7 +1829,13 @@ def main(argv: list[str]) -> int:
     if not argv or argv[0] not in COMMANDS:
         print(__doc__, file=sys.stderr)
         return 2
-    return COMMANDS[argv[0]](argv[1:])
+    try:
+        return COMMANDS[argv[0]](argv[1:])
+    except Exception as e:  # noqa: BLE001
+        if argv[0] in ("hook-pre-bash", "hook-pre-tool-use"):
+            # a hook that crashes exits non-zero, which the harness treats as "no decision": allow
+            return _decision("deny", f"the role hook failed ({type(e).__name__}: {e}); failing closed")
+        raise
 
 
 if __name__ == "__main__":

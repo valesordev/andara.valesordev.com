@@ -72,6 +72,7 @@ import json
 import os
 import re
 import subprocess
+import time
 import sys
 from pathlib import Path
 
@@ -140,6 +141,7 @@ class Board:
         self.fields = {f["name"]: f for f in gh.api("GET", f"{self.base}/fields?per_page=100",
                                                     paginate=True)}
         self._items = None
+        self._added: list[dict] = []  # stories this process created, kept across listing refreshes
 
     def field_id(self, name: str) -> int:
         if name not in self.fields:
@@ -175,10 +177,30 @@ class Board:
                                     "state": c.get("state"), "fields": vals})
         return self._items
 
+    def refresh(self) -> None:
+        """Re-read the Project listing, keeping stories this process just created."""
+        self._items = None
+        listed = {i["item"] for i in self.items()}
+        self._items += [a for a in self._added if a["item"] not in listed]
+
     def find(self, sid: str) -> dict:
-        hits = [i for i in self.items() if i["id"] == sid]
+        """A story by ID. The Project's items listing can trail a write by a while
+        (a story created seconds ago exists, but isn't listed yet), so a miss
+        refreshes the listing a few times before it counts as missing.
+        STORY_FIND_RETRIES (default 3) and STORY_FIND_DELAY (seconds, default 2,
+        growing by that much per attempt) tune it."""
+        retries = int(os.environ.get("STORY_FIND_RETRIES", "3"))
+        delay = float(os.environ.get("STORY_FIND_DELAY", "2"))
+        for attempt in range(retries + 1):
+            hits = [i for i in self.items() if i["id"] == sid]
+            if hits or attempt == retries:
+                break
+            time.sleep(delay * (attempt + 1))
+            self.refresh()
         if not hits:
-            raise StoryError(f"no story {sid} on the Project")
+            raise StoryError(f"no story {sid} on the Project (the listing was read {retries + 1} "
+                             f"time(s); a story created in the last minutes can lag, so retry "
+                             f"before assuming it's missing)")
         return min(hits, key=lambda i: i["repo"] != self.repo)  # an EPIC-NN here wins over another repo's
 
     def own(self, sid: str) -> dict:
@@ -217,7 +239,11 @@ class Board:
         return self.gh.api("GET", f"/repos/{repo or self.repo}/issues/{number}/comments?per_page=100",
                            paginate=True) or []
 
-    def comment(self, number: int, text: str) -> None:
+    def comment(self, number: int, text: str, author: str | None = None) -> None:
+        """`author` is stamped as a hidden marker, so a reader (the coordinator) can tell who
+        answered a handoff without guessing from its wording."""
+        if author:
+            text += f"\n\n<!-- from: {author} -->"
         self.gh.api("POST", f"/repos/{self.repo}/issues/{number}/comments", {"body": text})
 
 
@@ -336,6 +362,11 @@ def cmd_create(b: Board, who: Who, a) -> str:
         raise StoryError(f"--comp must be one of {', '.join(b.comps)}")
     pat = re.compile(rf"^{re.escape(b.prefix)}-{comp}-(\d{{3}})$")
     nums = [int(m.group(1)) for i in b.items() if (m := pat.match(i["id"]))]
+    # The Project listing can trail a create, so also read the repo's issue titles: an ID
+    # whose issue exists is taken even when its Project item isn't listed yet.
+    title = re.compile(rf"^{re.escape(b.prefix)}-{comp}-(\d{{3}}) — ")
+    nums += [int(m.group(1)) for i in (b.gh.api("GET", f"/repos/{b.repo}/issues?state=all&per_page=100",
+                                                paginate=True) or []) if (m := title.match(i.get("title") or ""))]
     sid = f"{b.prefix}-{comp}-{(max(nums) + 1 if nums else 1):03d}"
     # Validate everything before the first write, so a typo leaves nothing behind.
     text = _text(a)
@@ -348,6 +379,7 @@ def cmd_create(b: Board, who: Who, a) -> str:
     it = {"item": item["id"], "id": sid, "number": iss["number"], "issue_id": iss["id"], "repo": b.repo,
           "title": iss["title"], "state": "open", "fields": {}}
     b.items().append(it)
+    b._added.append(it)
     b.set_fields(it, {"Story ID": sid, "Status": "draft", "Lane": a.lane, "Size": a.size,
                       "Risk": a.risk, "Component": a.component})
     if epic:
@@ -418,10 +450,14 @@ def cmd_comment(b: Board, who: Who, a) -> str:
     if bool(a.to) == bool(a.record):
         raise StoryError("give exactly one of --to ROLE or --record NAME")
     me = who.name if not who.unrestricted else "brian"
-    head = f"**For {a.to}:**" if a.to else f"**{a.record} ({me}):**"
+    to = a.to
+    if to:  # an alias (`design`, `impl`) is written as the role it names, or readers never match it
+        full = role.Roles(role.repo_root(Path.cwd()) or Path.cwd()).resolve(to)
+        to = full if full and full != role.UNRESTRICTED else to
+    head = f"**For {to}:**" if to else f"**{a.record} ({me}):**"
     text = _text(a).strip()
     it = b.own(a.id)
-    b.comment(it["number"], f"{head} {text}" if "\n" not in text else f"{head}\n\n{text}")
+    b.comment(it["number"], f"{head} {text}" if "\n" not in text else f"{head}\n\n{text}", me)
     return f"{a.id}: comment posted ({head})"
 
 
