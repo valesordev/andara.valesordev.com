@@ -73,7 +73,6 @@ import re
 import shutil
 import shlex
 import signal
-import socket
 import subprocess
 import sys
 import time
@@ -772,6 +771,19 @@ if op == "put-role":
     role().put_role(Path(root), sid, None if name == "-" else name, pinned=pin == "pinned")
 elif op == "get-role":
     print(role().get_role(Path(args[0]), args[1]) or "")
+elif op == "trust":
+    # Claude Code ignores a repo's permission rules until its trust dialog is accepted, which
+    # no one is there to do in a lane: accept it for the lane user's clone, once.
+    root, f = args[0], Path(args[1])     # the clone, and the lane user's ~/.claude.json
+    d = json.loads(f.read_text()) if f.exists() else {}
+    proj = d.setdefault("projects", {}).setdefault(root, {})
+    if proj.get("hasTrustDialogAccepted") is not True:
+        proj["hasTrustDialogAccepted"] = True
+        tmp = f.with_name(f.name + ".lanectl")
+        fd = os.open(tmp, os.O_WRONLY | os.O_CREAT | os.O_TRUNC, 0o600)
+        with os.fdopen(fd, "w") as out:
+            json.dump(d, out, indent=2)
+        os.replace(tmp, f)
 elif op == "exec":
     envfile, cwd, sep, *cmd = args
     env = json.loads(Path(envfile).read_text())
@@ -865,6 +877,8 @@ class OsUser(SameUser):
         have = self.git(self.root, "config", "--get", "remote.origin.url").stdout.strip()
         if have != url:
             raise CoordError(f"{self.root} clones {have or 'nothing'}, not {url}: move it aside")
+        self._ctl("trust", str(self.root), str(self.home / ".claude.json"))   # else Claude Code ignores
+                                                                              # the repo's permission rules
 
     def _ctl(self, *args: str) -> subprocess.CompletedProcess:
         if not self.lanectl:
@@ -915,6 +929,11 @@ class OsUser(SameUser):
                     f"NOPASSWD: ALL` to sudoers")
         if self.as_lane(["sudo", "-n", "true"]).returncode == 0:
             return f"{self.user} can use sudo: a lane could become anyone"
+        shared = uid_in_use(pw.pw_uid)
+        if shared:
+            return (f"{self.user}'s UID {pw.pw_uid} is already in use by {shared}, so lanes could read those "
+                    f"processes' environment and signal them: give {self.user} a UID nothing else runs as "
+                    f"(sudo usermod -u <uid> {self.user}, with nothing running as it)")
         try:
             st = os.stat(self.runs)
         except PermissionError:
@@ -934,6 +953,60 @@ class OsUser(SameUser):
             if self.as_lane(["test", "-r", str(p)]).returncode == 0:
                 return f"{self.user} can read {p}: lanes would reach what they're kept apart from (chmod o-rx its parent)"
         return None
+
+
+def strays(uid: int, proc: Path = Path("/proc")) -> list[tuple[str, str]]:
+    """Processes running as `uid` that you didn't start through sudo, as (pid, name): a
+    container's, say, or a daemon a lane left behind. Lanes, and your own `sudo -iu <user>`,
+    descend from a sudo whose real UID is yours. Everything here is in /proc's world-readable files."""
+    def status(pid: str) -> dict:
+        out = {}
+        for line in (proc / pid / "status").read_text().splitlines():
+            k, _, v = line.partition(":")
+            out[k] = v.split()
+        return out
+
+    def yours(pid: str) -> bool:
+        seen = set()
+        while pid not in seen and pid not in ("0", "1"):
+            seen.add(pid)
+            st = status(pid)
+            if st.get("Name") == ["sudo"] and st.get("Uid", [""])[0] == str(os.getuid()):
+                return True
+            pid = st.get("PPid", ["0"])[0]
+        return False
+    try:
+        pids = [p.name for p in proc.iterdir() if p.name.isdigit()]
+    except OSError:
+        return []
+    out = []
+    for pid in pids:
+        try:
+            st = status(pid)
+            if st.get("Uid", [""])[0] == str(uid) and not yours(pid):
+                out.append((pid, " ".join(st.get("Name", ["?"]))))
+        except OSError:
+            continue    # gone meanwhile
+    return out
+
+
+def uid_in_use(uid: int, proc: Path = Path("/proc")) -> str | None:
+    """The first stray (see strays) holding `uid`, described, or None: anything else running as the
+    lane user is someone a lane could read and signal."""
+    found = strays(uid, proc)
+    return f"pid {found[0][0]} ({found[0][1]})" if found else None
+
+
+def reap(host: "OsUser") -> None:
+    """Stop what the run's lanes left running as the lane user (a daemon a hook started, say). The
+    preflight found nothing else on that UID, so anything not under your sudo now is theirs."""
+    try:
+        left = strays(pwd.getpwnam(host.user).pw_uid)
+    except KeyError:
+        return
+    if left:
+        host.as_lane(["kill", "-TERM", *[pid for pid, _ in left]])
+        print(f"stopped what the lanes left running: {', '.join(f'{n} ({p})' for p, n in left)}")
 
 
 def lane_user_config() -> dict | None:
@@ -1158,12 +1231,13 @@ def lane_env(base: dict) -> dict:
 
 
 # Grafana Agent Observability (agento11y): its Claude Code plugin's hooks capture each session.
-# Lanes get its settings, never its credentials: in local-forward mode they post to your local
-# daemon (127.0.0.1:8765), which forwards to Grafana Cloud with your token.
+# Lanes get its settings and tags, never your credentials.
 AGENTO11Y_CONFIG = Path(os.environ.get("XDG_CONFIG_HOME") or Path.home() / ".config") / "agento11y" / "config.env"
 O11Y_PREFIX = ("AGENTO11Y_", "SIGIL_")
 O11Y_SECRET = re.compile(r"TOKEN|AUTH|HEADER|KEY|SECRET|PASSWORD")
-O11Y_DAEMON = ("127.0.0.1", 8765)
+# Where captures go. A lane user reports with its own login (its config.env), never through your
+# local daemon: agento11y's local mode is per user, so a lane would start a daemon of its own.
+O11Y_ROUTING = re.compile(r"(LOCAL|LOCAL_FORWARD|ENDPOINT|STACK_URL)$")
 
 
 def o11y_settings(base: dict) -> dict:
@@ -1181,11 +1255,14 @@ def o11y_settings(base: dict) -> dict:
     return {k: v for k, v in out.items() if k.startswith(O11Y_PREFIX) and not O11Y_SECRET.search(k)}
 
 
-def o11y_env(ctx: Ctx, base: dict, role_name: str) -> dict:
+def o11y_env(ctx: Ctx, base: dict, role_name: str, own_login: bool = False) -> dict:
     """A lane's agento11y settings: yours, tagged as the lane. project and team come from the repo's
     AGENTO11Y_TAGS (its .envrc) or else from github_repo; agent_role is the lane's role, and
-    launcher=coordinator tells lane sessions from yours."""
+    launcher=coordinator tells lane sessions from yours. `own_login`: a lane user's captures go
+    where its own config.env says, so yours (local mode, endpoints) stay out."""
     env = o11y_settings(base)
+    if own_login:
+        env = {k: v for k, v in env.items() if not O11Y_ROUTING.search(k)}
     tags = {}
     for part in env.get("AGENTO11Y_TAGS", "").split(","):
         k, eq, v = part.partition("=")
@@ -1200,26 +1277,11 @@ def o11y_env(ctx: Ctx, base: dict, role_name: str) -> dict:
     return env
 
 
-def o11y_daemon_up() -> bool:
-    try:
-        with socket.create_connection(O11Y_DAEMON, timeout=1):
-            return True
-    except OSError:
-        return False
-
-
 def o11y_problems(host: "OsUser", base: dict) -> list[str]:
     """Why a lane user's sessions wouldn't reach Grafana: warnings, never a reason to refuse."""
     out = []
-    cfg = o11y_settings(base)
-    if not cfg:
+    if not o11y_settings(base):
         return out      # you don't use agento11y: nothing to carry
-    if (cfg.get("AGENTO11Y_LOCAL") or cfg.get("SIGIL_LOCAL")) != "true" or \
-            (cfg.get("AGENTO11Y_LOCAL_FORWARD") or cfg.get("SIGIL_LOCAL_FORWARD")) != "true":
-        out.append("agento11y isn't in local-forward mode, and lanes get no Grafana token: their sessions "
-                   "won't reach Grafana Cloud (set AGENTO11Y_LOCAL=true and AGENTO11Y_LOCAL_FORWARD=true)")
-    elif not o11y_daemon_up():
-        out.append("your agento11y daemon isn't listening on 127.0.0.1:8765: lane sessions won't be captured")
     if host.ctx.sh.run(["sudo", "-n", "-i", "-u", host.user, "command", "-v", "agento11y"],
                        cwd=Path("/")).returncode != 0:
         out.append(f"{host.user} has no agento11y on its PATH: its sessions aren't captured (see the README)")
@@ -1230,6 +1292,13 @@ def o11y_problems(host: "OsUser", base: dict) -> list[str]:
         on = None
     if not on:
         out.append(f"{host.user}'s Claude has no agento11y plugin: `sudo -iu {host.user} agento11y claude install`")
+    cfg = str(host.home / ".config" / "agento11y" / "config.env")
+    if host.as_lane(["grep", "-qE", "^(export )?AGENTO11Y_AUTH_TOKEN=.", cfg]).returncode != 0:
+        out.append(f"{host.user} has no Grafana token of its own, so its sessions stay on this machine: "
+                   f"`sudo -iu {host.user} agento11y login`, Grafana Cloud, with a write-only token")
+    elif host.as_lane(["grep", "-qE", "^(export )?AGENTO11Y_LOCAL=true", cfg]).returncode == 0:
+        out.append(f"{host.user}'s agento11y is in local mode: each lane starts a daemon of its own and nothing "
+                   f"reaches Grafana (set AGENTO11Y_LOCAL=false in {cfg})")
     return out
 
 
@@ -1275,7 +1344,7 @@ def run_lane(ctx: Ctx, lane: dict, run_id: str, run_dir: Path, lane_dir: Path, a
     log = run_dir / f"{name}.log"
     cmd = claude_cmd(ctx, lane, sid, run_id, args.budget_usd, hook_settings(ctx, lane_dir))
     env = lane_env(dict(os.environ))
-    env.update(o11y_env(ctx, dict(os.environ), lane["role"]))
+    env.update(o11y_env(ctx, dict(os.environ), lane["role"], own_login=isinstance(host, OsUser)))
     env.update(COORDINATOR_RUN=run_id, COORDINATOR_LANE=name)
     token = getattr(ctx, "lane_token", None)
     auth = token.path.parent if token else None
@@ -1318,6 +1387,33 @@ def run_lane(ctx: Ctx, lane: dict, run_id: str, run_dir: Path, lane_dir: Path, a
         signal.signal(signal.SIGTERM, old_term)
         if deferred:
             raise KeyboardInterrupt
+
+
+def ask_codex(ctx: Ctx, h: dict) -> None:
+    """Codex reviews only for someone with a Codex account, and a lane acts as the lanes' app:
+    ask for the review as you, once per head commit of the lane's open PR. (A lane's own
+    `codex-review wait` only waits.)"""
+    branch = ctx.host.git(h["wt"], "branch", "--show-current").stdout.strip()
+    if not branch:
+        return
+    r = ctx.sh.run(["gh", "pr", "list", "--head", branch, "--state", "open", "--json", "number,headRefOid",
+                    "--limit", "1"], cwd=ctx.root)
+    try:
+        prs = json.loads(r.stdout or "[]") if r.returncode == 0 else []
+        n, sha = prs[0]["number"], prs[0]["headRefOid"]
+    except (ValueError, IndexError, KeyError, TypeError):
+        return
+    asked = h.setdefault("codex_asked", set())
+    if sha in asked:
+        return
+    c = ctx.sh.run([sys.executable, str(ctx.bin / "codex-review"), "status", str(n), "--sha", sha], cwd=ctx.root)
+    try:
+        state = json.loads(c.stdout)["state"]
+    except (ValueError, KeyError, TypeError):
+        return      # unreadable: try again next time round
+    asked.add(sha)
+    if state == "none":
+        ctx.sh.run(["gh", "pr", "comment", str(n), "--body", "@codex review"], cwd=ctx.root)
 
 
 def group_alive(proc: subprocess.Popen) -> bool:
@@ -1900,6 +1996,11 @@ def cmd_run(ctx: Ctx, a) -> int:
                         print(f"WARNING: couldn't renew the lanes' token: {e}")
                 for h in list(pending):
                     exited = h["proc"].poll() is not None
+                    if token:   # also after it exits: its last push may have come since the last look
+                        try:
+                            ask_codex(ctx, h)
+                        except (CoordError, OSError):
+                            pass
                     over = not exited and time.monotonic() - h["t0"] > deadline
                     if not (exited or over):
                         continue
@@ -1956,6 +2057,8 @@ def cmd_run(ctx: Ctx, a) -> int:
                 token.path.unlink(missing_ok=True)
             for f in lane_dir.glob("env-*.json"):   # each lane read its own at start
                 f.unlink(missing_ok=True)
+            if apart:
+                reap(host)
         try:  # lanes changed the board: report the sprint and what waits as they are now
             state, _, _, waiting, _, _ = gather(ctx, a)
         except (CoordError, story.StoryError, OSError):
