@@ -8,8 +8,8 @@ publish a Zone, see it live and roll it back (M3's gate, SPRINT-03). There are n
 no combat, and no real authored settlement: the World is dev content. SPRINT-05 is active and has no demo
 yet. Sources: that demo, `docs/roadmap.md`, `docs/sprints/`, and the content roadmap's C0 to C3.
 
-Vision: [vision.md](vision.md), confirmed by Brian on 2026-10-08. Every release below rests on it:
-Brian is the first player, and early players use a terminal.
+Vision: [vision.md](vision.md); Brian confirmed its inferred lines on 2026-10-08. Every release below
+rests on it: Brian is the first player, and early players use a terminal.
 
 ## R1 — The Village *(status: proposed)*
 For: Brian, alone. Closed launch (ADR-0006). Nobody else is invited at R1.
@@ -91,6 +91,6 @@ criterion 2, so M4 closes after R2 ships.
 - 2026-10-08: first plan. Two releases, both `proposed`. R1 is the walkable authored village; R2 is the
   first combat loop. Splitting Phase 1 exit into two lets R1's bet (a place) be tested before R2's (a
   loop).
-- 2026-10-11: dropped the last `[ASSUMED]` tags. The vision's inferred lines were confirmed on
-  2026-10-08 (vision.md, Log); R1's second-session signal is a product call, open to Brian's veto at
-  review like every other signal here.
+- 2026-10-11: dropped the last `[ASSUMED]` tag and the stale note that the vision was unconfirmed. The
+  vision's inferred lines were confirmed on 2026-10-08 (vision.md, Log); R1's second-session signal is a
+  product call, open to Brian's veto at review like every other signal here.
