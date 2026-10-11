@@ -593,7 +593,9 @@ rewriting story bodies) are PM's and are in the comment on `AW-INF-050`, not her
     a shared service reopens `ADR-0012` decision 9 for an environment value (SRE's review, items 3 and 4); that is not decided
     here.
 
-### 2026-10-11, contract review of `AW-SRV-058` and `AW-INF-052`
+### 2026-10-11, contract review of `AW-SRV-058`
+
+As with the block above, where these differ from the decisions, they win.
 
 16. **The empty-prefix rule is a warning first, and fatal later.** Decision 4 makes the server exit `1` when
     `telemetry.environment` is not `prod` and `kafka.topic_prefix` is empty. `AW-SRV-058` lands before any deployment
@@ -603,10 +605,22 @@ rewriting story bodies) are PM's and are in the comment on `AW-INF-050`, not her
     So `AW-SRV-058` logs one `warn` naming the key and the environment and continues; a follow-on implementation story makes
     it exit `1`, blocked by `AW-INF-055` (the chart sets `dev` and `local`, and compose's server gets
     `ANDARA_KAFKA_TOPIC_PREFIX=local` in the same change that makes `scripts/topics.py` create `local.`-prefixed topics)
-    and `AW-INF-066` (`dev` is rebuilt onto prefixed topics). The chart's `required` check (`AW-INF-055`) is unaffected and
-    is the guard in the meantime for anything the chart installs. A malformed prefix is fatal from `AW-SRV-058` on.
-17. **The integration suite's prefixed-topic tests use the prefix `it` followed by digits.** A test that runs the server
-    or the projector with a prefix cannot use an `andara.test.` name (the prefix is always first) and must not use
-    `dev` or `local`, which on the shared broker are real environments' topics. It uses `it<nonce>` (`[a-z0-9]+` holds),
-    giving `it<nonce>.andara.<name>.v<n>`. The `andara-it` principal of decision 8 (`AW-INF-060`) therefore has topic
-    ACLs, create included, on two literal prefixes, `andara.test.` and `it`; no environment's topic starts with either.
+    and `AW-INF-066` (`dev` is rebuilt onto prefixed topics). A malformed prefix is fatal from `AW-SRV-058` on.
+
+    **`dev`'s prefix waits for the tag.** Argo's `andara-dev` follows `main` with `values/dev.yaml`
+    (`deploy/argocd/andara-dev.yaml`), and the per-namespace broker it uses today has `auto.create.topics.enable: false`
+    and no `dev.`-prefixed topics. A `values/dev.yaml` that sets the prefix, merged while Argo follows `main`, points the
+    running `dev` at topics that do not exist. So `AW-INF-055` does not set the prefix in `values/dev.yaml` (nor make the
+    chart's `required` check apply to `dev`) until `AW-INF-059` has landed and Argo follows the `dev` tag; the tag that
+    carries the prefix is first promoted by the rebuild run (`AW-INF-066`). `local` and CI's values are not affected.
+17. **The integration suite's prefixed-topic tests use the prefix `it` followed by digits, and `it-` groups.** This amends
+    decision 8's statement that every topic the suite uses is `andara.test.*` and that `kafka.topic_prefix` touches none of
+    them. A test of the prefix cannot use an `andara.test.` name (the prefix is always first) and must not use `dev` or
+    `local`, which on the shared broker are real environments' topics. It uses `it<nonce>` (`[a-z0-9]+` holds), giving
+    `it<nonce>.andara.<name>.v<n>`. Its consumer groups stay `it-` groups: a prefix test drives the production constructors
+    (the tick loop's source, the projector's committer and readers) with the prefixed names and an explicit `it-` group,
+    and never boots a process whose group is derived from `telemetry.environment` (`andara-sim-<env>`,
+    `andara-projector-state-<env>`), since with the default environment those are `local`'s real groups, and a cleanup
+    that deletes the group would delete `local`'s checkpoint. The `andara-it` principal of decision 8 (`AW-INF-060`)
+    therefore has two `PREFIXED` topic ACLs, create included, on `andara.test.` and `it`; its group ACL stays `PREFIXED`
+    on `it-`. No environment's topic, and no Kafka, Strimzi or registry internal topic, starts with either topic prefix.
