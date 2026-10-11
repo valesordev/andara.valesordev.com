@@ -155,6 +155,35 @@ func (e *Egress) Metrics() *Metrics { return e.metrics }
 // it from OnDrain, before it closes any Session.
 func (e *Egress) Drain() { e.draining.Store(true) }
 
+// AnnounceStopping writes a ServerStopping frame (event_id 0) to every open
+// Subscribe stream, ahead of any Event still queued for it, and returns how
+// many streams it was queued on (AW-SRV-054, lifecycle.md ruling 2). It is a
+// stream frame, not an Event: never retained, so not in the Resume Window and
+// not a resume point. Best effort: a stream opened after it does not get it.
+func (e *Egress) AnnounceStopping(message string, expectedBack time.Duration) int {
+	env := &gamev1.EventEnvelope{Tick: e.opts.LastTick(), Payload: &gamev1.EventEnvelope_ServerStopping{ServerStopping: &gamev1.ServerStopping{
+		Message: message, ExpectedBackSeconds: uint32(expectedBack / time.Second),
+	}}}
+	e.mu.Lock()
+	sessions := make([]*session, 0, len(e.sessions))
+	for _, s := range e.sessions {
+		sessions = append(sessions, s)
+	}
+	e.mu.Unlock()
+	n := 0
+	for _, s := range sessions {
+		s.mu.Lock()
+		if st := s.stream; st != nil && !st.ended {
+			st.notice = &frame{typ: TypeServerStopping, env: env}
+			close(s.notify)
+			s.notify = make(chan struct{})
+			n++
+		}
+		s.mu.Unlock()
+	}
+	return n
+}
+
 // Sessions is how many Sessions hold retained history, for tests.
 func (e *Egress) Sessions() int {
 	e.mu.Lock()
@@ -810,6 +839,10 @@ type stream struct {
 	sending  bool
 	ended    bool
 	terminal string
+	// notice is a frame outside the history, sent before the next Event:
+	// ServerStopping (AW-SRV-054). Never retained, so it is in no Resume
+	// Window and moves no resume point.
+	notice *frame
 	// done is closed when the stream has detached.
 	done chan struct{}
 }
@@ -833,6 +866,9 @@ func (st *stream) run(ctx context.Context, out Sender) error {
 		switch {
 		case st.ended:
 			err = ErrBufferFull
+		case st.notice != nil:
+			next, have = *st.notice, true
+			st.notice = nil
 		case st.cursor < s.hist.end():
 			next, have = s.hist.at(st.cursor), true
 			st.cursor++
