@@ -47,6 +47,7 @@ type Refuser interface {
 // Rounds takes the pre-stop round: the tick loop's snapshotter.
 type Rounds interface {
 	Force() <-chan tickloop.ForcedRound
+	CancelForce(<-chan tickloop.ForcedRound)
 }
 
 // Options is everything PrepareStop reads.
@@ -135,11 +136,15 @@ func (s *Service) PrepareStop(ctx context.Context, _ *connect.Request[adminv1.Pr
 	done := s.done
 	s.mu.Unlock()
 	if first {
-		resp := s.run(context.WithoutCancel(ctx))
-		s.mu.Lock()
-		s.resp = resp
-		s.mu.Unlock()
-		close(done)
+		func() {
+			// Closed even if the sequence panics, so a second call cannot
+			// wait on it forever; it then finds no response.
+			defer close(done)
+			resp := s.run(context.WithoutCancel(ctx))
+			s.mu.Lock()
+			s.resp = resp
+			s.mu.Unlock()
+		}()
 	}
 	select {
 	case <-done:
@@ -149,6 +154,9 @@ func (s *Service) PrepareStop(ctx context.Context, _ *connect.Request[adminv1.Pr
 	s.mu.Lock()
 	resp := s.resp
 	s.mu.Unlock()
+	if resp == nil {
+		return nil, connect.NewError(connect.CodeInternal, errors.New("the pre-stop sequence did not finish"))
+	}
 	return connect.NewResponse(resp), nil
 }
 
@@ -209,14 +217,23 @@ func (s *Service) run(ctx context.Context) *adminv1.PrepareStopResponse {
 // boundary. Anything but COMPLETE carries its cause, and writes no tag.
 func (s *Service) snapshot(ctx context.Context) (*adminv1.PrepareStopResponse, error) {
 	o := s.o
-	ctx, cancel := context.WithTimeout(ctx, o.UploadTimeout+2*o.TickInterval)
+	wctx, cancel := context.WithTimeout(ctx, o.UploadTimeout+2*o.TickInterval)
 	defer cancel()
 	var round tickloop.ForcedRound
+	ch := o.Rounds.Force()
 	select {
-	case round = <-o.Rounds.Force():
-	case <-ctx.Done():
-		return failed(adminv1.PrepareStopOutcome_PREPARE_STOP_OUTCOME_TIMEOUT), fmt.Errorf("the round did not complete within snapshot.upload_timeout: %w", ctx.Err())
+	case round = <-ch:
+	case <-wctx.Done():
+		// Withdrawn, so no round is taken later for a pre-stop that reported
+		// TIMEOUT: the previous complete round stays the recovery point.
+		o.Rounds.CancelForce(ch)
+		return failed(adminv1.PrepareStopOutcome_PREPARE_STOP_OUTCOME_TIMEOUT), fmt.Errorf("the round did not complete within snapshot.upload_timeout: %w", wctx.Err())
 	}
+	// The tag and the commit wait get their own budget, so a round that
+	// finished near the deadline is not tagged on some objects and then
+	// reported TIMEOUT.
+	ctx, cancelTag := context.WithTimeout(ctx, o.UploadTimeout)
+	defer cancelTag()
 	if round.Err != nil {
 		outcome := adminv1.PrepareStopOutcome_PREPARE_STOP_OUTCOME_STORE_ERROR
 		if errors.Is(round.Err, context.DeadlineExceeded) {

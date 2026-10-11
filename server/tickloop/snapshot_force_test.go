@@ -109,6 +109,17 @@ func TestForcedRoundReportsItsFailure(t *testing.T) {
 	}
 }
 
+// A withdrawn Force is not taken at the next boundary.
+func TestCancelForceWithdrawsTheRequest(t *testing.T) {
+	t.Parallel()
+	h := newRoundHarness(t, nil)
+	e := snapshotEngine(t)
+	h.s.CancelForce(h.s.Force())
+	if h.s.Maybe(context.Background(), e) {
+		t.Fatal("a withdrawn Force was taken")
+	}
+}
+
 func TestForceWithSnapshotsOffIsRefused(t *testing.T) {
 	t.Parallel()
 	s, err := tickloop.NewSnapshotter(tickloop.SnapshotOptions{})
