@@ -1,5 +1,5 @@
 {
-  "source": "automate.bashburn.com@77a08d2",
+  "source": "automate.bashburn.com@c4021bf",
   "target": "andaras-world",
   "files": {
     ".claude/skills/arch-start-sprint/SKILL.md": "94489be54f36d507c373fa734901625e137da6ae00f8d9c258c3513ce2914640",
@@ -56,7 +56,7 @@
     ".claude/skills/sre-start-sprint/SKILL.md": "d9b19fbd7f8d3a821ff2aa2e87ec9ddee1e57447a6ef02a3eb0190e0edf32cbb",
     ".claude/skills/sre-start-sprint/references/examples.md": "4d9da96908d1fa03115108cefc9f8c8c54a0e925cbd0092dc39b0b453b28da24",
     ".claude/bin/codex-review": "d495b2e131fd47c88f142d6cadc24507902a7467d1193eb466563d21cc259205",
-    ".claude/bin/coordinator": "b4312726f8e91364069fe1eb71e5da019158496762b0bf84f5990e0f69ffc846",
+    ".claude/bin/coordinator": "7b42c5976d19c45b3c459395e48013a4e2056e58d38893520deabc50f2043423",
     ".claude/bin/project-mirror": "a0c7c9689f2a98b0ab07b20ff60e41e0686a2a6a876bc941fb79f91012362c59",
     ".claude/bin/role": "3241ada78ec62bd85268c56f2715c11958941c2d2dd48270974501f2583b6cbe",
     ".claude/bin/sprint-state": "6a8ae9cff5eb3f2a56255efaf542b27a9e7a4dc7a394eb6c58e1723402b14dfc",

@@ -1389,20 +1389,28 @@ def run_lane(ctx: Ctx, lane: dict, run_id: str, run_dir: Path, lane_dir: Path, a
             raise KeyboardInterrupt
 
 
-def ask_codex(ctx: Ctx, h: dict) -> None:
-    """Codex reviews only for someone with a Codex account, and a lane acts as the lanes' app:
-    ask for the review as you, once per head commit of the lane's open PR. (A lane's own
-    `codex-review wait` only waits.)"""
+def tend_lane_pr(ctx: Ctx, h: dict, token: LaneToken) -> None:
+    """What a lane's PR needs from outside the lane, done once it's open:
+    - your review requested, by the app (GitHub asks the author's side for that, and the app is
+      the author): once per lane;
+    - Codex's review asked for as you, once per head commit. Codex reviews only for someone with
+      a Codex account, which the app hasn't; a lane's own `codex-review wait` only waits."""
     branch = ctx.host.git(h["wt"], "branch", "--show-current").stdout.strip()
     if not branch:
         return
-    r = ctx.sh.run(["gh", "pr", "list", "--head", branch, "--state", "open", "--json", "number,headRefOid",
-                    "--limit", "1"], cwd=ctx.root)
+    r = ctx.sh.run(["gh", "pr", "list", "--head", branch, "--state", "open", "--json",
+                    "number,headRefOid,reviewRequests", "--limit", "1"], cwd=ctx.root)
     try:
         prs = json.loads(r.stdout or "[]") if r.returncode == 0 else []
         n, sha = prs[0]["number"], prs[0]["headRefOid"]
-    except (ValueError, IndexError, KeyError, TypeError):
+        asked_of = {q.get("login") for q in prs[0].get("reviewRequests") or []}
+    except (ValueError, IndexError, KeyError, TypeError, AttributeError):
         return
+    you = getattr(ctx, "reviewer", None)
+    if you and not h.get("review_requested") and you not in asked_of:
+        h["review_requested"] = True    # one try: a refusal is reported once, not every poll
+        app_api("POST", f"repos/{ctx.cfg['github_repo']}/pulls/{n}/requested_reviewers", token.token,
+                {"reviewers": [you]})
     asked = h.setdefault("codex_asked", set())
     if sha in asked:
         return
@@ -1956,6 +1964,9 @@ def cmd_run(ctx: Ctx, a) -> int:
         for w in o11y_problems(host, dict(os.environ)) if apart else []:
             print(f"WARNING: {w}")
         ctx.lane_token = token
+        if token:   # who the app asks to review a lane's PR: you, as your gh knows you
+            r = ctx.sh.run(["gh", "api", "user", "--jq", ".login"], cwd=ctx.root)
+            ctx.reviewer = r.stdout.strip() if r.returncode == 0 else None
         run_id = datetime.now(timezone.utc).strftime("%Y%m%d-%H%M%S") + "-" + uuid.uuid4().hex[:4]
         run_dir = ctx.dir / "runs" / run_id
         run_dir.mkdir(parents=True)
@@ -1998,9 +2009,9 @@ def cmd_run(ctx: Ctx, a) -> int:
                     exited = h["proc"].poll() is not None
                     if token:   # also after it exits: its last push may have come since the last look
                         try:
-                            ask_codex(ctx, h)
-                        except (CoordError, OSError):
-                            pass
+                            tend_lane_pr(ctx, h, token)
+                        except (CoordError, OSError) as e:
+                            print(f"WARNING: {h['rec']['lane']}'s PR: {e}")
                     over = not exited and time.monotonic() - h["t0"] > deadline
                     if not (exited or over):
                         continue
