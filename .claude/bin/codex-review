@@ -12,7 +12,9 @@ Codex keeps one status comment per PR (marker `codex-pull-request-review-summary
 with a table row per review (only `Code Review` rows count) and commit, and updates it when a review finishes. It
 reviews on PR open, draft -> ready, and an `@codex review` comment, not on push.
 `wait` therefore posts `@codex review` once when no row for SHA appears within
---grace seconds (--no-request disables that).
+--grace seconds (--no-request disables that). In a coordinator lane it never posts:
+the lane acts as the lanes' GitHub App, which Codex won't review for (it has no Codex
+account), so the coordinator asks for the review as the person.
 
 SHA defaults to the PR's head. Prints one JSON object:
 
@@ -32,6 +34,7 @@ from __future__ import annotations
 
 import argparse
 import json
+import os
 import re
 import subprocess
 import sys
@@ -175,7 +178,8 @@ def main(argv: list[str] | None = None) -> int:
     try:
         sha = a.sha or head_sha(a.pr)
         res = (snapshot(a.pr, sha) if a.cmd == "status"
-               else wait(a.pr, sha, a.timeout, a.interval, a.grace, not a.no_request))
+               else wait(a.pr, sha, a.timeout, a.interval, a.grace,
+                         not a.no_request and not os.environ.get("COORDINATOR_LANE")))
     except GitHubError as e:
         print(f"codex-review: {e}", file=sys.stderr)
         return 2
