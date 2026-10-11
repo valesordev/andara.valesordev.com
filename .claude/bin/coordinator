@@ -57,6 +57,7 @@ environment errors.
 from __future__ import annotations
 
 import argparse
+import base64
 import fcntl
 import hashlib
 import importlib.machinery
@@ -70,6 +71,8 @@ import signal
 import subprocess
 import sys
 import time
+import urllib.error
+import urllib.request
 import uuid
 from datetime import datetime, timezone
 from pathlib import Path
@@ -929,6 +932,27 @@ def lane_env(base: dict) -> dict:
             if k != "COORDINATOR_ENV_PASS" and (k in ENV_KEEP or k in extra or k.startswith(ENV_KEEP_PREFIX))}
 
 
+def real_gh() -> str:
+    return shutil.which("gh") or "gh"
+
+
+def lane_auth_files(token: LaneToken, run_dir: Path) -> None:
+    """The token file, and a `gh` and git credential helper that read it on every call, in
+    runs/<id>/auth/. The private key stays out of a lane's environment."""
+    auth = run_dir / "auth"
+    (auth / "bin").mkdir(parents=True, mode=0o700)
+    (auth / "gh-config").mkdir(mode=0o700)
+    token.path = auth / "token"
+    token.write()
+    t = shlex.quote(str(token.path))
+    files = {"gh": f'#!/bin/sh\nGH_TOKEN=$(cat {t}) || exit 1\nexport GH_TOKEN\nexec {shlex.quote(real_gh())} "$@"\n',
+             "git-credential-lane": f'#!/bin/sh\ncat >/dev/null\n[ "$1" = get ] || exit 0\n'
+                                    f'printf "username=x-access-token\\npassword=%s\\n" "$(cat {t})"\n'}
+    for name, text in files.items():
+        (auth / "bin" / name).write_text(text)
+        (auth / "bin" / name).chmod(0o700)
+
+
 def run_lane(ctx: Ctx, lane: dict, run_id: str, run_dir: Path, args, wt_dir: Path, pending: list) -> None:
     sid = str(uuid.uuid4())
     name = lane_name(lane)
@@ -937,6 +961,20 @@ def run_lane(ctx: Ctx, lane: dict, run_id: str, run_dir: Path, args, wt_dir: Pat
     cmd = claude_cmd(ctx, lane, sid, run_id, args.budget_usd, hook_settings(ctx, run_dir))
     env = lane_env(dict(os.environ))
     env.update(COORDINATOR_RUN=run_id, COORDINATOR_LANE=name)
+    token = getattr(ctx, "lane_token", None)
+    if token:   # the lanes' app for gh and for git pushes over HTTPS, never your account or your SSH key
+        auth = token.path.parent
+        env.pop("GITHUB_TOKEN", None)
+        env.pop("GH_TOKEN", None)
+        env["PATH"] = f"{auth / 'bin'}{os.pathsep}{env.get('PATH', '')}"
+        env["GH_CONFIG_DIR"] = str(auth / "gh-config")   # a gh that misses the shim has no login of yours
+        cfg = [("url.https://github.com/.insteadof", "git@github.com:"),
+               ("url.https://github.com/.insteadof", "ssh://git@github.com/"),
+               ("credential.https://github.com.helper", ""),           # drop the helpers your config has
+               ("credential.https://github.com.helper", str(auth / "bin" / "git-credential-lane"))]
+        env["GIT_CONFIG_COUNT"] = str(len(cfg))
+        for i, (k, v) in enumerate(cfg):
+            env[f"GIT_CONFIG_KEY_{i}"], env[f"GIT_CONFIG_VALUE_{i}"] = k, v
     # Between the process existing and the run owning it, a signal must wait: the handler
     # below only notes it, and it is raised once the lane is in `pending` (or has been stopped).
     deferred: list[int] = []
@@ -1289,27 +1327,171 @@ def write_report(run_dir: Path, report: str, results: list[dict]) -> None:
     (run_dir / "results.json").write_text(json.dumps(results, indent=2, default=str))
 
 
+LANE_APP_CONFIG = Path(os.environ.get("XDG_CONFIG_HOME") or Path.home() / ".config") / "claude-coordinator" / "lane-app.json"
+# The most the lanes' GitHub App may hold: an app that can administer a repo, change workflows, or
+# more could have its key mint a token that skips main's rules, so the run refuses it.
+LANE_APP_PERMS = {"contents": "write", "pull_requests": "write", "issues": "write", "statuses": "read",
+                  "checks": "read", "actions": "read", "metadata": "read", "organization_projects": "write"}
+PERM_LEVEL = {"none": 0, "read": 1, "write": 2, "admin": 3}
+RENEW_BEFORE = 300          # seconds: a lane's token is replaced when it has less than this left
+# Who may skip main's review rule: only you (an org or repo admin), and only by merging a pull request.
+BYPASS_OK = {("OrganizationAdmin", None), ("RepositoryRole", 5)}
+
+
+def lane_app() -> dict | None:
+    """The lanes' GitHub App: {app_id, private_key} from COORDINATOR_APP_CONFIG (default
+    ~/.config/claude-coordinator/lane-app.json). The key (default lane-app.pem beside it) must be
+    readable by you alone."""
+    f = Path(os.environ.get("COORDINATOR_APP_CONFIG") or LANE_APP_CONFIG)
+    if not f.is_file():
+        return None
+    try:
+        cfg = json.loads(f.read_text())
+        app_id = int(cfg["app_id"])
+    except (ValueError, KeyError, TypeError) as e:
+        raise CoordError(f"{f} needs a numeric app_id: {e}") from e
+    key = Path(os.path.expanduser(str(cfg.get("private_key") or "lane-app.pem")))
+    key = key if key.is_absolute() else f.parent / key
+    if not key.is_file():
+        raise CoordError(f"the lane app's private key {key} doesn't exist")
+    if key.stat().st_mode & 0o077:
+        raise CoordError(f"{key} is readable by others: chmod 600 it")
+    return {"app_id": app_id, "key": key}
+
+
+def b64url(b: bytes) -> str:
+    return base64.urlsafe_b64encode(b).rstrip(b"=").decode()
+
+
+def app_jwt(app: dict) -> str:
+    """The app's own ten-minute login, signed RS256 with its key by openssl (no extra libraries)."""
+    t = int(time.time())
+    body = b64url(json.dumps({"alg": "RS256", "typ": "JWT"}).encode()) + "." + b64url(
+        json.dumps({"iat": t - 60, "exp": t + 540, "iss": str(app["app_id"])}).encode())
+    try:
+        r = subprocess.run(["openssl", "dgst", "-sha256", "-sign", str(app["key"])], input=body.encode(),
+                           capture_output=True)
+    except OSError as e:
+        raise CoordError(f"couldn't run openssl to sign the lane app's login: {e}") from e
+    if r.returncode or not r.stdout:
+        raise CoordError(f"openssl couldn't sign with {app['key']}: {r.stderr.decode(errors='replace').strip()[:200]}")
+    return body + "." + b64url(r.stdout)
+
+
+def app_api(method: str, path: str, auth: str, body: dict | None = None) -> dict:
+    """GitHub's REST API with a bearer credential that never reaches a command line."""
+    req = urllib.request.Request(
+        "https://api.github.com/" + path.lstrip("/"), method=method,
+        data=None if body is None else json.dumps(body).encode(),
+        headers={"Authorization": f"Bearer {auth}", "Accept": "application/vnd.github+json",
+                 "X-GitHub-Api-Version": "2022-11-28", "User-Agent": "claude-coordinator"})
+    try:
+        with urllib.request.urlopen(req, timeout=30) as r:
+            return json.loads(r.read() or b"{}")
+    except urllib.error.HTTPError as e:
+        raise CoordError(f"GitHub answered {e.code} to {method} {path}") from e
+    except (urllib.error.URLError, OSError, ValueError) as e:
+        raise CoordError(f"{method} {path} failed: {e}") from e
+
+
+class LaneToken:
+    """The lanes' installation token, narrowed to this repo and the app's own permissions, kept in
+    a 0600 file the lanes' gh and git read on each call. GitHub's tokens last an hour and a lane can
+    run longer, so the run renews it while it has less than RENEW_BEFORE left."""
+
+    def __init__(self, app: dict, installation: int, repo: str, perms: dict, name: str):
+        self.app, self.installation, self.repo, self.perms, self.name = app, installation, repo, perms, name
+        self.token, self.expires, self.path = "", 0.0, None
+
+    def mint(self) -> None:
+        r = app_api("POST", f"app/installations/{self.installation}/access_tokens", app_jwt(self.app),
+                    {"repositories": [self.repo.split("/", 1)[1]], "permissions": self.perms})
+        try:
+            self.token = r["token"]
+            self.expires = datetime.fromisoformat(r["expires_at"].replace("Z", "+00:00")).timestamp()
+        except (KeyError, TypeError, ValueError) as e:
+            raise CoordError(f"GitHub's token answer had no usable token: {e}") from e
+        if self.path:
+            self.write()
+
+    def write(self) -> None:
+        tmp = self.path.with_name(self.path.name + ".new")
+        fd = os.open(tmp, os.O_WRONLY | os.O_CREAT | os.O_TRUNC, 0o600)
+        with os.fdopen(fd, "w") as f:
+            f.write(self.token + "\n")
+        os.replace(tmp, self.path)
+
+    def renew(self) -> None:
+        if self.expires - time.time() < RENEW_BEFORE:
+            self.mint()
+
+
+def lane_identity(ctx: Ctx, app: dict | None) -> tuple[LaneToken | str | None, str | None]:
+    """(the lanes' token, or the app's name, and why it's unsafe; or None). Lanes must not be you:
+    GitHub never lets an author approve their own pull request, so a lane PR needs your approval
+    only when another identity opened it, and an app that can't administer the repo is what makes
+    main's review rule hold against a lane."""
+    if app is None:
+        return None, ("lanes need their own GitHub App: without one they act as you, and main's review rule "
+                      "can't tell a lane's pull request from yours (put its app_id in "
+                      f"{LANE_APP_CONFIG} and its key beside it; see the valesor-dev README, Coordinator)")
+    repo = ctx.cfg.get("github_repo") or ""
+    if "/" not in repo:
+        return None, "_repo.md needs `github_repo:` to give lanes a token for it"
+    try:
+        inst = app_api("GET", f"repos/{repo}/installation", app_jwt(app))
+    except CoordError as e:
+        return None, f"the lane app isn't installed on {repo} ({e})"
+    name = f"{inst.get('app_slug') or 'the lane app'}[bot]"
+    perms = inst.get("permissions") or {}
+    over = sorted(f"{k}: {v}" for k, v in perms.items()
+                  if PERM_LEVEL.get(v, 3) > PERM_LEVEL[LANE_APP_PERMS.get(k, "none")])
+    if over:
+        return name, (f"{name} holds more than lanes may have ({', '.join(over)}): its key could mint a "
+                      "token past main's rules; remove those permissions from the app")
+    tok = LaneToken(app, int(inst["id"]), repo, perms, name)
+    try:
+        tok.mint()
+    except CoordError as e:
+        return name, f"couldn't get {name} a token: {e}"
+    return tok, None
+
+
 def main_protection(ctx: Ctx) -> str | None:
-    """Why origin's main isn't safe to run lanes against, or None: a lane's own code (its check
-    command, CI) runs with the person's credentials, so main must take only reviewed pull requests."""
-    def count(rows) -> int:
-        return max([int((r.get("parameters") or {}).get("required_approving_review_count") or 0)
-                    for r in rows if r.get("type") == "pull_request"] or [0])
+    """Why origin's main isn't safe to run lanes against, or None. A lane's pull request may merge only
+    with your approval of its latest push, and nobody but an admin (you) may skip that, by merge."""
+    unprotected = ("origin's main is not protected: lanes run unattended only when a ruleset or branch "
+                   "protection requires a pull request with an approving review of its latest push")
     try:
         r = ctx.sh.run(["gh", "api", "repos/{owner}/{repo}/rules/branches/main"], cwd=ctx.root)
-        n = count(json.loads(r.stdout)) if r.returncode == 0 else 0
-        if n < 1:
-            r = ctx.sh.run(["gh", "api", "repos/{owner}/{repo}/branches/main/protection"], cwd=ctx.root)
-            if r.returncode == 0:
-                n = int(((json.loads(r.stdout).get("required_pull_request_reviews") or {})
-                         .get("required_approving_review_count")) or 0)
-    except (ValueError, OSError, AttributeError):
-        n = 0
-    if n >= 1:
-        return None
-    return ("origin's main is not protected: lanes run unattended only when a ruleset or branch protection "
-            "requires a pull request with at least one approving review (a lane's own code runs with your "
-            "credentials, and a merged lane commit is a person's responsibility)")
+        rules = [x for x in (json.loads(r.stdout) if r.returncode == 0 else []) if x.get("type") == "pull_request"]
+        good = [x for x in rules if int((x.get("parameters") or {}).get("required_approving_review_count") or 0) >= 1]
+        if good:
+            p = good[0]["parameters"]
+            if not (p.get("require_last_push_approval") or p.get("dismiss_stale_reviews_on_push")):
+                return ("main's ruleset doesn't require approval of the latest push (or dismiss stale "
+                        "approvals): a lane could push again after you approve")
+            for rid in {x.get("ruleset_id") for x in good if x.get("ruleset_id")}:
+                rs = ctx.sh.run(["gh", "api", f"repos/{{owner}}/{{repo}}/rulesets/{rid}"], cwd=ctx.root)
+                actors = json.loads(rs.stdout).get("bypass_actors") if rs.returncode == 0 else None
+                if actors is None:
+                    return f"can't read ruleset {rid}'s bypass list (run as a repo admin)"
+                for a in actors:
+                    if (a.get("actor_type"), a.get("actor_id")) not in BYPASS_OK or a.get("bypass_mode") != "pull_request":
+                        return (f"ruleset {rid} lets {a.get('actor_type')} {a.get('actor_id') or ''} bypass it "
+                                f"({a.get('bypass_mode')}): only admins, and only by pull request")
+            return None
+        r = ctx.sh.run(["gh", "api", "repos/{owner}/{repo}/branches/main/protection"], cwd=ctx.root)
+        if r.returncode == 0:
+            rv = json.loads(r.stdout).get("required_pull_request_reviews") or {}
+            if int(rv.get("required_approving_review_count") or 0) >= 1:
+                if not (rv.get("require_last_push_approval") or rv.get("dismiss_stale_reviews")):
+                    return ("main's branch protection doesn't require approval of the latest push (or dismiss "
+                            "stale approvals): a lane could push again after you approve")
+                return None
+    except (ValueError, OSError, AttributeError, TypeError):
+        pass
+    return unprotected
 
 
 def cmd_run(ctx: Ctx, a) -> int:
@@ -1321,23 +1503,33 @@ def cmd_run(ctx: Ctx, a) -> int:
             if lanes:
                 print("\n(dry run: add --apply to start these lanes)")
             return 0
+        try:
+            app = lane_app()
+            lane_env(dict(os.environ))
+        except CoordError as e:
+            print(f"refusing to run: {e}")
+            return 1
+        token, who = lane_identity(ctx, app)
+        if who:
+            print(f"{'WARNING' if a.person_token else 'refusing to run'}: {who}"
+                  + ("" if a.person_token else " (--person-token starts the lanes as you anyway)"))
+            if not a.person_token:
+                return 1
+            token = None
+        else:
+            print(f"lanes run as {token.name}")
         why = main_protection(ctx)
         if why:
             print(f"{'WARNING' if a.unprotected_main else 'refusing to run'}: {why}"
                   + ("" if a.unprotected_main else " (--unprotected-main starts the lanes anyway)"))
             if not a.unprotected_main:
                 return 1
-        if not (os.environ.get("GH_TOKEN") or os.environ.get("GITHUB_TOKEN")):
-            print("note: GH_TOKEN isn't set, so lanes use gh's keyring token with every scope it has; "
-                  "a token scoped to this repo is safer")
-        try:
-            lane_env(dict(os.environ))
-        except CoordError as e:
-            print(f"refusing to run: {e}")
-            return 1
+        ctx.lane_token = token
         run_id = datetime.now(timezone.utc).strftime("%Y%m%d-%H%M%S") + "-" + uuid.uuid4().hex[:4]
         run_dir = ctx.dir / "runs" / run_id
         run_dir.mkdir(parents=True)
+        if token:
+            lane_auth_files(token, run_dir)
         wt_dir = Path(a.worktrees) if a.worktrees else ctx.root / ".claude" / "worktrees"
         results, pending = [], []
         deadline = a.timeout_min * 60
@@ -1352,6 +1544,11 @@ def cmd_run(ctx: Ctx, a) -> int:
                 except (CoordError, OSError) as e:
                     results.append(failed(lane_name(lane), str(e)))
             while pending:
+                if token:
+                    try:
+                        token.renew()
+                    except (CoordError, OSError) as e:   # the old token still works until it expires
+                        print(f"WARNING: couldn't renew the lanes' token: {e}")
                 for h in list(pending):
                     exited = h["proc"].poll() is not None
                     over = not exited and time.monotonic() - h["t0"] > deadline
@@ -1403,6 +1600,8 @@ def cmd_run(ctx: Ctx, a) -> int:
         finally:
             signal.signal(signal.SIGINT, prev_int)
             signal.signal(signal.SIGTERM, prev)
+            if token:   # no lane is left to use it
+                token.path.unlink(missing_ok=True)
         try:  # lanes changed the board: report the sprint and what waits as they are now
             state, _, _, waiting, _, _ = gather(ctx, a)
         except (CoordError, story.StoryError, OSError):
@@ -1489,6 +1688,8 @@ def parser() -> argparse.ArgumentParser:
                            help="start lanes with only the repo's own permissions (no allow-list)")
             s.add_argument("--unprotected-main", action="store_true",
                            help="start lanes although origin's main takes unreviewed pushes or merges")
+            s.add_argument("--person-token", action="store_true",
+                           help="start lanes as you (your gh auth) when no lane app is set up")
             s.add_argument("--worktrees")
             s.add_argument("--poll", type=float, default=15)
     sub.add_parser("status")
