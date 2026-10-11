@@ -192,6 +192,19 @@ type Config struct {
 	RecoveryPinRound        uint64
 	RecoveryMismatchLinger  time.Duration
 
+	// The deploy lifecycle (AW-SRV-054, docs/specs/deploy/lifecycle.md).
+	// DeployNoticeLead is the wait between ServerStopping and the Submit
+	// refusal; DeployAdmitWait the longest pre-stop waits for Submits already
+	// admitted; DeployExpectedBack is copied into
+	// ServerStopping.expected_back_seconds; DeployImageTag names the round's
+	// `deploy:` tag; DeployControlSocket is the Unix socket the Lifecycle
+	// service listens on and `andara-server prestop` dials.
+	DeployNoticeLead    time.Duration
+	DeployAdmitWait     time.Duration
+	DeployExpectedBack  time.Duration
+	DeployImageTag      string
+	DeployControlSocket string
+
 	// TraceSampleRatio is the head-sampling ratio for the Game/Submit
 	// trace root (AW-SRV-010); rejections are kept whatever it says.
 	// TrustInboundTraceparent lets a client's traceparent parent the RPC
@@ -302,6 +315,13 @@ const (
 	DefaultRecoveryVerifyTimeout  = 600 * time.Second
 	DefaultRecoveryMismatchLinger = 0
 
+	// The deploy lifecycle (AW-SRV-054); lifecycle.md's Configuration table.
+	DefaultDeployNoticeLead    = 10 * time.Second
+	DefaultDeployAdmitWait     = 5 * time.Second
+	DefaultDeployExpectedBack  = 60 * time.Second
+	DefaultDeployImageTag      = "dev"
+	DefaultDeployControlSocket = "/run/andara/control.sock"
+
 	DefaultTraceSampleRatio = 0.01
 )
 
@@ -399,6 +419,11 @@ func defaults() Config {
 		RecoveryReplayBatch:      DefaultRecoveryReplayBatch,
 		RecoveryVerifyTimeout:    DefaultRecoveryVerifyTimeout,
 		RecoveryMismatchLinger:   DefaultRecoveryMismatchLinger,
+		DeployNoticeLead:         DefaultDeployNoticeLead,
+		DeployAdmitWait:          DefaultDeployAdmitWait,
+		DeployExpectedBack:       DefaultDeployExpectedBack,
+		DeployImageTag:           DefaultDeployImageTag,
+		DeployControlSocket:      DefaultDeployControlSocket,
 		TraceSampleRatio:         DefaultTraceSampleRatio,
 	}
 }
@@ -523,6 +548,11 @@ func Parse(args []string, env EnvLookup, errOut io.Writer) (Config, error) {
 	fs.DurationVar(&c.RecoveryVerifyTimeout, "recovery-verify-timeout", c.RecoveryVerifyTimeout, "bounds `recover --verify` (ANDARA_RECOVERY_VERIFY_TIMEOUT)")
 	fs.Uint64Var(&c.RecoveryPinRound, "recovery-pin-round", c.RecoveryPinRound, "the snapshot round boot recovery must use, refusing it if incomplete; 0 means the newest complete (ANDARA_RECOVERY_PIN_ROUND)")
 	fs.DurationVar(&c.RecoveryMismatchLinger, "recovery-mismatch-linger", c.RecoveryMismatchLinger, "how long a boot ending in a hash or restore mismatch serves /metrics before it exits (ANDARA_RECOVERY_MISMATCH_LINGER)")
+	fs.DurationVar(&c.DeployNoticeLead, "deploy-notice-lead", c.DeployNoticeLead, "pre-stop's wait between ServerStopping and refusing Submit (ANDARA_DEPLOY_NOTICE_LEAD)")
+	fs.DurationVar(&c.DeployAdmitWait, "deploy-admit-wait", c.DeployAdmitWait, "the longest pre-stop waits for Submits already admitted (ANDARA_DEPLOY_ADMIT_WAIT)")
+	fs.DurationVar(&c.DeployExpectedBack, "deploy-expected-back", c.DeployExpectedBack, "copied into ServerStopping.expected_back_seconds (ANDARA_DEPLOY_EXPECTED_BACK)")
+	fs.StringVar(&c.DeployImageTag, "deploy-image-tag", c.DeployImageTag, "the image tag this pod runs, digest stripped; names the deploy: round tag (ANDARA_DEPLOY_IMAGE_TAG)")
+	fs.StringVar(&c.DeployControlSocket, "deploy-control-socket", c.DeployControlSocket, "Unix socket of the Lifecycle service, mode 0600 (ANDARA_DEPLOY_CONTROL_SOCKET)")
 	fs.Float64Var(&c.TraceSampleRatio, "trace-sample-ratio", c.TraceSampleRatio, "fraction of Game/Submit traces exported; rejections always are (ANDARA_TRACE_SAMPLE_RATIO)")
 	fs.BoolVar(&c.TrustInboundTraceparent, "trust-inbound-traceparent", c.TrustInboundTraceparent, "let a client's traceparent parent the RPC span and decide its sampling (ANDARA_TRUST_INBOUND_TRACEPARENT)")
 	fs.DurationVar(&c.SessionLinkdeadMax, "session-linkdead-max", c.SessionLinkdeadMax, "hard ceiling on linkdead duration; auth.session_ttl must exceed it (ANDARA_LINKDEAD_MAX)")
@@ -574,8 +604,39 @@ func Parse(args []string, env EnvLookup, errOut io.Writer) (Config, error) {
 	if err := c.validateSnapshot(); err != nil {
 		return Config{}, err
 	}
+	if err := c.validateDeploy(); err != nil {
+		return Config{}, err
+	}
 	return c, nil
 }
+
+// validateDeploy rejects a deploy.* configuration pre-stop cannot run under.
+// The image tag names a round tag, so it must fit the tag grammar once
+// `deploy:` is prefixed (lifecycle.md, Round tags).
+func (c Config) validateDeploy() error {
+	for _, d := range []struct {
+		key string
+		v   time.Duration
+	}{
+		{"deploy.notice_lead", c.DeployNoticeLead},
+		{"deploy.admit_wait", c.DeployAdmitWait},
+		{"deploy.expected_back", c.DeployExpectedBack},
+	} {
+		if d.v < 0 {
+			return fmt.Errorf("%s must not be negative, got %s", d.key, d.v)
+		}
+	}
+	if !deployImageTag.MatchString(c.DeployImageTag) {
+		return fmt.Errorf("deploy.image_tag must be 1 to 200 of [A-Za-z0-9._@+-] (a digest stripped), got %q", c.DeployImageTag)
+	}
+	if c.DeployControlSocket == "" {
+		return fmt.Errorf("deploy.control_socket must name a path (ANDARA_DEPLOY_CONTROL_SOCKET)")
+	}
+	return nil
+}
+
+// deployImageTag is the tag grammar's value part (lifecycle.md, Round tags).
+var deployImageTag = regexp.MustCompile(`^[A-Za-z0-9._@+-]{1,200}$`)
 
 // validateSnapshot rejects a snapshot configuration the round cannot run
 // under. A negative interval or stall budget is a typo; an s3 store with no
@@ -1077,6 +1138,13 @@ type fileConfig struct {
 		S3Endpoint    *string `yaml:"s3_endpoint"`
 		UploadTimeout *string `yaml:"upload_timeout"`
 	} `yaml:"snapshot"`
+	Deploy *struct {
+		NoticeLead    *string `yaml:"notice_lead"`
+		AdmitWait     *string `yaml:"admit_wait"`
+		ExpectedBack  *string `yaml:"expected_back"`
+		ImageTag      *string `yaml:"image_tag"`
+		ControlSocket *string `yaml:"control_socket"`
+	} `yaml:"deploy"`
 }
 
 func peekConfigPath(args []string, env EnvLookup) string {
@@ -1291,6 +1359,30 @@ func applyFile(c *Config, path string) error {
 				continue
 			}
 			if err := parseDuration(d.key, *d.v, d.dst); err != nil {
+				return fmt.Errorf("config file %s: %w", path, err)
+			}
+		}
+	}
+	if d := fc.Deploy; d != nil {
+		if d.ImageTag != nil {
+			c.DeployImageTag = *d.ImageTag
+		}
+		if d.ControlSocket != nil {
+			c.DeployControlSocket = *d.ControlSocket
+		}
+		for _, dv := range []struct {
+			key string
+			v   *string
+			dst *time.Duration
+		}{
+			{"deploy.notice_lead", d.NoticeLead, &c.DeployNoticeLead},
+			{"deploy.admit_wait", d.AdmitWait, &c.DeployAdmitWait},
+			{"deploy.expected_back", d.ExpectedBack, &c.DeployExpectedBack},
+		} {
+			if dv.v == nil {
+				continue
+			}
+			if err := parseDuration(dv.key, *dv.v, dv.dst); err != nil {
 				return fmt.Errorf("config file %s: %w", path, err)
 			}
 		}
@@ -1603,6 +1695,8 @@ func applyEnv(c *Config, env EnvLookup) error {
 		{"ANDARA_SNAPSHOT_S3_BUCKET", &c.SnapshotS3Bucket},
 		{"ANDARA_SNAPSHOT_S3_ENDPOINT", &c.SnapshotS3Endpoint},
 		{"ANDARA_CONTENT_CACHE_DIR", &c.ContentCacheDir},
+		{"ANDARA_DEPLOY_IMAGE_TAG", &c.DeployImageTag},
+		{"ANDARA_DEPLOY_CONTROL_SOCKET", &c.DeployControlSocket},
 	} {
 		if v, ok := env(sv.name); ok {
 			*sv.dst = v
@@ -1628,6 +1722,9 @@ func applyEnv(c *Config, env EnvLookup) error {
 		{"ANDARA_RECOVERY_VERIFY_TIMEOUT", &c.RecoveryVerifyTimeout},
 		{"ANDARA_RECOVERY_MISMATCH_LINGER", &c.RecoveryMismatchLinger},
 		{"ANDARA_CONTENT_RELOAD_DEBOUNCE", &c.ContentReloadDebounce},
+		{"ANDARA_DEPLOY_NOTICE_LEAD", &c.DeployNoticeLead},
+		{"ANDARA_DEPLOY_ADMIT_WAIT", &c.DeployAdmitWait},
+		{"ANDARA_DEPLOY_EXPECTED_BACK", &c.DeployExpectedBack},
 	} {
 		if v, ok := env(dv.name); ok {
 			if err := parseDuration(dv.name, v, dv.dst); err != nil {

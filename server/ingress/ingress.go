@@ -60,6 +60,15 @@ type Ingress struct {
 	warnAt   atomic.Int64
 	mu       sync.Mutex
 	sessions map[string]*session
+
+	// The draining flag (AW-SRV-054, lifecycle.md ruling 3): set by pre-stop,
+	// it refuses every Submit with server_restarting. Not the degraded state:
+	// andara_ingress_degraded never moves for it. admitted counts the Submits
+	// that passed the flag, so pre-stop can wait for them; drainMu orders a
+	// Submit's check-and-count against the flag being set.
+	drainMu    sync.RWMutex
+	restarting bool
+	admitted   sync.WaitGroup
 }
 
 // session is one Session's ingress state: how many Submits it has in
@@ -114,6 +123,36 @@ func New(o Options) *Ingress {
 // Metrics returns the ingress metrics.
 func (i *Ingress) Metrics() *Metrics { return i.metrics }
 
+// RefuseRestarting sets the draining flag: from its return, every Submit is
+// UNAVAILABLE with reason server_restarting. It is never cleared; the process
+// is stopping (AW-SRV-054).
+func (i *Ingress) RefuseRestarting() {
+	i.drainMu.Lock()
+	i.restarting = true
+	i.drainMu.Unlock()
+}
+
+// Restarting reports whether the draining flag is set.
+func (i *Ingress) Restarting() bool {
+	i.drainMu.RLock()
+	defer i.drainMu.RUnlock()
+	return i.restarting
+}
+
+// WaitAdmitted waits for every Submit admitted before RefuseRestarting to
+// return, until ctx ends, and reports whether they all did. What is still in
+// flight at the deadline is decided by the log and replayed.
+func (i *Ingress) WaitAdmitted(ctx context.Context) bool {
+	done := make(chan struct{})
+	go func() { i.admitted.Wait(); close(done) }()
+	select {
+	case <-done:
+		return true
+	case <-ctx.Done():
+		return false
+	}
+}
+
 // Submit implements gateway.Ingress: the gateway has resolved the Session
 // and bounded the call.
 func (i *Ingress) Submit(ctx context.Context, s *gateway.Session, req *gamev1.SubmitRequest) (*gamev1.SubmitResponse, error) {
@@ -127,6 +166,18 @@ func (i *Ingress) Submit(ctx context.Context, s *gateway.Session, req *gamev1.Su
 // submit is Submit on the Session's parts: its ID and Principal, and the
 // channel closed when it ends, nil for none.
 func (i *Ingress) submit(ctx context.Context, sessionID string, principal auth.Principal, ended <-chan struct{}, req *gamev1.SubmitRequest) (*gamev1.SubmitResponse, error) {
+	// The draining flag first: a restarting server takes nothing, and a
+	// refused Submit costs the Session no token.
+	i.drainMu.RLock()
+	if i.restarting {
+		i.drainMu.RUnlock()
+		i.metrics.Submits.WithLabelValues(OutcomeUnavailable).Inc()
+		return nil, connectError(ErrServerRestarting)
+	}
+	i.admitted.Add(1)
+	i.drainMu.RUnlock()
+	defer i.admitted.Done()
+
 	// Rate limit before parse: a flood is refused before it costs anything.
 	lim := i.limiter
 	if principal.Has(auth.RoleAgent) {

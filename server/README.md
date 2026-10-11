@@ -111,6 +111,11 @@ variable, and (where it is a process flag) by flag. Precedence is **flag > env >
 | `recovery.verify_timeout` | `ANDARA_RECOVERY_VERIFY_TIMEOUT` | `600s` | Bounds `andara-server recover --verify` and `Admin.VerifySnapshotRound`; past it the RPC answers `DEADLINE_EXCEEDED`. |
 | `recovery.pin_round` | `ANDARA_RECOVERY_PIN_ROUND` | `0` | `0` recovers from the newest complete round. `T > 0` names round `T`: boot recovery uses it, and exits `7` if it isn't complete, trying no other. Read on every boot and never cleared by the server; `make rollback ROUND=T` sets and clears it. |
 | `recovery.mismatch_linger` | `ANDARA_RECOVERY_MISMATCH_LINGER` | `0s` | How long a boot that ends in exit `8` or `6` serves `/metrics` and `/livez` (`200`) and `/readyz` and `/startedz` (`503`) before exiting, so `andara_recovery_state_hash_match` `0` is scraped. A signal ends it at once. `grpc.listen` is never bound. Compose sets `60s`; the chart leaves `0s`, where only a Ready pod is scraped. |
+| `deploy.notice_lead` | `ANDARA_DEPLOY_NOTICE_LEAD` | `10s` | Pre-stop's wait between writing `ServerStopping` to every stream and refusing `Submit`. The World runs and accepts `Submit` through it. Not negative. |
+| `deploy.admit_wait` | `ANDARA_DEPLOY_ADMIT_WAIT` | `5s` | The longest pre-stop waits, after the refusal, for `Submit`s already admitted to return; what is still in flight is decided by the log and replayed. Not negative. |
+| `deploy.expected_back` | `ANDARA_DEPLOY_EXPECTED_BACK` | `60s` | Copied into `ServerStopping.expected_back_seconds`. Not negative. |
+| `deploy.image_tag` | `ANDARA_DEPLOY_IMAGE_TAG` | `dev` | The image tag this pod runs, any `@sha256:` digest stripped; set by the chart from `image.tag`. Names the round pre-stop tags, `deploy:<v>`, and the deploy's correlation id `<v>@<tick>`. 1 to 200 of `[A-Za-z0-9._@+-]`. |
+| `deploy.control_socket` | `ANDARA_DEPLOY_CONTROL_SOCKET` | `/run/andara/control.sock` | The Unix socket the Lifecycle service listens on, mode `0600`, and `andara-server prestop` dials. The chart mounts an `emptyDir` at its directory. A socket that can't be bound is an error line and the server serves without it. |
 | `telemetry.trace_sample_ratio` | `ANDARA_TRACE_SAMPLE_RATIO` | `0.01` | Fraction of `Game/Submit` traces exported, decided at the root and carried into the tick's `command.apply`. Every rejection is exported whatever it says; every other root is. |
 | `telemetry.trust_inbound_traceparent` | `ANDARA_TRUST_INBOUND_TRACEPARENT` | `false` | Let a client's W3C `traceparent` parent the RPC span — and carry its sampling decision. Off, the RPC span is a new root that links to the client's context, so the ratio applies whatever the client sent. `make up` sets it, so andara-cli's `cli.command` root sits above the RPC locally. |
 
@@ -380,6 +385,28 @@ gap or a newer `state_version`.
 
 Spans: `recovery.run`, with children `recovery.load_snapshot` (per Zone object read, around the read itself: `zone_id`, `key`, `bytes`), `restore.verify`,
 `recovery.seek`, `recovery.replay` (`ticks`, `records`) and `recovery.verify`.
+
+## Pre-stop and the deploy interruption (AW-SRV-054)
+
+`docs/specs/deploy/lifecycle.md` is the contract. `andara-server prestop` (the pod's `preStop` hook) is a
+thin client of `Lifecycle.PrepareStop`, which the running server serves on `deploy.control_socket`. The
+server, once: writes `ServerStopping` (field 25, `event_id` 0, never in the log or a Resume Window) to every
+open `Subscribe` stream; waits `deploy.notice_lead`; refuses `Submit` with `UNAVAILABLE`, reason
+`server_restarting` (the draining flag: `andara_ingress_degraded` is untouched); waits at most
+`deploy.admit_wait` for admitted `Submit`s; takes a Snapshot Round at the next tick boundary; tags it
+`deploy:<deploy.image_tag>`; waits for the round's offsets to be committed; logs `prestop complete` (`tick`,
+`hash`, `tag`, `duration_ms`, `refused_ms`, `outcome`, `deploy_id`, `trace_id` of the `deploy.prestop_snapshot`
+span); and responds. A second call returns the first call's response. `prestop` prints the response as
+`key=value` lines and exits `0` complete, `1` timeout (the round missed `snapshot.upload_timeout`, or no
+answer in time), `2` store error, `3` no socket. On `1` or `2` no tag is written and the previous complete
+round is the recovery point. The flags are the server's, so it reads the same keys.
+
+The new pod measures the interruption: `andara_deploy_interruption_seconds` (histogram, no labels,
+buckets 5, 10, 20, 30, 60, 120, 300) is observed once per boot, when the process first reports serving,
+with the wall time from the head Tick Boundary Record's CreateTime (`recovery.Report.HeadProducedAt`) to
+now, and the `info` line `deploy interruption` (`seconds`, `round_tick`, `deploy_id`, `trace_id`) is logged
+under a `deploy.recovery` span that covers the same interval. When the restored round carries a `deploy:`
+tag, the span's `deploy_id` is the old pod's `<image tag>@<tick>`. A boot with no boundary observes nothing.
 
 ## Kafka client settings (AW-SRV-053)
 

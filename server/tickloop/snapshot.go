@@ -177,6 +177,61 @@ type Snapshotter struct {
 	lostAt       sim.Tick
 	lostErr      error
 	changed      chan struct{}
+
+	// forced is the pre-stop's request for a round at the next boundary
+	// (AW-SRV-054), nil when none is waiting; the result goes to its channel.
+	forceMu sync.Mutex
+	forced  chan ForcedRound
+}
+
+// ForcedRound is how a round Force asked for ended: its tick, the State Hash
+// at that tick, and the keys of the objects it wrote. Err is nil when the
+// round is complete; a round past snapshot.upload_timeout wraps
+// context.DeadlineExceeded.
+type ForcedRound struct {
+	Tick sim.Tick
+	Hash [32]byte
+	Keys []string
+	Err  error
+}
+
+// ErrSnapshotsDisabled: Force on a runner with no store.
+var ErrSnapshotsDisabled = errors.New("snapshots are not configured: snapshot.interval is 0")
+
+// Force asks for a round at the next tick boundary, whatever the cadence, and
+// returns the channel its result arrives on (buffered, so an abandoned wait
+// leaks nothing). A round already in flight finishes first. A Force before
+// the last one's round was taken returns the same channel, which carries one
+// result: one caller at a time, which the Lifecycle service's single run
+// guarantees. Pre-stop's (AW-SRV-054).
+func (s *Snapshotter) Force() <-chan ForcedRound {
+	if !s.Enabled() {
+		ch := make(chan ForcedRound, 1)
+		ch <- ForcedRound{Err: ErrSnapshotsDisabled}
+		return ch
+	}
+	s.forceMu.Lock()
+	defer s.forceMu.Unlock()
+	if s.forced == nil {
+		s.forced = make(chan ForcedRound, 1)
+	}
+	return s.forced
+}
+
+// takeForced returns the waiting Force request, clearing it, or nil.
+func (s *Snapshotter) takeForced() chan ForcedRound {
+	s.forceMu.Lock()
+	defer s.forceMu.Unlock()
+	ch := s.forced
+	s.forced = nil
+	return ch
+}
+
+// forcePending reports whether a Force request is waiting.
+func (s *Snapshotter) forcePending() bool {
+	s.forceMu.Lock()
+	defer s.forceMu.Unlock()
+	return s.forced != nil
 }
 
 var _ sim.BoundaryAcks = (*Snapshotter)(nil)
@@ -207,6 +262,14 @@ func NewSnapshotter(o SnapshotOptions) (*Snapshotter, error) {
 
 // Metrics exposes the snapshot instruments, for tests and the boot.
 func (s *Snapshotter) Metrics() *SnapshotMetrics { return s.metrics }
+
+// Store is where rounds are written, nil when snapshots are off.
+func (s *Snapshotter) Store() sim.WorldStore {
+	if !s.Enabled() {
+		return nil
+	}
+	return s.opts.Store
+}
 
 // Enabled reports whether snapshots are configured.
 func (s *Snapshotter) Enabled() bool { return s != nil && s.opts.Interval > 0 }
@@ -317,9 +380,13 @@ func (s *Snapshotter) Skip(ctx context.Context, tick sim.Tick, cause error) {
 //
 // The copy happens on the caller's goroutine — this is the in-tick work — and
 // everything after it is handed to a goroutine.
-func (s *Snapshotter) Maybe(ctx context.Context, e *sim.Engine) {
+//
+// A Force request makes the round due whatever the cadence; one that finds a
+// round in flight waits for a later boundary rather than being skipped.
+// forced reports that this call took the requested round.
+func (s *Snapshotter) Maybe(ctx context.Context, e *sim.Engine) (forced bool) {
 	if !s.Enabled() {
-		return
+		return false
 	}
 	// The tick comes from the engine rather than from the caller. They are
 	// the same number — the loop calls this right after Step, so the engine
@@ -327,6 +394,16 @@ func (s *Snapshotter) Maybe(ctx context.Context, e *sim.Engine) {
 	// from the engine means AC-8 holds structurally instead of depending on
 	// every caller passing the right one.
 	tick := e.Tick()
+	if s.forcePending() {
+		if !s.inFlight.CompareAndSwap(false, true) {
+			return false
+		}
+		s.mu.Lock()
+		s.lastRound = s.now()
+		s.mu.Unlock()
+		s.start(ctx, e, tick, s.takeForced())
+		return true
+	}
 	now := s.now()
 	s.mu.Lock()
 	due := now.Sub(s.lastRound) >= s.opts.Interval
@@ -335,14 +412,21 @@ func (s *Snapshotter) Maybe(ctx context.Context, e *sim.Engine) {
 	}
 	s.mu.Unlock()
 	if !due {
-		return
+		return false
 	}
 	if !s.inFlight.CompareAndSwap(false, true) {
 		s.log.LogAttrs(ctx, slog.LevelWarn, "snapshot round skipped: the previous one is still running",
 			slog.Uint64("tick", uint64(tick)), slog.String("trace_id", traceID(ctx)))
-		return
+		return false
 	}
+	s.start(ctx, e, tick, nil)
+	return false
+}
 
+// start takes the copy on the caller's goroutine, the in-tick work, and hands
+// the rest of the round to a goroutine. inFlight is already set. done, when
+// not nil, is a Force request's channel and gets the round's result.
+func (s *Snapshotter) start(ctx context.Context, e *sim.Engine, tick sim.Tick, done chan ForcedRound) {
 	// The round's own root span, explicitly not inside sim.tick: a round
 	// outlives the tick, and hanging it under the tick would make every
 	// tick trace carry a span that ends after it.
@@ -364,6 +448,12 @@ func (s *Snapshotter) Maybe(ctx context.Context, e *sim.Engine) {
 	// zero no matter how long the copy took.
 	began, startedMono := s.now(), time.Now()
 	snaps := e.SnapshotAll(began.UnixNano())
+	var hash [32]byte
+	if done != nil {
+		// The State Hash at the round's tick, as its TickCompleted records it:
+		// what pre-stop reports and the next recovery reproduces.
+		hash = e.StateHash()
+	}
 	stall := time.Since(startedMono)
 	copySpan.SetAttributes(attribute.Int("zones", len(snaps)), attribute.Float64("stall_ms", float64(stall.Microseconds())/1000))
 	copySpan.End()
@@ -391,6 +481,13 @@ func (s *Snapshotter) Maybe(ctx context.Context, e *sim.Engine) {
 		err := s.run(roundCtx, tick, snaps, startedMono)
 		if err != nil {
 			round.SetStatus(codes.Error, err.Error())
+		}
+		if done != nil {
+			keys := make([]string, len(snaps))
+			for i := range snaps {
+				keys[i] = snaps[i].Key()
+			}
+			done <- ForcedRound{Tick: tick, Hash: hash, Keys: keys, Err: err}
 		}
 		if s.opts.OnRound != nil {
 			s.opts.OnRound(tick, err)

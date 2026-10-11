@@ -31,6 +31,8 @@ const (
 	TypeHeartbeat = "heartbeat"
 	TypeResync    = "resync"
 	TypeAttached  = "attached"
+	// TypeServerStopping is pre-stop's notice (AW-SRV-054).
+	TypeServerStopping = "server_stopping"
 )
 
 // Resync reasons, Resync.reason and the `reason` label of
@@ -108,6 +110,7 @@ func NewMetrics(reg prometheus.Registerer) *Metrics {
 	m.Sent.WithLabelValues(TypeHeartbeat)
 	m.Sent.WithLabelValues(TypeResync)
 	m.Sent.WithLabelValues(TypeAttached)
+	m.Sent.WithLabelValues(TypeServerStopping)
 	for _, r := range []string{ReasonBufferFull, ReasonClientGone, ReasonDraining, ReasonRevoked} {
 		m.Drops.WithLabelValues(r)
 	}
