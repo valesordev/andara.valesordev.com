@@ -124,6 +124,7 @@ def snapshot(pr: int, sha: str) -> dict:
         "state": state,
         "sha": sha,
         "requested": False,
+        "handled": len(handled),   # threads closed by a tagged reply: shown, since a reply isn't a fix
         "findings": [
             {"id": c["id"], "path": c.get("path"), "line": c.get("line") or c.get("original_line"),
              "url": c.get("html_url"), "body": c.get("body", "")}

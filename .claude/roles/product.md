@@ -4,7 +4,12 @@ role: product
 aliases: [product-manager, po]
 branch_prefix: product/
 writes: [docs/product/]
-skills: [feature-brief, release-plan, release-review]
+skills: [feature-brief, release-plan, release-review, product-triage]
+sprint_run: session
+start_skill: product-triage
+watch_label: product
+watch_pr_section: Release changes (after merge)
+approval: Brian vetoes or approves the calls listed under Decided this session in the PR
 ---
 # Role: PRODUCT
 
