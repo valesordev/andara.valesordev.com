@@ -28,10 +28,11 @@ it, and don't re-run the lane with `--no-lane-allow` or a wider list to get past
 ## 1. Preflight
 
 1. `git fetch origin`. The coordinator needs `origin/main`.
-   `run --apply` itself refuses when the lanes have no GitHub App of their own or
-   `origin`'s `main` isn't protected (an approving review of a PR's latest push
-   required to merge): report that as it is and stop; `--person-token` and
-   `--unprotected-main` are Brian's to add, never yours.
+   `run --apply` itself refuses when the lanes have no GitHub App of their own, no
+   OS user of their own, or `origin`'s `main` isn't protected (an approving review
+   of a PR's latest push required to merge): report that as it is and stop;
+   `--person-token`, `--same-os-user` and `--unprotected-main` are Brian's to add,
+   never yours.
 2. `.claude/bin/coordinator status`. If lanes from an earlier run are still
    running, say so; the coordinator won't start a second lane for a story that has one.
 3. If `.claude/roles/_repo.md` lacks `stories: github` and `sprints: project`,
@@ -62,6 +63,10 @@ plan is not consent to run.
 ## 4. Run
 
 `.claude/bin/coordinator run --apply <the same flags, without --yes>` with `run_in_background`. (`--yes` is this skill's own flag; the script doesn't know it.)
+Run it as its own command, nothing chained: the repo's settings make `coordinator run` an
+`ask` rule, so Claude Code puts it to Brian as a permission prompt, auto mode included. That
+prompt is his consent to start lanes. If it's denied, by him or by auto mode's classifier,
+say so and stop: don't start lanes another way.
 It returns when every lane has ended (90 minutes each at most, $15 each by
 default). `.claude/bin/coordinator status` shows the lanes meanwhile; check it
 when Brian asks, not on a timer.

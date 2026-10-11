@@ -94,7 +94,9 @@
       "Bash(.claude/bin/role check-cmd)",
       "Bash(.claude/bin/sprint-state:*)",
       "Bash(.claude/bin/story show:*)",
-      "Bash(.claude/bin/story list:*)"
+      "Bash(.claude/bin/story list:*)",
+      "Bash(.claude/bin/coordinator plan:*)",
+      "Bash(.claude/bin/coordinator status)"
     ],
     "ask": [
       "Bash(make down)",
@@ -120,7 +122,9 @@
       "Bash(kubectl rollout restart:*)",
       "Bash(helm uninstall:*)",
       "Bash(kubectl get secret:*)",
-      "Bash(kubectl get secrets:*)"
+      "Bash(kubectl get secrets:*)",
+      "Bash(.claude/bin/coordinator run:*)",
+      "Bash(.claude/bin/coordinator clean:*)"
     ]
   }
 }

@@ -27,9 +27,11 @@ architecture above all, in his own sessions):
                    closed, unless --pm-close.
 
 Each lane is a separate session: the coordinator picks a session id, records the
-role for it (`role set`), adds a detached worktree at origin/main under
-.claude/worktrees/, and starts `claude -p` there, so the role hooks (ownership,
-review gate, story guard) bind that session exactly as they bind yours. Lanes run
+role for it (`role set`), adds a detached worktree at origin/main, and starts
+`claude -p` there, so the role hooks (ownership, review gate, story guard) bind that
+session exactly as they bind yours. Lanes run as their own OS user (lane-user.json),
+through sudo, in worktrees of that user's clone; `--same-os-user` runs them as you,
+in worktrees under .claude/worktrees/. Lanes run
 with --permission-mode dontAsk: whatever the repo's and the user's Claude settings
 don't allow is denied, not prompted, so a lane never waits on a person. This command grants
 no permissions of its own. A lane therefore can't `git push` or `gh pr create` unless those
@@ -59,15 +61,19 @@ from __future__ import annotations
 import argparse
 import base64
 import fcntl
+import getpass
+import grp
 import hashlib
 import importlib.machinery
 import importlib.util
 import json
 import os
+import pwd
 import re
 import shutil
 import shlex
 import signal
+import socket
 import subprocess
 import sys
 import time
@@ -135,6 +141,7 @@ DENY = ["Bash(gh pr merge:*)", "Bash(gh pr close:*)", "Bash(gh pr review:*)", "B
         "Bash(git push --force:*)", "Bash(git push -f:*)", "Bash(git push --force-with-lease:*)",
         "Bash(git push origin main:*)", "Bash(git push origin HEAD:main:*)", "Bash(git reset --hard:*)",
         "Bash(git push origin HEAD:refs/heads/main:*)", "Bash(git push origin refs/heads/main:*)",
+        "Bash(.claude/bin/coordinator:*)",   # a lane never starts lanes (the hook refuses it too)
         "EnterWorktree", "ExitWorktree"]   # a lane stays in the worktree the coordinator records
 
 # What a lane may run without asking (`--allowedTools`; a lane has no one to ask, so anything else is
@@ -453,6 +460,7 @@ class Ctx:
         self._gh = gh
         self._board = None
         self.lane_allow = True   # --no-lane-allow turns the allow-list off
+        self.host = None         # where lanes run: SameUser or OsUser, chosen by `run` and `clean`
 
     def settings(self, name: str) -> dict:
         """How `name` runs as a lane: its charter's frontmatter over the defaults."""
@@ -705,6 +713,8 @@ def hook_settings(ctx: Ctx, run_dir: Path) -> Path:
     if not script.exists():
         shutil.copyfile(ctx.bin / "role", script)
         script.chmod(0o755)
+    if not (hooks / "lanectl").exists():
+        (hooks / "lanectl").write_text(LANECTL)
     roles = hooks / "roles"   # policy (prefixes, github_repo, writes) from the main checkout, not the lane's
     if not roles.exists():
         shutil.copytree(ctx.root / ".claude" / "roles", roles)
@@ -739,6 +749,220 @@ def lane_name(lane: dict) -> str:
     return f"{lane['role']}-{slug(lane['story'])}" if lane["story"] else lane["role"]
 
 
+LANE_USER_CONFIG = Path(os.environ.get("XDG_CONFIG_HOME") or Path.home() / ".config") / "claude-coordinator" / "lane-user.json"
+
+# Run as the lanes' OS user (through sudo) to touch what only that user may: a session's role in
+# the lanes' clone, and the lane's start, with the environment the coordinator wrote for it.
+LANECTL = '''"""Written by the coordinator; run as the lanes' OS user through sudo. Don't edit it."""
+import importlib.machinery, importlib.util, json, os, sys
+from pathlib import Path
+
+
+def role():
+    f = str(Path(__file__).resolve().with_name("role"))
+    loader = importlib.machinery.SourceFileLoader("lane_role", f)
+    mod = importlib.util.module_from_spec(importlib.util.spec_from_loader("lane_role", loader))
+    loader.exec_module(mod)
+    return mod
+
+
+op, args = sys.argv[1], sys.argv[2:]
+if op == "put-role":
+    root, sid, name, pin = args
+    role().put_role(Path(root), sid, None if name == "-" else name, pinned=pin == "pinned")
+elif op == "get-role":
+    print(role().get_role(Path(args[0]), args[1]) or "")
+elif op == "exec":
+    envfile, cwd, sep, *cmd = args
+    env = json.loads(Path(envfile).read_text())
+    os.chdir(cwd)
+    os.execvpe(cmd[0], cmd, env)
+else:
+    sys.exit(f"lanectl: unknown operation {op!r}")
+'''
+
+
+class SameUser:
+    """Lanes run as you, in worktrees of your checkout (`--same-os-user`): a lane's own code
+    (`make check`, tests) can read whatever you can."""
+    user = None
+
+    def __init__(self, ctx: Ctx, wt_dir: Path | None = None):
+        self.ctx, self.root = ctx, ctx.root
+        self.wt_dir = wt_dir or ctx.root / ".claude" / "worktrees"
+        self.auth_args: list[str] = []
+
+    def git(self, path: Path, *args: str, check: bool = False) -> subprocess.CompletedProcess:
+        return self.ctx.sh.run(["git", *args], cwd=path, check=check)
+
+    def exists(self, p: Path) -> bool:
+        return p.exists()
+
+    def mkdir(self, p: Path) -> None:
+        p.mkdir(parents=True, exist_ok=True)
+        exclude_worktrees(self.ctx, p)
+
+    def fetch(self) -> subprocess.CompletedProcess:
+        return self.ctx.sh.run(["git", "fetch", "origin", "--quiet"], cwd=self.root)
+
+    def put_role(self, sid: str, name: str | None, pinned: bool = False) -> None:
+        role.put_role(self.root, sid, name, pinned=pinned)
+
+    def get_role(self, sid: str) -> str | None:
+        return role.get_role(self.root, sid)
+
+    def lane_env(self, env: dict, auth: Path | None) -> dict:
+        if auth:
+            env["PATH"] = f"{auth / 'bin'}{os.pathsep}{env.get('PATH', '')}"
+            env["GH_CONFIG_DIR"] = str(auth / "gh-config")   # a gh that misses the shim has no login of yours
+        return env
+
+    def start(self, cmd: list[str], cwd: Path, env: dict, log: Path, lane_dir: Path) -> subprocess.Popen:
+        return self.ctx.sh.start(cmd, cwd, env, log)
+
+
+
+class OsUser(SameUser):
+    """Lanes run as their own OS user (`~/.config/claude-coordinator/lane-user.json`), in
+    worktrees of that user's clone under <its home>/repos. Everything that touches them goes
+    through `sudo -n -u <user>`; the files they read from you (hooks, policy, token) sit in
+    <its home>/runs/<run>, yours and readable by its group, never writable by it."""
+
+    def __init__(self, ctx: Ctx, user: str, home: Path, repos: Path, runs: Path):
+        self.ctx, self.user, self.home, self.repos, self.runs = ctx, user, home, repos, runs
+        name = (ctx.cfg.get("github_repo") or ctx.root.name).replace("/", "--")
+        self.root = repos / name
+        self.wt_dir = repos / f"{name}.worktrees"
+        self.sudo = ["sudo", "-n", "-u", user, "--"]
+        self.auth_args = []         # git -c options: the app's token over HTTPS, set once a run has one
+        self.lanectl: Path | None = None
+        self._path = None
+
+    def as_lane(self, cmd: list[str], check: bool = False) -> subprocess.CompletedProcess:
+        # cwd "/": your working directory is none of the lane user's business, nor reachable by it
+        return self.ctx.sh.run(self.sudo + cmd, cwd=Path("/"), check=check)
+
+    def git(self, path: Path, *args: str, check: bool = False) -> subprocess.CompletedProcess:
+        return self.as_lane(["git", "-C", str(path), *self.auth_args, *args], check=check)
+
+    def exists(self, p: Path) -> bool:
+        return self.as_lane(["test", "-e", str(p)]).returncode == 0
+
+    def mkdir(self, p: Path) -> None:
+        self.as_lane(["mkdir", "-p", str(p)], check=True)
+
+    def fetch(self) -> subprocess.CompletedProcess:
+        return self.git(self.root, "fetch", "origin", "--quiet")
+
+    def prepare(self) -> None:
+        """The lane user's clone of this repo, made from your checkout's origin (over HTTPS, as the app)."""
+        url = self.ctx.sh.run(["git", "remote", "get-url", "origin"], cwd=self.ctx.root).stdout.strip()
+        if not url:
+            raise CoordError("your checkout has no `origin` remote to clone for the lanes")
+        if not self.exists(self.root / ".git"):
+            self.as_lane(["git", *self.auth_args, "clone", "--quiet", url, str(self.root)], check=True)
+        # the URL as configured: `remote get-url` would show it rewritten to HTTPS by auth_args
+        have = self.git(self.root, "config", "--get", "remote.origin.url").stdout.strip()
+        if have != url:
+            raise CoordError(f"{self.root} clones {have or 'nothing'}, not {url}: move it aside")
+
+    def _ctl(self, *args: str) -> subprocess.CompletedProcess:
+        if not self.lanectl:
+            raise CoordError("internal: the run's lane files aren't written yet")
+        return self.as_lane(["python3", "-I", str(self.lanectl), *args], check=True)
+
+    def put_role(self, sid: str, name: str | None, pinned: bool = False) -> None:
+        self._ctl("put-role", str(self.root), sid, name or "-", "pinned" if pinned else "-")
+
+    def get_role(self, sid: str) -> str | None:
+        return self._ctl("get-role", str(self.root), sid).stdout.strip() or None
+
+    def login_path(self) -> str:
+        if self._path is None:
+            r = self.ctx.sh.run(["sudo", "-n", "-i", "-u", self.user, "printenv", "PATH"], cwd=Path("/"))
+            self._path = r.stdout.strip().splitlines()[-1] if r.returncode == 0 and r.stdout.strip() else \
+                "/usr/local/bin:/usr/bin:/bin"
+        return self._path
+
+    def lane_env(self, env: dict, auth: Path | None) -> dict:
+        for k in [k for k in env if k.startswith("XDG_")] + ["CLAUDE_CONFIG_DIR", "SSH_AUTH_SOCK", "TMPDIR",
+                                                             "GH_CONFIG_DIR"]:
+            env.pop(k, None)    # yours: paths the lane user can't (and mustn't) reach
+        env.update(HOME=str(self.home), USER=self.user, LOGNAME=self.user)
+        env["PATH"] = (f"{auth / 'bin'}{os.pathsep}" if auth else "") + self.login_path()
+        return env
+
+    def start(self, cmd: list[str], cwd: Path, env: dict, log: Path, lane_dir: Path) -> subprocess.Popen:
+        envfile = lane_dir / f"env-{env['COORDINATOR_LANE']}.json"
+        fd = os.open(envfile, os.O_WRONLY | os.O_CREAT | os.O_TRUNC, 0o640)
+        with os.fdopen(fd, "w") as f:
+            json.dump(env, f)
+        proc = self.ctx.sh.start(self.sudo + ["python3", "-I", str(self.lanectl), "exec", str(envfile), str(cwd),
+                                              "--", *cmd], Path("/"), {"PATH": "/usr/bin:/bin"}, log)
+        proc.lane_kill = lambda sig: self.as_lane(["kill", "-s", signal.Signals(sig).name[3:], "--", f"-{proc.pid}"])
+        return proc
+
+    def check(self, ctx: Ctx, secrets: list[Path]) -> str | None:
+        """Why this user can't hold lanes apart from you, or None."""
+        try:
+            pw = pwd.getpwnam(self.user)
+        except KeyError:
+            return f"there is no OS user {self.user!r} (lane-user.json)"
+        if pw.pw_uid in (0, os.getuid()):
+            return f"the lane user {self.user!r} is root or you: lanes need an account of their own"
+        if self.as_lane(["true"]).returncode != 0:
+            return (f"`sudo -n -u {self.user}` needs a password: add `{getpass.getuser()} ALL=({self.user}) "
+                    f"NOPASSWD: ALL` to sudoers")
+        if self.as_lane(["sudo", "-n", "true"]).returncode == 0:
+            return f"{self.user} can use sudo: a lane could become anyone"
+        try:
+            st = os.stat(self.runs)
+        except PermissionError:
+            return (f"you can't reach {self.runs}: join its group (sudo usermod -aG {grp.getgrgid(pw.pw_gid).gr_name} "
+                    f"{getpass.getuser()}) and log in again, so this process has the group")
+        except OSError:
+            st = None
+        if st is None or st.st_uid != os.getuid() or st.st_gid != pw.pw_gid or st.st_mode & 0o027:
+            return (f"{self.runs} must be yours, group {grp.getgrgid(pw.pw_gid).gr_name}, mode 2750 (the lanes "
+                    f"read their hooks there and may not change them): sudo install -d -o {getpass.getuser()} "
+                    f"-g {grp.getgrgid(pw.pw_gid).gr_name} -m 2750 {self.runs}")
+        if self.as_lane(["test", "-r", str(self.runs), "-a", "-x", str(self.runs)]).returncode != 0:
+            return f"{self.user} can't read {self.runs}"
+        if self.as_lane(["test", "-w", str(self.repos)]).returncode != 0:
+            return f"{self.user} can't write {self.repos}: sudo install -d -o {self.user} -g {self.user} -m 2750 {self.repos}"
+        for p in secrets:
+            if self.as_lane(["test", "-r", str(p)]).returncode == 0:
+                return f"{self.user} can read {p}: lanes would reach what they're kept apart from (chmod o-rx its parent)"
+        return None
+
+
+def lane_user_config() -> dict | None:
+    f = Path(os.environ.get("COORDINATOR_LANE_USER_CONFIG") or LANE_USER_CONFIG)
+    if not f.is_file():
+        return None
+    try:
+        cfg = json.loads(f.read_text())
+        user = str(cfg["user"])
+    except (ValueError, KeyError, TypeError) as e:
+        raise CoordError(f"{f} needs a \"user\": {e}") from e
+    try:
+        home = Path(cfg.get("home") or pwd.getpwnam(user).pw_dir)
+    except KeyError:
+        raise CoordError(f"there is no OS user {user!r} ({f})") from None
+    return {"user": user, "home": home, "repos": Path(cfg.get("repos") or home / "repos"),
+            "runs": Path(cfg.get("runs") or home / "runs")}
+
+
+def lane_host(ctx: Ctx, worktrees: str | None, same_user: bool) -> SameUser:
+    cfg = None if same_user else lane_user_config()
+    if cfg is None:
+        return SameUser(ctx, Path(worktrees) if worktrees else None)
+    if worktrees:
+        raise CoordError("--worktrees is for lanes that run as you (--same-os-user): the lane user's "
+                         "worktrees live beside its clone")
+    return OsUser(ctx, **cfg)
+
+
 def exclude_worktrees(ctx: Ctx, wt_dir: Path) -> None:
     """Keep lane worktrees out of the repo's `git status` (and out of `git add .claude/`)."""
     if wt_dir.resolve() != (ctx.root / ".claude" / "worktrees").resolve():
@@ -751,52 +975,53 @@ def exclude_worktrees(ctx: Ctx, wt_dir: Path) -> None:
         f.write_text("\n".join(have + [line]) + "\n")
 
 
-def setup_worktree(ctx: Ctx, lane: dict, sid: str, wt_dir: Path) -> tuple[Path, bool]:
+def setup_worktree(ctx: Ctx, lane: dict, sid: str) -> tuple[Path, bool]:
     """The lane's worktree, and whether this call created it. A story resumed after an
     earlier lane left commits uses that lane's worktree, so the commits carry over."""
+    host = ctx.host
     resolved = ctx.roles.resolve(lane["role"])
     if resolved is None:
         raise CoordError(f"no charter for role {lane['role']!r} in .claude/roles/")
-    f = ctx.sh.run(["git", "fetch", "origin", "--quiet"], cwd=ctx.root)
+    f = host.fetch()
     if f.returncode != 0:
         raise CoordError(f"git fetch origin failed: {(f.stderr or f.stdout).strip()[:200]}")
-    path = wt_dir / lane_name(lane)
-    fresh = not path.exists()
+    path = host.wt_dir / lane_name(lane)
+    fresh = not host.exists(path)
     if fresh:
-        wt_dir.mkdir(parents=True, exist_ok=True)
-        exclude_worktrees(ctx, wt_dir)
-        ctx.sh.run(["git", "worktree", "prune"], cwd=ctx.root)  # a directory deleted by hand
-        ctx.sh.run(["git", "worktree", "add", "--detach", str(path), "refs/remotes/origin/main"], cwd=ctx.root, check=True)
-    elif not (path / ".git").exists():
+        host.mkdir(host.wt_dir)
+        host.git(host.root, "worktree", "prune")  # a directory deleted by hand
+        host.git(host.root, "worktree", "add", "--detach", str(path), "refs/remotes/origin/main", check=True)
+    elif not host.exists(path / ".git"):
         raise CoordError(f"{path} exists but isn't a worktree; move it aside")
     elif not lane.get("resume"):
         # A lane that isn't continuing earlier work starts from origin/main: move a clean
         # leftover worktree there, and refuse one that holds work nothing else carries.
-        dirty = ctx.sh.run(["git", "status", "--porcelain"], cwd=path).stdout.strip()
-        ahead = ctx.sh.run(["git", "rev-list", "--count", "refs/remotes/origin/main..HEAD"], cwd=path).stdout.strip()
+        dirty = host.git(path, "status", "--porcelain").stdout.strip()
+        ahead = host.git(path, "rev-list", "--count", "refs/remotes/origin/main..HEAD").stdout.strip()
         if dirty or ahead != "0":
             raise CoordError(f"{path} has uncommitted work or commits origin/main doesn't: resume it "
                              f"(the story is in-progress), or `coordinator clean` once it's carried")
-        ctx.sh.run(["git", "switch", "--detach", "refs/remotes/origin/main", "--quiet"], cwd=path, check=True)
-    role.put_role(ctx.root, sid, resolved, pinned=True)   # `role set/clear` refuse a pinned session
+        host.git(path, "switch", "--detach", "refs/remotes/origin/main", "--quiet", check=True)
+    host.put_role(sid, resolved, pinned=True)   # `role set/clear` refuse a pinned session
     return path, fresh
 
 
 def inspect(ctx: Ctx, lane: dict, wt: Path, outcome: dict) -> dict:
     """What is true now, read from GitHub and the board, not from the lane's own words."""
     res = dict(outcome)
-    branch = ctx.sh.run(["git", "branch", "--show-current"], cwd=wt).stdout.strip()
+    git = ctx.host.git
+    branch = git(wt, "branch", "--show-current").stdout.strip()
     res["branch"] = branch or None
     res["pr"] = None
-    dirty = ctx.sh.run(["git", "status", "--porcelain"], cwd=wt)
-    ahead = ctx.sh.run(["git", "rev-list", "--count", "refs/remotes/origin/main..HEAD"], cwd=wt)
+    dirty = git(wt, "status", "--porcelain")
+    ahead = git(wt, "rev-list", "--count", "refs/remotes/origin/main..HEAD")
     res["dirty"] = dirty.returncode != 0 or bool(dirty.stdout.strip())  # unreadable counts as dirty
     res["tree_clean"] = (not res["dirty"] and ahead.returncode == 0 and ahead.stdout.strip() == "0")
     res["pr_unknown"] = False
     if branch:
-        head = ctx.sh.run(["git", "rev-parse", "HEAD"], cwd=wt).stdout.strip()
-        r = ctx.sh.run(["gh", "pr", "list", "--head", branch, "--state", "all", "--json",
-                        "number,state,url,headRefOid,labels,mergedAt", "--limit", "1"], cwd=wt)
+        head = git(wt, "rev-parse", "HEAD").stdout.strip()
+        r = ctx.sh.run(["gh", "pr", "list", "--head", branch, "--state", "all", "--json",   # your checkout:
+                        "number,state,url,headRefOid,labels,mergedAt", "--limit", "1"], cwd=ctx.root)  # same repo
         try:
             prs = json.loads(r.stdout or "[]") if r.returncode == 0 else None
         except ValueError:
@@ -808,7 +1033,7 @@ def inspect(ctx: Ctx, lane: dict, wt: Path, outcome: dict) -> dict:
                          "current": pr.get("headRefOid") == head,
                          "labelled": f"role:{lane['role']}" in [l["name"] for l in pr.get("labels", [])]}
             c = ctx.sh.run([sys.executable, str(ctx.bin / "codex-review"), "status", str(pr["number"])],
-                           cwd=wt)
+                           cwd=ctx.root)
             try:
                 cx = json.loads(c.stdout)
                 res["codex"] = {"state": cx["state"], "findings": len(cx["findings"]),
@@ -932,17 +1157,104 @@ def lane_env(base: dict) -> dict:
             if k != "COORDINATOR_ENV_PASS" and (k in ENV_KEEP or k in extra or k.startswith(ENV_KEEP_PREFIX))}
 
 
+# Grafana Agent Observability (agento11y): its Claude Code plugin's hooks capture each session.
+# Lanes get its settings, never its credentials: in local-forward mode they post to your local
+# daemon (127.0.0.1:8765), which forwards to Grafana Cloud with your token.
+AGENTO11Y_CONFIG = Path(os.environ.get("XDG_CONFIG_HOME") or Path.home() / ".config") / "agento11y" / "config.env"
+O11Y_PREFIX = ("AGENTO11Y_", "SIGIL_")
+O11Y_SECRET = re.compile(r"TOKEN|AUTH|HEADER|KEY|SECRET|PASSWORD")
+O11Y_DAEMON = ("127.0.0.1", 8765)
+
+
+def o11y_settings(base: dict) -> dict:
+    """agento11y's settings without its credentials: your config.env, then your environment."""
+    out = {}
+    try:
+        lines = AGENTO11Y_CONFIG.read_text().splitlines()
+    except OSError:
+        lines = []
+    for line in lines:
+        k, eq, v = line.strip().removeprefix("export ").partition("=")
+        if eq:     # a comment never starts with the prefix the result keeps
+            out[k.strip()] = v.strip().strip("'\"")
+    out.update({k: v for k, v in base.items() if k.startswith(O11Y_PREFIX)})
+    return {k: v for k, v in out.items() if k.startswith(O11Y_PREFIX) and not O11Y_SECRET.search(k)}
+
+
+def o11y_env(ctx: Ctx, base: dict, role_name: str) -> dict:
+    """A lane's agento11y settings: yours, tagged as the lane. project and team come from the repo's
+    AGENTO11Y_TAGS (its .envrc) or else from github_repo; agent_role is the lane's role, and
+    launcher=coordinator tells lane sessions from yours."""
+    env = o11y_settings(base)
+    tags = {}
+    for part in env.get("AGENTO11Y_TAGS", "").split(","):
+        k, eq, v = part.partition("=")
+        if eq and k.strip():
+            tags[k.strip()] = v.strip()
+    owner, _, repo = (ctx.cfg.get("github_repo") or "").partition("/")
+    tags.setdefault("project", repo or ctx.root.name)
+    if owner:
+        tags.setdefault("team", owner)
+    tags.update(agent_role=role_name, launcher="coordinator")
+    env["AGENTO11Y_TAGS"] = ",".join(f"{k}={v}" for k, v in tags.items())
+    return env
+
+
+def o11y_daemon_up() -> bool:
+    try:
+        with socket.create_connection(O11Y_DAEMON, timeout=1):
+            return True
+    except OSError:
+        return False
+
+
+def o11y_problems(host: "OsUser", base: dict) -> list[str]:
+    """Why a lane user's sessions wouldn't reach Grafana: warnings, never a reason to refuse."""
+    out = []
+    cfg = o11y_settings(base)
+    if not cfg:
+        return out      # you don't use agento11y: nothing to carry
+    if (cfg.get("AGENTO11Y_LOCAL") or cfg.get("SIGIL_LOCAL")) != "true" or \
+            (cfg.get("AGENTO11Y_LOCAL_FORWARD") or cfg.get("SIGIL_LOCAL_FORWARD")) != "true":
+        out.append("agento11y isn't in local-forward mode, and lanes get no Grafana token: their sessions "
+                   "won't reach Grafana Cloud (set AGENTO11Y_LOCAL=true and AGENTO11Y_LOCAL_FORWARD=true)")
+    elif not o11y_daemon_up():
+        out.append("your agento11y daemon isn't listening on 127.0.0.1:8765: lane sessions won't be captured")
+    if host.ctx.sh.run(["sudo", "-n", "-i", "-u", host.user, "command", "-v", "agento11y"],
+                       cwd=Path("/")).returncode != 0:
+        out.append(f"{host.user} has no agento11y on its PATH: its sessions aren't captured (see the README)")
+    try:
+        r = host.as_lane(["cat", str(host.home / ".claude" / "settings.json")])
+        on = (json.loads(r.stdout or "{}").get("enabledPlugins") or {}).get("agento11y-claude-code@agento11y")
+    except (ValueError, AttributeError):
+        on = None
+    if not on:
+        out.append(f"{host.user}'s Claude has no agento11y plugin: `sudo -iu {host.user} agento11y claude install`")
+    return out
+
+
 def real_gh() -> str:
     return shutil.which("gh") or "gh"
 
 
-def lane_auth_files(token: LaneToken, run_dir: Path) -> None:
+def git_auth(auth: Path) -> list[tuple[str, str]]:
+    """git config for the app's account: GitHub over HTTPS, through the run's credential helper."""
+    return [("url.https://github.com/.insteadof", "git@github.com:"),
+            ("url.https://github.com/.insteadof", "ssh://git@github.com/"),
+            ("credential.https://github.com.helper", ""),           # drop the helpers your config has
+            ("credential.https://github.com.helper", str(auth / "bin" / "git-credential-lane"))]
+
+
+def lane_auth_files(token: LaneToken, lane_dir: Path, shared: bool = False) -> None:
     """The token file, and a `gh` and git credential helper that read it on every call, in
-    runs/<id>/auth/. The private key stays out of a lane's environment."""
-    auth = run_dir / "auth"
-    (auth / "bin").mkdir(parents=True, mode=0o700)
-    (auth / "gh-config").mkdir(mode=0o700)
+    <lane dir>/auth/. The private key stays out of a lane's environment. `shared`: the lane user
+    reads them through the directory's group, so they're group-readable (never writable)."""
+    auth = lane_dir / "auth"
+    (auth / "bin").mkdir(parents=True, mode=0o750 if shared else 0o700)
+    if not shared:
+        (auth / "gh-config").mkdir(mode=0o700)
     token.path = auth / "token"
+    token.mode = 0o640 if shared else 0o600
     token.write()
     t = shlex.quote(str(token.path))
     files = {"gh": f'#!/bin/sh\nGH_TOKEN=$(cat {t}) || exit 1\nexport GH_TOKEN\nexec {shlex.quote(real_gh())} "$@"\n',
@@ -950,31 +1262,31 @@ def lane_auth_files(token: LaneToken, run_dir: Path) -> None:
                                     f'printf "username=x-access-token\\npassword=%s\\n" "$(cat {t})"\n'}
     for name, text in files.items():
         (auth / "bin" / name).write_text(text)
-        (auth / "bin" / name).chmod(0o700)
+        (auth / "bin" / name).chmod(0o750 if shared else 0o700)
 
 
-def run_lane(ctx: Ctx, lane: dict, run_id: str, run_dir: Path, args, wt_dir: Path, pending: list) -> None:
+def run_lane(ctx: Ctx, lane: dict, run_id: str, run_dir: Path, lane_dir: Path, args, pending: list) -> None:
+    """Start one lane. run_dir is yours (log, report); lane_dir holds what the lane reads (hooks,
+    policy, token): the same directory when lanes run as you."""
     sid = str(uuid.uuid4())
     name = lane_name(lane)
-    wt, fresh = setup_worktree(ctx, lane, sid, wt_dir)
+    host = ctx.host
+    wt, fresh = setup_worktree(ctx, lane, sid)
     log = run_dir / f"{name}.log"
-    cmd = claude_cmd(ctx, lane, sid, run_id, args.budget_usd, hook_settings(ctx, run_dir))
+    cmd = claude_cmd(ctx, lane, sid, run_id, args.budget_usd, hook_settings(ctx, lane_dir))
     env = lane_env(dict(os.environ))
+    env.update(o11y_env(ctx, dict(os.environ), lane["role"]))
     env.update(COORDINATOR_RUN=run_id, COORDINATOR_LANE=name)
     token = getattr(ctx, "lane_token", None)
+    auth = token.path.parent if token else None
     if token:   # the lanes' app for gh and for git pushes over HTTPS, never your account or your SSH key
-        auth = token.path.parent
         env.pop("GITHUB_TOKEN", None)
         env.pop("GH_TOKEN", None)
-        env["PATH"] = f"{auth / 'bin'}{os.pathsep}{env.get('PATH', '')}"
-        env["GH_CONFIG_DIR"] = str(auth / "gh-config")   # a gh that misses the shim has no login of yours
-        cfg = [("url.https://github.com/.insteadof", "git@github.com:"),
-               ("url.https://github.com/.insteadof", "ssh://git@github.com/"),
-               ("credential.https://github.com.helper", ""),           # drop the helpers your config has
-               ("credential.https://github.com.helper", str(auth / "bin" / "git-credential-lane"))]
+        cfg = git_auth(auth)
         env["GIT_CONFIG_COUNT"] = str(len(cfg))
         for i, (k, v) in enumerate(cfg):
             env[f"GIT_CONFIG_KEY_{i}"], env[f"GIT_CONFIG_VALUE_{i}"] = k, v
+    env = host.lane_env(env, auth)
     # Between the process existing and the run owning it, a signal must wait: the handler
     # below only notes it, and it is raised once the lane is in `pending` (or has been stopped).
     deferred: list[int] = []
@@ -982,15 +1294,15 @@ def run_lane(ctx: Ctx, lane: dict, run_id: str, run_dir: Path, args, wt_dir: Pat
     old_int, old_term = signal.signal(signal.SIGINT, note), signal.signal(signal.SIGTERM, note)
     try:
         try:
-            proc = ctx.sh.start(cmd, wt, env, log)
+            proc = host.start(cmd, wt, env, log, lane_dir)
         except OSError as e:
-            role.put_role(ctx.root, sid, None)
+            host.put_role(sid, None)
             if fresh:
-                ctx.sh.run(["git", "worktree", "remove", "--force", str(wt)], cwd=ctx.root)
+                host.git(host.root, "worktree", "remove", "--force", str(wt))
             raise CoordError(f"couldn't start {cmd[0]}: {e}") from e
         rec = {"lane": name, "role": lane["role"], "story": lane["story"], "inbox": bool(lane.get("inbox")),
                "session": sid, "pid": proc.pid,
-               "worktree": str(Path(wt).resolve()), "started": now(), "run": run_id}
+               "worktree": os.path.normpath(wt), "started": now(), "run": run_id}
         h = {"lane": lane, "proc": proc, "rec": rec, "wt": wt, "log": log, "t0": time.monotonic()}
         pending.append(h)  # from here on the run's interrupt handler owns it
         try:
@@ -999,7 +1311,7 @@ def run_lane(ctx: Ctx, lane: dict, run_id: str, run_dir: Path, args, wt_dir: Pat
         except OSError as e:  # the lane is running but nothing would track it
             pending.remove(h)
             terminate(proc)
-            role.put_role(ctx.root, sid, None)
+            host.put_role(sid, None)
             raise CoordError(f"couldn't record lane {name}: {e}") from e
     finally:
         signal.signal(signal.SIGINT, old_int)
@@ -1015,6 +1327,8 @@ def group_alive(proc: subprocess.Popen) -> bool:
         return True
     except ProcessLookupError:
         return False
+    except PermissionError:   # members you may not signal: the lane user's processes
+        return True
 
 
 def terminate(*procs: subprocess.Popen) -> None:
@@ -1025,8 +1339,9 @@ def terminate(*procs: subprocess.Popen) -> None:
         live = [p for p in procs if group_alive(p)]
         for p in live:
             try:
+                getattr(p, "lane_kill", None) and p.lane_kill(sig)   # as the lane user, first
                 os.killpg(p.pid, sig)
-            except ProcessLookupError:
+            except (ProcessLookupError, PermissionError):
                 pass
         end = time.monotonic() + KILL_GRACE
         while live and time.monotonic() < end:
@@ -1079,9 +1394,12 @@ def finish_lane(ctx: Ctx, h: dict, timed_out: bool) -> dict:
     except ValueError:
         out.setdefault("error", "no JSON result in the log")
     (ctx.dir / "active" / f"{h['rec']['lane']}.json").unlink(missing_ok=True)
-    if role.get_role(ctx.root, h["rec"]["session"]) != h["rec"]["role"]:
-        out.setdefault("error", "the lane changed its own role")   # a bypass: the report says so
-    role.put_role(ctx.root, h["rec"]["session"], None)
+    try:
+        if ctx.host.get_role(h["rec"]["session"]) != h["rec"]["role"]:
+            out.setdefault("error", "the lane changed its own role")   # a bypass: the report says so
+        ctx.host.put_role(h["rec"]["session"], None)
+    except CoordError as e:
+        out.setdefault("error", f"couldn't read the lane's role back: {e}"[:120])
     return inspect(ctx, h["lane"], h["wt"], out)
 
 
@@ -1401,7 +1719,7 @@ class LaneToken:
 
     def __init__(self, app: dict, installation: int, repo: str, perms: dict, name: str):
         self.app, self.installation, self.repo, self.perms, self.name = app, installation, repo, perms, name
-        self.token, self.expires, self.path = "", 0.0, None
+        self.token, self.expires, self.path, self.mode = "", 0.0, None, 0o600
 
     def mint(self) -> None:
         r = app_api("POST", f"app/installations/{self.installation}/access_tokens", app_jwt(self.app),
@@ -1416,7 +1734,7 @@ class LaneToken:
 
     def write(self) -> None:
         tmp = self.path.with_name(self.path.name + ".new")
-        fd = os.open(tmp, os.O_WRONLY | os.O_CREAT | os.O_TRUNC, 0o600)
+        fd = os.open(tmp, os.O_WRONLY | os.O_CREAT | os.O_TRUNC, self.mode)
         with os.fdopen(fd, "w") as f:
             f.write(self.token + "\n")
         os.replace(tmp, self.path)
@@ -1524,13 +1842,44 @@ def cmd_run(ctx: Ctx, a) -> int:
                   + ("" if a.unprotected_main else " (--unprotected-main starts the lanes anyway)"))
             if not a.unprotected_main:
                 return 1
+        try:
+            host = ctx.host = lane_host(ctx, a.worktrees, a.same_os_user)
+        except CoordError as e:
+            print(f"refusing to run: {e}")
+            return 1
+        apart = isinstance(host, OsUser)
+        why = (("lanes that run as their own OS user need the lane app: that user has no GitHub login of its own"
+                if token is None else host.check(ctx, [app["key"], ctx.root])) if apart else
+               "lanes run as your OS user, so their code (`make check`, tests) can read your files and "
+               f"logins: give them their own ({{\"user\": \"lanes\"}} in {LANE_USER_CONFIG}; see the "
+               "valesor-dev README, Coordinator)")
+        if why and not (a.same_os_user and not apart):
+            print(f"refusing to run: {why} (--same-os-user runs the lanes as you)")
+            return 1
+        print(f"lanes run as OS user {host.user}" if apart else f"WARNING: {why}")
+        for w in o11y_problems(host, dict(os.environ)) if apart else []:
+            print(f"WARNING: {w}")
         ctx.lane_token = token
         run_id = datetime.now(timezone.utc).strftime("%Y%m%d-%H%M%S") + "-" + uuid.uuid4().hex[:4]
         run_dir = ctx.dir / "runs" / run_id
         run_dir.mkdir(parents=True)
+        lane_dir = run_dir
+        if apart:   # what the lanes read from you: yours, their group's to read, never theirs to change
+            lane_dir = host.runs / f"{host.root.name}-{run_id}"
+            lane_dir.mkdir()
+            lane_dir.chmod(0o2750)
         if token:
-            lane_auth_files(token, run_dir)
-        wt_dir = Path(a.worktrees) if a.worktrees else ctx.root / ".claude" / "worktrees"
+            lane_auth_files(token, lane_dir, shared=apart)
+            host.auth_args = [x for k, v in git_auth(lane_dir / "auth") for x in ("-c", f"{k}={v}")]
+        hook_settings(ctx, lane_dir)
+        if apart:
+            host.lanectl = lane_dir / "hooks" / "lanectl"
+            try:
+                host.prepare()
+            except CoordError as e:
+                token.path.unlink(missing_ok=True)
+                print(f"refusing to run: {e}")
+                return 1
         results, pending = [], []
         deadline = a.timeout_min * 60
         prev_int = signal.getsignal(signal.SIGINT)
@@ -1539,7 +1888,7 @@ def cmd_run(ctx: Ctx, a) -> int:
             for lane in lanes:  # one lane failing to start doesn't strand or skip the others
                 lane["stamp"] = run_id
                 try:
-                    run_lane(ctx, lane, run_id, run_dir, a, wt_dir, pending)
+                    run_lane(ctx, lane, run_id, run_dir, lane_dir, a, pending)
                     print(f"started {lane_name(lane)}")
                 except (CoordError, OSError) as e:
                     results.append(failed(lane_name(lane), str(e)))
@@ -1577,7 +1926,7 @@ def cmd_run(ctx: Ctx, a) -> int:
                                                       **r["watch_open"]})
                     if (h["lane"].get("watch") or h["lane"].get("inbox")) and r.get("tree_clean") \
                             and not r.get("error"):   # one worktree per such lane: nothing here to keep
-                        ctx.sh.run(["git", "worktree", "remove", str(h["wt"])], cwd=ctx.root)
+                        ctx.host.git(ctx.host.root, "worktree", "remove", str(h["wt"]))
                     elif kinds_of(h["lane"]) == "session" and r.get("ok"):
                         try:
                             after = board_now(ctx)
@@ -1593,7 +1942,10 @@ def cmd_run(ctx: Ctx, a) -> int:
             terminate(*[h["proc"] for h in pending])
             for h in pending:
                 (ctx.dir / "active" / f"{h['rec']['lane']}.json").unlink(missing_ok=True)
-                role.put_role(ctx.root, h["rec"]["session"], None)
+                try:
+                    ctx.host.put_role(h["rec"]["session"], None)
+                except CoordError:
+                    pass
                 results.append(failed(h["rec"]["lane"], "interrupted", str(h["log"])))
             write_report(run_dir, render_report(run_id, results, waiting, state, getattr(a, "ran_roles", None)), results)
             raise
@@ -1602,6 +1954,8 @@ def cmd_run(ctx: Ctx, a) -> int:
             signal.signal(signal.SIGTERM, prev)
             if token:   # no lane is left to use it
                 token.path.unlink(missing_ok=True)
+            for f in lane_dir.glob("env-*.json"):   # each lane read its own at start
+                f.unlink(missing_ok=True)
         try:  # lanes changed the board: report the sprint and what waits as they are now
             state, _, _, waiting, _, _ = gather(ctx, a)
         except (CoordError, story.StoryError, OSError):
@@ -1632,18 +1986,31 @@ def cmd_clean(ctx: Ctx, a) -> int:
         return _clean(ctx, a)
 
 
+def lane_worktrees(host: SameUser) -> list[Path]:
+    """The worktrees under the host's lane directory, as git lists them."""
+    r = host.git(host.root, "worktree", "list", "--porcelain")
+    if r.returncode != 0:
+        return []
+    paths = [Path(l[len("worktree "):]) for l in r.stdout.splitlines() if l.startswith("worktree ")]
+    base = os.path.realpath(host.wt_dir)
+    return sorted(p for p in paths if os.path.realpath(p.parent) == base)
+
+
 def _clean(ctx: Ctx, a) -> int:
-    wt_dir = Path(a.worktrees) if getattr(a, "worktrees", None) else ctx.root / ".claude" / "worktrees"
-    live = {str(Path(l["worktree"]).resolve()) for l in active_lanes(ctx)}
-    ctx.sh.run(["git", "fetch", "origin", "--quiet"], cwd=ctx.root)
+    host = ctx.host = lane_host(ctx, getattr(a, "worktrees", None), getattr(a, "same_os_user", False))
+    if isinstance(host, OsUser) and not host.exists(host.root / ".git"):
+        print(f"no lane clone at {host.root}")
+        return 0
+    live = {os.path.normpath(l["worktree"]) for l in active_lanes(ctx)}
+    host.fetch()   # without a run's token the lane user's fetch may fail: origin/main is then older, never newer
     n = 0
-    for p in sorted(wt_dir.glob("*")) if wt_dir.is_dir() else []:
-        if str(p.resolve()) in live or not (p / ".git").exists():
+    for p in lane_worktrees(host):
+        if os.path.normpath(p) in live or not host.exists(p / ".git"):
             continue
-        branch = ctx.sh.run(["git", "branch", "--show-current"], cwd=p).stdout.strip()
-        head = ctx.sh.run(["git", "rev-parse", "HEAD"], cwd=p).stdout.strip()
-        dirty = ctx.sh.run(["git", "status", "--porcelain"], cwd=p).stdout.strip()
-        ahead = ctx.sh.run(["git", "rev-list", "--count", "refs/remotes/origin/main..HEAD"], cwd=p).stdout.strip()
+        branch = host.git(p, "branch", "--show-current").stdout.strip()
+        head = host.git(p, "rev-parse", "HEAD").stdout.strip()
+        dirty = host.git(p, "status", "--porcelain").stdout.strip()
+        ahead = host.git(p, "rev-list", "--count", "refs/remotes/origin/main..HEAD").stdout.strip()
         ahead = int(ahead) if ahead.isdigit() else 1  # can't tell: assume work
         pr = None
         if branch:
@@ -1662,7 +2029,7 @@ def _clean(ctx: Ctx, a) -> int:
                                     f"{ahead} unpushed commit(s)" if stranded else "") if x)
         print(f"{'remove' if removable else 'keep  '}  {p.name}  ({why})")
         if removable and a.apply:
-            ctx.sh.run(["git", "worktree", "remove", str(p)], cwd=ctx.root, check=True)
+            host.git(host.root, "worktree", "remove", str(p), check=True)
             n += 1
     if n:
         print(f"removed {n}")
@@ -1690,11 +2057,14 @@ def parser() -> argparse.ArgumentParser:
                            help="start lanes although origin's main takes unreviewed pushes or merges")
             s.add_argument("--person-token", action="store_true",
                            help="start lanes as you (your gh auth) when no lane app is set up")
+            s.add_argument("--same-os-user", action="store_true",
+                           help="start lanes as your own OS user when no lane user is set up")
             s.add_argument("--worktrees")
             s.add_argument("--poll", type=float, default=15)
     sub.add_parser("status")
     s = sub.add_parser("clean")
     s.add_argument("--apply", action="store_true")
+    s.add_argument("--same-os-user", action="store_true", help="the worktrees lanes run as you left")
     s.add_argument("--worktrees")
     return ap
 
