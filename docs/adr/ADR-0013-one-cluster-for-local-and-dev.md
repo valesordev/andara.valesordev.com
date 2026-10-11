@@ -603,7 +603,7 @@ As with the block above, where these differ from the decisions, they win.
     every server running today at its next start: compose's (`ANDARA_ENV=local`, unprefixed topics, which `stack.yaml`
     and `recovery-timing.yaml` drive) and `dev`'s (Image Updater rolls each `:dev` build without a commit until `AW-INF-059`).
     So `AW-SRV-058` logs one `warn` naming the key and the environment and continues; a follow-on implementation story makes
-    it exit `1`, blocked by `AW-INF-055` (the chart sets `dev` and `local`, and compose's server gets
+    it exit `1`, blocked by `AW-INF-055` (the chart sets `local`, and `dev`'s values once `AW-INF-059` has landed; compose's server gets
     `ANDARA_KAFKA_TOPIC_PREFIX=local` in the same change that makes `scripts/topics.py` create `local.`-prefixed topics)
     and `AW-INF-066` (`dev` is rebuilt onto prefixed topics). A malformed prefix is fatal from `AW-SRV-058` on.
 
@@ -622,5 +622,5 @@ As with the block above, where these differ from the decisions, they win.
     and never boots a process whose group is derived from `telemetry.environment` (`andara-sim-<env>`,
     `andara-projector-state-<env>`), since with the default environment those are `local`'s real groups, and a cleanup
     that deletes the group would delete `local`'s checkpoint. The `andara-it` principal of decision 8 (`AW-INF-060`)
-    therefore has two `PREFIXED` topic ACLs, create included, on `andara.test.` and `it`; its group ACL stays `PREFIXED`
-    on `it-`. No environment's topic, and no Kafka, Strimzi or registry internal topic, starts with either topic prefix.
+    therefore has two `PREFIXED` topic ACLs, create and delete included, on `andara.test.` and `it`; its group ACL stays
+    `PREFIXED` on `it-`, delete included, so a test's cleanup of its own topics and group succeeds rather than failing quietly. No environment's topic, and no Kafka, Strimzi or registry internal topic, starts with either topic prefix.
