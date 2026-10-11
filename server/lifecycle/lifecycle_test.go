@@ -223,18 +223,26 @@ func TestPrepareStopFailuresWriteNoTag(t *testing.T) {
 // A round that never arrives inside upload_timeout plus two ticks is TIMEOUT.
 func TestPrepareStopTimesOutWaitingForTheRound(t *testing.T) {
 	t.Parallel()
+	canceled := false
 	h := newHarness(t, goodRound(), func(o *lifecycle.Options) {
 		o.UploadTimeout = 20 * time.Millisecond
-		o.Rounds = neverRounds{}
+		o.Rounds = neverRounds{canceled: &canceled}
 	})
 	if resp := h.call(t); resp.GetOutcome() != adminv1.PrepareStopOutcome_PREPARE_STOP_OUTCOME_TIMEOUT {
 		t.Fatalf("outcome %v, want TIMEOUT", resp.GetOutcome())
 	}
+	// Withdrawn: no round is taken later for a pre-stop that gave up.
+	if !canceled {
+		t.Fatal("the timed-out Force request was not withdrawn")
+	}
 }
 
-type neverRounds struct{}
+type neverRounds struct{ canceled *bool }
 
-func (neverRounds) Force() <-chan tickloop.ForcedRound { return make(chan tickloop.ForcedRound) }
+func (neverRounds) Force() <-chan tickloop.ForcedRound        { return make(chan tickloop.ForcedRound) }
+func (n neverRounds) CancelForce(<-chan tickloop.ForcedRound) { *n.canceled = true }
+
+func (*fakes) CancelForce(<-chan tickloop.ForcedRound) {}
 
 // AC-5 and ruling 1: over the socket, the response's outcome is the exit
 // code; the socket is mode 0600; no socket exits 3.

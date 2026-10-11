@@ -96,8 +96,9 @@ func Call(ctx context.Context, path string) (*adminv1.PrepareStopResponse, error
 	lc := adminv1connect.NewLifecycleClient(client, "http://lifecycle")
 	resp, err := lc.PrepareStop(ctx, connect.NewRequest(&adminv1.PrepareStopRequest{}))
 	if err != nil {
+		// A dial that ran out of time is a timeout, not a missing socket.
 		var oe *net.OpError
-		if errors.As(err, &oe) && oe.Op == "dial" {
+		if ctx.Err() == nil && errors.As(err, &oe) && oe.Op == "dial" {
 			return nil, fmt.Errorf("%w: %s: %w", ErrNoSocket, path, err)
 		}
 		return nil, err
