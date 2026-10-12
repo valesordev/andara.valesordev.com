@@ -212,9 +212,10 @@ func (s *Service) run(ctx context.Context) *adminv1.PrepareStopResponse {
 	return resp
 }
 
-// snapshot takes the round at the next boundary, tags it, and waits for its
-// checkpoint, all inside snapshot.upload_timeout plus two ticks for the
-// boundary. Anything but COMPLETE carries its cause, and writes no tag.
+// snapshot takes the round at the next boundary and tags it, inside
+// snapshot.upload_timeout plus two ticks for the boundary, then waits at most
+// two ticks and a second for its checkpoint. Anything but COMPLETE carries
+// its cause, and names no tagged round.
 func (s *Service) snapshot(ctx context.Context) (*adminv1.PrepareStopResponse, error) {
 	o := s.o
 	wctx, cancel := context.WithTimeout(ctx, o.UploadTimeout+2*o.TickInterval)
@@ -229,11 +230,10 @@ func (s *Service) snapshot(ctx context.Context) (*adminv1.PrepareStopResponse, e
 		o.Rounds.CancelForce(ch)
 		return failed(adminv1.PrepareStopOutcome_PREPARE_STOP_OUTCOME_TIMEOUT), fmt.Errorf("the round did not complete within snapshot.upload_timeout: %w", wctx.Err())
 	}
-	// The tag and the commit wait get their own budget, so a round that
-	// finished near the deadline is not tagged on some objects and then
-	// reported TIMEOUT.
-	ctx, cancelTag := context.WithTimeout(ctx, o.UploadTimeout)
-	defer cancelTag()
+	// The tag shares the round's budget: snapshot.upload_timeout is one term
+	// of the grace bound and of `prestop`'s, not one per step. A tag cut
+	// short leaves some objects tagged, which names no round (RoundTags), so
+	// the TIMEOUT it reports holds.
 	if round.Err != nil {
 		outcome := adminv1.PrepareStopOutcome_PREPARE_STOP_OUTCOME_STORE_ERROR
 		if errors.Is(round.Err, context.DeadlineExceeded) {
@@ -245,7 +245,7 @@ func (s *Service) snapshot(ctx context.Context) (*adminv1.PrepareStopResponse, e
 	if o.Store == nil {
 		return failed(adminv1.PrepareStopOutcome_PREPARE_STOP_OUTCOME_STORE_ERROR), errors.New("no snapshot store to tag the round in")
 	}
-	if err := store.TagRound(ctx, o.Store, round.Keys, tag); err != nil {
+	if err := store.TagRound(wctx, o.Store, round.Keys, tag); err != nil {
 		outcome := adminv1.PrepareStopOutcome_PREPARE_STOP_OUTCOME_STORE_ERROR
 		if errors.Is(err, context.DeadlineExceeded) {
 			outcome = adminv1.PrepareStopOutcome_PREPARE_STOP_OUTCOME_TIMEOUT

@@ -65,26 +65,31 @@ func TagRound(ctx context.Context, ws sim.WorldStore, keys []string, name string
 	return nil
 }
 
-// RoundTags is every tag name present on any of a round's objects, sorted. A
-// store that is not a TagLister reports none.
+// RoundTags is every tag name present on all of a round's objects, sorted:
+// the rule ListSnapshotRounds reports by, so a tagging cut short between two
+// Puts names no round. (Retention's rule, a tag on any object, is the other
+// side of the same fail-safe and AW-SRV-055's.) A store that is not a
+// TagLister reports none.
 func RoundTags(ctx context.Context, ws sim.WorldStore, keys []string) ([]string, error) {
 	tl, ok := ws.(TagLister)
 	if !ok {
 		return nil, nil
 	}
-	seen := map[string]bool{}
+	seen := map[string]int{}
 	for _, k := range keys {
 		names, err := tl.ListTags(ctx, k)
 		if err != nil {
 			return nil, err
 		}
 		for _, n := range names {
-			seen[n] = true
+			seen[n]++
 		}
 	}
 	out := make([]string, 0, len(seen))
-	for n := range seen {
-		out = append(out, n)
+	for n, c := range seen {
+		if c == len(keys) {
+			out = append(out, n)
+		}
 	}
 	sort.Strings(out)
 	return out, nil

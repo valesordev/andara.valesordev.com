@@ -397,9 +397,11 @@ open `Subscribe` stream; waits `deploy.notice_lead`; refuses `Submit` with `UNAV
 `deploy:<deploy.image_tag>`; waits for the round's offsets to be committed; logs `prestop complete` (`tick`,
 `hash`, `tag`, `duration_ms`, `refused_ms`, `outcome`, `deploy_id`, `trace_id` of the `deploy.prestop_snapshot`
 span); and responds. A second call returns the first call's response. `prestop` prints the response as
-`key=value` lines and exits `0` complete, `1` timeout (the round missed `snapshot.upload_timeout`, or no
-answer in time), `2` store error, `3` no socket. On `1` or `2` no tag is written and the previous complete
-round is the recovery point. The flags are the server's, so it reads the same keys.
+`key=value` lines and exits `0` complete, `1` timeout (the round and its tag missed
+`snapshot.upload_timeout` plus two ticks, or no answer in time), `2` store error, `3` no socket (none at
+the path, or nothing listening on it). On `1` or `2` no round carries the tag (a tag counts when every object
+of the round has it, so a tagging cut short names nothing) and the previous complete round is the recovery
+point. The flags are the server's, so it reads the same keys.
 
 The new pod measures the interruption: `andara_deploy_interruption_seconds` (histogram, no labels,
 buckets 5, 10, 20, 30, 60, 120, 300) is observed once per boot, when the process first reports serving,

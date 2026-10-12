@@ -9,6 +9,7 @@ import (
 	"errors"
 	"fmt"
 	"log/slog"
+	"net"
 	"os"
 	"path/filepath"
 	"reflect"
@@ -237,6 +238,84 @@ func TestPrepareStopTimesOutWaitingForTheRound(t *testing.T) {
 	}
 }
 
+// AC-5: a tag cut short by a store error is STORE_ERROR and names no round,
+// though the first object's tag was written.
+func TestPrepareStopTagFailureNamesNoRound(t *testing.T) {
+	t.Parallel()
+	r := goodRound()
+	var fs *store.FS
+	h := newHarness(t, r, func(o *lifecycle.Options) {
+		fs = o.Store.(*store.FS)
+		o.Store = &tagStore{FS: fs, fail: store.TagKey(r.Keys[1], "deploy:sha-0123456789ab")}
+	})
+	resp := h.call(t)
+	if resp.GetOutcome() != adminv1.PrepareStopOutcome_PREPARE_STOP_OUTCOME_STORE_ERROR || resp.GetTag() != "" {
+		t.Fatalf("response = %v, want STORE_ERROR with no tag", resp)
+	}
+	if tags, _ := store.RoundTags(context.Background(), fs, r.Keys[:1]); len(tags) != 1 {
+		t.Fatalf("first object's tags = %v; the test wants the tag cut short after it", tags)
+	}
+	if tags, _ := store.RoundTags(context.Background(), fs, r.Keys); len(tags) != 0 {
+		t.Fatalf("a round whose tagging failed is named %v", tags)
+	}
+}
+
+// The round, its tag and the wait for them share one budget,
+// snapshot.upload_timeout plus two ticks: the term the grace bound and
+// `prestop`'s own bound count once (lifecycle.md, Configuration). A round that
+// arrives late and a tag that hangs are one TIMEOUT inside it, not two.
+func TestPrepareStopRoundAndTagShareOneBudget(t *testing.T) {
+	t.Parallel()
+	r := goodRound()
+	const upload, tick = time.Second, 100 * time.Millisecond
+	h := newHarness(t, r, func(o *lifecycle.Options) {
+		o.UploadTimeout, o.TickInterval = upload, tick
+		o.Rounds = lateRounds{r: r, after: upload}
+		o.Store = &tagStore{FS: o.Store.(*store.FS), hang: true}
+	})
+	start := time.Now()
+	resp := h.call(t)
+	took := time.Since(start)
+	if resp.GetOutcome() != adminv1.PrepareStopOutcome_PREPARE_STOP_OUTCOME_TIMEOUT {
+		t.Fatalf("outcome %v, want TIMEOUT", resp.GetOutcome())
+	}
+	if took > upload+2*tick+300*time.Millisecond {
+		t.Fatalf("PrepareStop took %s, past upload_timeout plus two ticks (%s)", took, upload+2*tick)
+	}
+}
+
+// tagStore fails the Put of one tag key, or hangs every tag Put until its
+// context ends.
+type tagStore struct {
+	*store.FS
+	fail string
+	hang bool
+}
+
+func (s *tagStore) Put(ctx context.Context, key string, b []byte) error {
+	if s.hang && strings.Contains(key, ".tag/") {
+		<-ctx.Done()
+		return ctx.Err()
+	}
+	if key == s.fail {
+		return fmt.Errorf("put %s: %w", key, sim.ErrStoreUnavailable)
+	}
+	return s.FS.Put(ctx, key, b)
+}
+
+// lateRounds delivers the round after a delay.
+type lateRounds struct {
+	r     tickloop.ForcedRound
+	after time.Duration
+}
+
+func (l lateRounds) Force() <-chan tickloop.ForcedRound {
+	ch := make(chan tickloop.ForcedRound, 1)
+	time.AfterFunc(l.after, func() { ch <- l.r })
+	return ch
+}
+func (lateRounds) CancelForce(<-chan tickloop.ForcedRound) {}
+
 type neverRounds struct{ canceled *bool }
 
 func (neverRounds) Force() <-chan tickloop.ForcedRound        { return make(chan tickloop.ForcedRound) }
@@ -279,6 +358,66 @@ func TestPrestopOverTheSocket(t *testing.T) {
 		t.Fatalf("no socket: exit %d (%v), want 3", code, err)
 	}
 }
+
+// AC-5: a socket file a previous process left behind, with nothing listening,
+// is no socket (exit 3); a call whose time ran out before it connected is a
+// timeout (exit 1), not a missing socket.
+func TestPrestopStaleSocketAndExpiredCall(t *testing.T) {
+	t.Parallel()
+	dir, err := os.MkdirTemp("", "aw")
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = os.RemoveAll(dir) })
+	stale := filepath.Join(dir, "stale.sock")
+	ln, err := net.ListenUnix("unix", &net.UnixAddr{Name: stale, Net: "unix"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	ln.SetUnlinkOnClose(false)
+	_ = ln.Close()
+	if _, err := os.Stat(stale); err != nil {
+		t.Fatalf("the stale socket file is gone: %v", err)
+	}
+	resp, err := lifecycle.Call(context.Background(), stale)
+	if code := lifecycle.Exit(resp, err); code != lifecycle.ExitNoSocket {
+		t.Fatalf("stale socket: exit %d (%v), want 3", code, err)
+	}
+
+	live := filepath.Join(dir, "c.sock")
+	srv, err := lifecycle.Listen(live, newHarness(t, goodRound(), nil).svc)
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = srv.Close() })
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel()
+	resp, err = lifecycle.Call(ctx, live)
+	if code := lifecycle.Exit(resp, err); code != lifecycle.ExitTimeout {
+		t.Fatalf("expired call: exit %d (%v), want 1", code, err)
+	}
+}
+
+// A sequence that panics still releases a second call, which gets an error
+// rather than waiting forever.
+func TestPrepareStopAfterAPanicDoesNotHang(t *testing.T) {
+	t.Parallel()
+	h := newHarness(t, goodRound(), func(o *lifecycle.Options) { o.Announcer = panicky{} })
+	func() {
+		defer func() { _ = recover() }()
+		_, _ = h.svc.PrepareStop(context.Background(), connect.NewRequest(&adminv1.PrepareStopRequest{}))
+	}()
+	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
+	defer cancel()
+	_, err := h.svc.PrepareStop(ctx, connect.NewRequest(&adminv1.PrepareStopRequest{}))
+	if connect.CodeOf(err) != connect.CodeInternal {
+		t.Fatalf("second call after a panic: %v, want Internal", err)
+	}
+}
+
+type panicky struct{}
+
+func (panicky) AnnounceStopping(string, time.Duration) int { panic("announce") }
 
 func logLine(t *testing.T, b *bytes.Buffer, msg string) string {
 	t.Helper()
