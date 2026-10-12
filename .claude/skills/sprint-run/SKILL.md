@@ -86,6 +86,11 @@ that isn't `PR open, Codex clean` with its log path, every PR that awaits
 Brian's approval (the report says what), every story still waiting on
 architecture after the run, and a finished sprint. A lane that ended without a PR names its
 blocker; the story comment it posted is the handoff.
+A lane whose branch changes `.github/workflows` or `.github/actions` can't push it: the
+report names the branch, which the coordinator has put in Brian's checkout, and the
+commands to push it. List it under **Needs you**. Pushing it is Brian's, after he reads
+the diff (those files run with the repo's secrets): never push it or open its PR yourself.
+`.claude/bin/coordinator handoff` brings over such a branch an earlier run left.
 
 End with one next action, e.g. "Review PR #212 and #213; architecture's contract
 review for S7M-VAL-005 is holding two stories."

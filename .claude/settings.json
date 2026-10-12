@@ -124,7 +124,8 @@
       "Bash(kubectl get secret:*)",
       "Bash(kubectl get secrets:*)",
       "Bash(.claude/bin/coordinator run:*)",
-      "Bash(.claude/bin/coordinator clean:*)"
+      "Bash(.claude/bin/coordinator clean:*)",
+      "Bash(.claude/bin/coordinator handoff:*)"
     ]
   }
 }
