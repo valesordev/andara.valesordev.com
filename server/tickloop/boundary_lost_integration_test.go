@@ -39,11 +39,10 @@ func startLossyLoop(ctx context.Context, t *testing.T, brokers, pubBrokers []str
 	if err != nil {
 		t.Fatal(err)
 	}
-	pub, err := newKafkaPublisher(ctx, pubBrokers, "boundary-lost-test", deliveryTimeout)
+	pub, err := newKafkaPublisher(ctx, pubBrokers, "boundary-lost-test", commands, events, deliveryTimeout)
 	if err != nil {
 		t.Fatal(err)
 	}
-	pub.Commands, pub.Events = commands, events
 	loop, err := New(Options{
 		Engine: e, Source: src, Publisher: pub, AwaitBoundaryAck: true,
 		TickRate: 50, TickBudget: 10 * time.Millisecond, MaxPerTick: 1, DrainTimeout: 5 * time.Second, CheckpointEvery: 5,
@@ -73,7 +72,7 @@ func startLossyLoop(ctx context.Context, t *testing.T, brokers, pubBrokers []str
 func TestKafka_BoundaryLostExitsIntoRecovery(t *testing.T) {
 	bk := brokers(t)
 	commands, events := topics(t, bk)
-	group := "andara-sim-lost-" + commands[len(commands)-8:]
+	group := "it-sim-lost-" + commands[len(commands)-8:]
 	total := produce(t, bk, commands, 200)
 	px := newLeaderProxy(t, bk[0], BoundaryPartition)
 

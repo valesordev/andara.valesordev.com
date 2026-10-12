@@ -173,17 +173,16 @@ func TestRecoveryChild(t *testing.T) {
 	if fix == fixtureSizing {
 		interval, rate = 180*time.Second, 1000
 	}
-	src, err := tickloop.NewKafkaSource(ctx, tickloop.KafkaSourceOptions{Brokers: bk, Group: "andara-rec-" + commands[len(commands)-8:], Start: e.State().Offsets, Topic: commands, LagEvery: 200 * time.Millisecond})
+	src, err := tickloop.NewKafkaSource(ctx, tickloop.KafkaSourceOptions{Brokers: bk, Group: "it-rec-" + commands[len(commands)-8:], Start: e.State().Offsets, Topic: commands, LagEvery: 200 * time.Millisecond})
 	if err != nil {
 		fmt.Fprintln(os.Stderr, "child:", err)
 		os.Exit(3)
 	}
-	pub, err := tickloop.NewKafkaPublisher(ctx, bk, "recovery-it-child")
+	pub, err := tickloop.NewKafkaPublisher(ctx, bk, "recovery-it-child", commands, events)
 	if err != nil {
 		fmt.Fprintln(os.Stderr, "child:", err)
 		os.Exit(3)
 	}
-	pub.Commands, pub.Events = commands, events
 	var out tickloop.Publisher = pub
 	if parts[5] == "lossy" {
 		out = &arriveDropping{KafkaPublisher: pub}
@@ -728,15 +727,14 @@ func TestRecoveryWithAHandoffInFlight(t *testing.T) {
 	// retry from the recovered Transit.
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
-	src, err := tickloop.NewKafkaSource(ctx, tickloop.KafkaSourceOptions{Brokers: bk, Group: "andara-rec-second-" + commands[len(commands)-8:], Start: r.State().Offsets, Topic: commands, LagEvery: 200 * time.Millisecond})
+	src, err := tickloop.NewKafkaSource(ctx, tickloop.KafkaSourceOptions{Brokers: bk, Group: "it-rec-second-" + commands[len(commands)-8:], Start: r.State().Offsets, Topic: commands, LagEvery: 200 * time.Millisecond})
 	if err != nil {
 		t.Fatal(err)
 	}
-	pub, err := tickloop.NewKafkaPublisher(ctx, bk, "recovery-it-second")
+	pub, err := tickloop.NewKafkaPublisher(ctx, bk, "recovery-it-second", commands, events)
 	if err != nil {
 		t.Fatal(err)
 	}
-	pub.Commands, pub.Events = commands, events
 	off, err := tickloop.NewSnapshotter(tickloop.SnapshotOptions{})
 	if err != nil {
 		t.Fatal(err)

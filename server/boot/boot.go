@@ -22,6 +22,7 @@ import (
 	"github.com/valesordev/andara/server/egress"
 	"github.com/valesordev/andara/server/events"
 	"github.com/valesordev/andara/server/ingress"
+	"github.com/valesordev/andara/server/kafkaclient"
 	"github.com/valesordev/andara/server/recovery"
 	"github.com/valesordev/andara/server/roster"
 	"github.com/valesordev/andara/server/sim"
@@ -70,9 +71,12 @@ type Runtime struct {
 	// LoadContent runs no core boot, and nothing here opens the content
 	// store's write side or the audit topic.
 	ContentReadOnly bool
-	// ContentTopics and AuditTopicName override the content store's topics and
-	// the audit topic, for a test against a live broker that must not write
-	// into the stack's. The zero values are the real ones.
+	// Topics names every topic this process uses, resolved once from
+	// kafka.topic_prefix by New (AW-SRV-058).
+	Topics kafkaclient.Topics
+	// ContentTopics and AuditTopicName are the content store's topics and the
+	// audit topic. New fills them from Topics; a test against a live broker
+	// that must not write into the stack's replaces them.
 	ContentTopics  content.Topics
 	AuditTopicName string
 	// waitRetry is WaitForContent's first retry interval; zero is
@@ -196,9 +200,34 @@ func (rt *Runtime) LoadVerbs(ctx context.Context) error {
 	return nil
 }
 
-// New constructs a Runtime. Telemetry must already be set up.
-func New(cfg config.Config, tel *telemetry.Telemetry) *Runtime {
-	return &Runtime{Cfg: cfg, Tel: tel}
+// New constructs a Runtime and resolves its topic names. Telemetry must
+// already be set up. A malformed kafka.topic_prefix is an error, logged; the
+// caller exits ExitFail.
+func New(cfg config.Config, tel *telemetry.Telemetry) (*Runtime, error) {
+	t, err := ResolveTopics(cfg, tel.Log)
+	if err != nil {
+		return nil, err
+	}
+	return &Runtime{Cfg: cfg, Tel: tel, Topics: t, ContentTopics: content.TopicsFrom(t), AuditTopicName: t.Audit()}, nil
+}
+
+// ResolveTopics is kafkaclient.TopicsFor with the startup lines AW-SRV-058
+// names: one info line with the prefix, the environment and the resolved
+// commands topic; one warn line when the prefix is empty outside prod, which
+// the follow-on story makes fatal (ADR-0013 Amendment 16); an error line for
+// a malformed prefix.
+func ResolveTopics(cfg config.Config, log *slog.Logger) (kafkaclient.Topics, error) {
+	t, err := kafkaclient.TopicsFor(cfg)
+	if err != nil {
+		log.Error("kafka topics", "kafka.topic_prefix", cfg.KafkaTopicPrefix, "environment", cfg.Environment, "detail", err.Error())
+		return kafkaclient.Topics{}, err
+	}
+	log.Info("kafka topics", "kafka.topic_prefix", t.Prefix(), "environment", cfg.Environment, "commands_topic", t.Commands())
+	if t.Prefix() == "" && cfg.Environment != "prod" {
+		log.Warn("kafka.topic_prefix is empty outside prod; topics are unprefixed and shared with any environment on the same broker",
+			"kafka.topic_prefix", "", "environment", cfg.Environment)
+	}
+	return t, nil
 }
 
 // LoadContent reads ZoneDefinitions, validates them, and records metrics.

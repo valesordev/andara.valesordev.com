@@ -67,16 +67,19 @@ func (s *syncBuffer) String() string {
 	return s.b.String()
 }
 
+// fixtureTopic is the commands topic the scripted broker serves.
+const fixtureTopic = "it7.commands-fixture"
+
 // newProducerFixture is a producer over a scripted broker. The probe loop is
 // stopped: a test calls probeOnce, or leaves the Partitions to the produce
 // path.
 func newProducerFixture(t *testing.T, mutate func(*ProducerOptions)) *producerFixture {
 	t.Helper()
-	b := newFakeBroker(t, CommandsTopic)
+	b := newFakeBroker(t, fixtureTopic)
 	logs := &syncBuffer{}
 	metrics := NewMetrics(prometheus.NewRegistry())
 	o := ProducerOptions{
-		Brokers: []string{b.addr()}, Deadline: time.Second, ProbeInterval: 500 * time.Millisecond,
+		Brokers: []string{b.addr()}, Topic: fixtureTopic, Deadline: time.Second, ProbeInterval: 500 * time.Millisecond,
 		Metrics: metrics, Log: slog.New(slog.NewJSONHandler(logs, &slog.HandlerOptions{Level: slog.LevelDebug})),
 		manualProbe: true,
 	}
@@ -600,9 +603,17 @@ func TestProduce_TheSubmitSpanNamesTheDegradedPartition(t *testing.T) {
 
 // The floor is the producer's to refuse as well as config load's.
 func TestNewKafkaProducer_RefusesAHoldBelowTheFloor(t *testing.T) {
-	_, err := NewKafkaProducer(ProducerOptions{Brokers: []string{"127.0.0.1:1"}, Deadline: time.Second, DegradedHold: 89 * time.Second})
+	_, err := NewKafkaProducer(ProducerOptions{Brokers: []string{"127.0.0.1:1"}, Topic: fixtureTopic, Deadline: time.Second, DegradedHold: 89 * time.Second})
 	if err == nil || !strings.Contains(err.Error(), "floor") {
 		t.Fatalf("err = %v", err)
+	}
+}
+
+// AW-SRV-058 AC-5a: there is no default commands topic to fall back to.
+func TestNewKafkaProducer_RequiresTheTopic(t *testing.T) {
+	_, err := NewKafkaProducer(ProducerOptions{Brokers: []string{"127.0.0.1:1"}, Deadline: time.Second})
+	if err == nil || !strings.Contains(err.Error(), "ProducerOptions.Topic") {
+		t.Fatalf("err = %v, want one naming ProducerOptions.Topic", err)
 	}
 }
 

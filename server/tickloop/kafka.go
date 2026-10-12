@@ -21,12 +21,11 @@ import (
 	"github.com/valesordev/andara/server/sim"
 )
 
-// Topics the loop reads and writes.
+// The loop's topics are named by kafkaclient.Topics (AW-SRV-058); every
+// constructor here takes them from its caller and has no default.
 const (
-	CommandsTopic = "andara.commands.v1"
-	EventsTopic   = "andara.events.v1"
 	// BoundaryPartition is where every TickCompleted record goes on
-	// andara.events.v1, so replay reads one Partition in order. Events go
+	// the events topic, so replay reads one Partition in order. Events go
 	// to their Zone's Partition.
 	BoundaryPartition int32 = 0
 	// BoundaryKey is the record key of a TickCompleted.
@@ -51,7 +50,7 @@ type KafkaSourceOptions struct {
 	// LagEvery is how often end offsets are read for andara_consumer_lag.
 	// Zero means 1s.
 	LagEvery time.Duration
-	// Topic overrides CommandsTopic; tests use throwaway topics.
+	// Topic is the commands topic (kafkaclient.Topics.Commands); required.
 	Topic string
 }
 
@@ -81,6 +80,9 @@ func NewKafkaSource(ctx context.Context, o KafkaSourceOptions) (*KafkaSource, er
 	if len(o.Brokers) == 0 || o.Group == "" || len(o.Start) == 0 {
 		return nil, errors.New("tickloop: brokers, group, and partitions are required")
 	}
+	if o.Topic == "" {
+		return nil, errors.New("tickloop: KafkaSourceOptions.Topic is required")
+	}
 	if o.ClientID == "" {
 		o.ClientID = "andara-server"
 	}
@@ -89,9 +91,6 @@ func NewKafkaSource(ctx context.Context, o KafkaSourceOptions) (*KafkaSource, er
 	}
 	if o.LagEvery <= 0 {
 		o.LagEvery = time.Second
-	}
-	if o.Topic == "" {
-		o.Topic = CommandsTopic
 	}
 	assign := map[int32]kgo.Offset{}
 	for p, off := range o.Start {
@@ -352,8 +351,8 @@ func (s *KafkaSource) Close() error {
 // buffer refused rather than block on. The drain flushes.
 type KafkaPublisher struct {
 	client *kgo.Client
-	// Commands and Events override the topic names; tests use throwaway
-	// topics.
+	// Commands and Events are the topics written to, as the constructor was
+	// given them.
 	Commands, Events string
 	// OnFailure, if set, is called once per record the broker never
 	// acknowledged, with the topic it was for.
@@ -398,9 +397,10 @@ const DeliveryTimeout = time.Minute
 const maxBuffered = 1 << 16
 
 // NewKafkaPublisher connects a producer with acks=all and the idempotent
-// producer on.
-func NewKafkaPublisher(ctx context.Context, brokers []string, clientID string) (*KafkaPublisher, error) {
-	return newKafkaPublisher(ctx, brokers, clientID, DeliveryTimeout)
+// producer on, writing Commands to commandsTopic and Events and boundaries to
+// eventsTopic. Both are required.
+func NewKafkaPublisher(ctx context.Context, brokers []string, clientID, commandsTopic, eventsTopic string) (*KafkaPublisher, error) {
+	return newKafkaPublisher(ctx, brokers, clientID, commandsTopic, eventsTopic, DeliveryTimeout)
 }
 
 // publisherOpts are the options of the Tick Boundary publisher.
@@ -436,7 +436,13 @@ func publisherOpts(brokers []string, clientID string, deliveryTimeout time.Durat
 
 // newKafkaPublisher is NewKafkaPublisher with the delivery timeout a test
 // shortens, so a lost boundary costs it seconds rather than a minute.
-func newKafkaPublisher(ctx context.Context, brokers []string, clientID string, deliveryTimeout time.Duration) (*KafkaPublisher, error) {
+func newKafkaPublisher(ctx context.Context, brokers []string, clientID, commandsTopic, eventsTopic string, deliveryTimeout time.Duration) (*KafkaPublisher, error) {
+	if commandsTopic == "" {
+		return nil, errors.New("tickloop: publisher commandsTopic is required")
+	}
+	if eventsTopic == "" {
+		return nil, errors.New("tickloop: publisher eventsTopic is required")
+	}
 	if clientID == "" {
 		clientID = "andara-server"
 	}
@@ -448,7 +454,7 @@ func newKafkaPublisher(ctx context.Context, brokers []string, clientID string, d
 		client.Close()
 		return nil, fmt.Errorf("tickloop: ping brokers: %w", err)
 	}
-	k := &KafkaPublisher{client: client, Commands: CommandsTopic, Events: EventsTopic}
+	k := &KafkaPublisher{client: client, Commands: commandsTopic, Events: eventsTopic}
 	k.boundaries = &boundarySeq{
 		// The record's own context is never canceled: franz-go fails a
 		// record whose context ends before delivery.
@@ -584,12 +590,12 @@ func (k *KafkaPublisher) Close() error {
 	return err
 }
 
-// ReadBoundaries reads every TickCompleted on andara.events.v1 from the
+// ReadBoundaries reads every TickCompleted on the events topic from the
 // start, in order, for replay (ADR-0002 §4). The RecordSource for replay
 // is KafkaRecords.
 func ReadBoundaries(ctx context.Context, brokers []string, eventsTopic string) ([]sim.TickCompleted, error) {
 	if eventsTopic == "" {
-		eventsTopic = EventsTopic
+		return nil, errors.New("tickloop: ReadBoundaries eventsTopic is required")
 	}
 	client, err := kgo.NewClient(boundaryScanOpts(brokers, eventsTopic)...)
 	if err != nil {
@@ -624,20 +630,20 @@ func ReadBoundaries(ctx context.Context, brokers []string, eventsTopic string) (
 	return out, nil
 }
 
-// KafkaRecords is a sim.RecordSource over andara.commands.v1.
+// KafkaRecords is a sim.RecordSource over the commands topic.
 type KafkaRecords struct {
 	Brokers []string
-	Topic   string // empty means CommandsTopic
+	Topic   string // the commands topic; required
 }
 
 // Fetch implements sim.RecordSource.
 func (k KafkaRecords) Fetch(partition int32, from, to int64) ([]sim.Record, error) {
-	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
-	defer cancel()
 	topic := k.Topic
 	if topic == "" {
-		topic = CommandsTopic
+		return nil, errors.New("tickloop: KafkaRecords.Topic is required")
 	}
+	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+	defer cancel()
 	client, err := kgo.NewClient(fetchOpts(k.Brokers, topic, partition, from)...)
 	if err != nil {
 		return nil, err
@@ -715,6 +721,9 @@ func RecoverFrom(boundaries []sim.TickCompleted, src sim.RecordSource, e *sim.En
 // EndOffset is one past the last record on topic's partition: where a
 // consumer that has read everything written so far stands.
 func EndOffset(ctx context.Context, brokers []string, topic string, partition int32) (int64, error) {
+	if topic == "" {
+		return 0, errors.New("tickloop: EndOffset topic is required")
+	}
 	cl, err := kgo.NewClient(offsetsOpts(brokers)...)
 	if err != nil {
 		return 0, err

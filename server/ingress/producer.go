@@ -28,9 +28,6 @@ import (
 	"github.com/valesordev/andara/server/sim"
 )
 
-// CommandsTopic is where Commands go; the same name tickloop consumes.
-const CommandsTopic = "andara.commands.v1"
-
 // canonical is the one marshal every log record goes through (AW-SRV-004
 // AC-3): deterministic, so a record is byte-identical however often it is
 // serialized.
@@ -39,7 +36,8 @@ var canonical = proto.MarshalOptions{Deterministic: true}
 // ProducerOptions configures a KafkaProducer.
 type ProducerOptions struct {
 	Brokers []string
-	// Topic overrides CommandsTopic; tests use throwaway topics.
+	// Topic is where Commands go, the topic tickloop consumes
+	// (kafkaclient.Topics.Commands); required.
 	Topic string
 	// ClientID appears in broker logs. Defaults to andara-server.
 	ClientID string
@@ -218,7 +216,7 @@ func NewKafkaProducer(o ProducerOptions) (*KafkaProducer, error) {
 		return nil, errors.New("ingress: no brokers configured")
 	}
 	if o.Topic == "" {
-		o.Topic = CommandsTopic
+		return nil, errors.New("ingress: ProducerOptions.Topic is required")
 	}
 	if o.ClientID == "" {
 		o.ClientID = "andara-server"

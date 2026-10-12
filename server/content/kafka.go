@@ -27,20 +27,11 @@ import (
 // caller names none, and of the clients config-assert describes.
 const DefaultClientID = "andara-server-content"
 
-// The content store's three topics (ADR-0004). Declared in
-// deploy/kafka/topics.yaml and created by `make topics-apply`; this package
-// reads them and never creates them.
 // watchBackoff is how long the pointer watch pauses after a fetch error, so a
 // broker that is down does not turn the watch into a busy loop.
 const watchBackoff = 2 * time.Second
 
-const (
-	TopicBlobs    = "andara.content.blobs.v1"
-	TopicVersions = "andara.content.versions.v1"
-	TopicActive   = "andara.content.active.v1"
-)
-
-// PointerMove is one Active Pointer write observed on andara.content.active.v1.
+// PointerMove is one Active Pointer write observed on the Active Pointer topic.
 type PointerMove struct {
 	Pack    string
 	Version uint64
@@ -91,29 +82,35 @@ type KafkaOptions struct {
 	Metrics *Metrics
 	// Log receives watch failures. Nil discards them.
 	Log *slog.Logger
-	// Topics overrides the three topic names. The zero value is the real
-	// ones; a test against a live broker sets throwaway topics so it never
-	// writes into the store the dev stack is serving from.
+	// Topics names the three topics; each is required. The server's come
+	// from TopicsFrom; a test against a live broker sets throwaway topics so
+	// it never writes into the store the dev stack is serving from.
 	Topics Topics
 }
 
-// Topics names the three content topics.
+// Topics names the content store's three topics (ADR-0004). Declared in
+// deploy/kafka/topics.yaml and created by `make topics-apply`; this package
+// reads them and never creates them.
 type Topics struct {
 	Blobs, Versions, Active string
 }
 
-// OrDefault fills an unset name with the real topic.
-func (t Topics) OrDefault() Topics {
-	if t.Blobs == "" {
-		t.Blobs = TopicBlobs
+// TopicsFrom is the three content topics as t names them.
+func TopicsFrom(t kafkaclient.Topics) Topics {
+	return Topics{Blobs: t.ContentBlobs(), Versions: t.ContentVersions(), Active: t.ContentActive()}
+}
+
+// Require is an error naming the first topic left empty, as option.<field>:
+// there is no default name to fall back to (AW-SRV-058).
+func (t Topics) Require(option string) error {
+	for _, f := range []struct{ name, v string }{
+		{"Blobs", t.Blobs}, {"Versions", t.Versions}, {"Active", t.Active},
+	} {
+		if f.v == "" {
+			return fmt.Errorf("content: %s.%s is required", option, f.name)
+		}
 	}
-	if t.Versions == "" {
-		t.Versions = TopicVersions
-	}
-	if t.Active == "" {
-		t.Active = TopicActive
-	}
-	return t
+	return nil
 }
 
 // NewKafkaResolver builds a resolver. It does not connect: the first scan
@@ -122,6 +119,9 @@ func (t Topics) OrDefault() Topics {
 func NewKafkaResolver(o KafkaOptions) (*KafkaResolver, error) {
 	if len(o.Brokers) == 0 {
 		return nil, errors.New("content: no brokers configured")
+	}
+	if err := o.Topics.Require("KafkaOptions.Topics"); err != nil {
+		return nil, err
 	}
 	if o.ClientID == "" {
 		o.ClientID = DefaultClientID
@@ -140,7 +140,7 @@ func NewKafkaResolver(o KafkaOptions) (*KafkaResolver, error) {
 		cache:    o.Cache,
 		maxBlob:  o.MaxBlobBytes,
 		metrics:  m,
-		topics:   o.Topics.OrDefault(),
+		topics:   o.Topics,
 		log:      lg,
 	}, nil
 }
@@ -263,7 +263,7 @@ func (r *KafkaResolver) Blobs(ctx context.Context, refs []*contentv1.BlobRef) (m
 	}
 	for _, refs := range missing {
 		// Deterministic: report the first path that wanted the absent hash.
-		return nil, &ErrBlobMissing{Hash: refs[0].GetHash(), Path: refs[0].GetPath()}
+		return nil, &ErrBlobMissing{Hash: refs[0].GetHash(), Path: refs[0].GetPath(), Topic: r.topics.Blobs}
 	}
 	return bodies, nil
 }
@@ -351,7 +351,6 @@ func watchOpts(brokers []string, clientID, active string, from map[int32]kgo.Off
 // Sites describes every Kafka client this package builds, for a resolver
 // with the given client.id base and topics.
 func Sites(brokers []string, clientID string, t Topics) []kafkaclient.Site {
-	t = t.OrDefault()
 	pinned := map[int32]kgo.Offset{0: kgo.NewOffset().At(0)}
 	return []kafkaclient.Site{
 		{Name: "content pin", Role: kafkaclient.Admin, Opts: adminOpts(brokers, clientID, "-pin")},

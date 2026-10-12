@@ -96,15 +96,14 @@ func TestKafka_APointerMoveSwapsTheWorldThroughTheLog(t *testing.T) {
 
 	// The tick loop, as boot builds it: no content, the Loader as its source.
 	e := sim.NewEngine(sim.EmptyWorld(), nil, sim.Config{Seed: 5, Partitions: simtest.AllPartitions(), Handlers: sim.Handlers(), Content: loader})
-	src, err := tickloop.NewKafkaSource(ctx, tickloop.KafkaSourceOptions{Brokers: bk, Group: "andara-sim-" + commands, Start: e.State().Offsets, Topic: commands, LagEvery: 200 * time.Millisecond})
+	src, err := tickloop.NewKafkaSource(ctx, tickloop.KafkaSourceOptions{Brokers: bk, Group: "it-sim-" + commands, Start: e.State().Offsets, Topic: commands, LagEvery: 200 * time.Millisecond})
 	if err != nil {
 		t.Fatal(err)
 	}
-	pub, err := tickloop.NewKafkaPublisher(ctx, bk, "test")
+	pub, err := tickloop.NewKafkaPublisher(ctx, bk, "test", commands, events)
 	if err != nil {
 		t.Fatal(err)
 	}
-	pub.Commands, pub.Events = commands, events
 	var (
 		applied  atomic.Int64
 		mu       sync.Mutex

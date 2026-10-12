@@ -47,8 +47,8 @@ type Options struct {
 	// SpawnRoom is character.spawn_room: a version whose World lacks it,
 	// when the World in effect has it, is refused (spawn_room_removed).
 	SpawnRoom sim.RoomRef
-	// Topics overrides the content store's topic names, for a test against a
-	// live broker (KafkaOptions.Topics). The zero value is the real ones.
+	// Topics names the content store's topics (KafkaOptions.Topics); required
+	// for the kafka source.
 	Topics  Topics
 	Metrics *Metrics
 	Log     *slog.Logger
@@ -111,6 +111,7 @@ func openKafka(ctx context.Context, o Options) (*Content, []sim.ValidationError)
 		Tracer:        o.Tracer,
 		StrictOrphans: o.StrictOrphans,
 		SpawnRoom:     o.SpawnRoom,
+		ActiveTopic:   o.Topics.Active,
 		// The bounded wait for a swap to apply (review of #88).
 		ApplyWait: applyWait(o.Debounce),
 	})
