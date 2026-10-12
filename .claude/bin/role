@@ -512,9 +512,50 @@ def _decision(kind: str, reason: str) -> int:
 LANE_READ_TOOLS = {"Read", "NotebookRead", "Glob", "Grep", "LS"}
 
 
-def lane_read_problem(tool: str, ti: dict, cwd: Path) -> str | None:
-    """A lane reads inside the worktree it runs in (its .claude/ skills included), judged on the
-    resolved path: never /proc, credentials, the main checkout, or anything else on the machine."""
+def lane_scratch() -> Path | None:
+    """The lane's scratch directory, outside its worktree, so nothing there is committed: PR bodies,
+    check logs, notes. The coordinator sets COORDINATOR_SCRATCH, and a lane can't set COORDINATOR_*."""
+    s = os.environ.get("COORDINATOR_SCRATCH", "") if os.environ.get("COORDINATOR_LANE") else ""
+    if not os.path.isabs(s):
+        return None
+    try:
+        return Path(s).resolve()
+    except (OSError, RuntimeError):
+        return None
+
+
+def _resolved(p: Path) -> Path | None:
+    try:
+        return Path(os.path.normpath(p)).resolve()    # a symlink is judged by where it points
+    except (OSError, RuntimeError):
+        return None
+
+
+def in_lane_scratch(p: Path) -> bool:
+    s, r = lane_scratch(), _resolved(p)
+    return s is not None and r is not None and r.is_relative_to(s)
+
+
+def lane_task_output(p: Path, sid: str) -> bool:
+    """Claude Code's own output file for this session's background command,
+    <tmp>/claude-<uid>/<project>/<session>/tasks/<id>.output: the lane can't see the command's
+    result any other way."""
+    r = _resolved(p)
+    if not sid or r is None:
+        return False
+    for base in {os.environ.get("CLAUDE_CODE_TMPDIR"), os.environ.get("TMPDIR"), "/tmp"} - {None, ""}:
+        top = Path(base).resolve() / f"claude-{os.getuid()}"
+        if r.is_relative_to(top):
+            parts = r.relative_to(top).parts
+            if len(parts) == 4 and parts[1] == sid and parts[2] == "tasks":
+                return True
+    return False
+
+
+def lane_read_problem(tool: str, ti: dict, cwd: Path, sid: str = "") -> str | None:
+    """A lane reads inside the worktree it runs in (its .claude/ skills included), its scratch
+    directory, and its own background commands' output, judged on the resolved path: never /proc,
+    credentials, the main checkout, or anything else on the machine."""
     here = repo_root(cwd)
     if here is None:
         return f"{cwd} is not inside the lane's repo"
@@ -533,7 +574,7 @@ def lane_read_problem(tool: str, ti: dict, cwd: Path) -> str | None:
             r = Path(os.path.normpath(p)).resolve()
         except (OSError, RuntimeError):
             return f"can't resolve {t!r}"
-        if not r.is_relative_to(here):
+        if not r.is_relative_to(here) and not in_lane_scratch(r) and not lane_task_output(r, sid):
             return f"a lane reads files from its worktree only, not {t!r}"
     return None
 
@@ -547,7 +588,8 @@ def hook_pre_tool_use(_: list[str]) -> int:
         if not os.environ.get("COORDINATOR_LANE"):
             return 0   # a person's session reads anything
         cwd = Path(data.get("cwd") or os.getcwd())
-        problem = _lane_machinery_problem(cwd) or lane_read_problem(data["tool_name"], ti, cwd)
+        problem = _lane_machinery_problem(cwd) or lane_read_problem(data["tool_name"], ti, cwd,
+                                                                    data.get("session_id", ""))
         return _decision("deny", f"coordinator lane: {problem}") if problem else 0
     target = ti.get("file_path") or ti.get("notebook_path")
     if not target:
@@ -556,7 +598,15 @@ def hook_pre_tool_use(_: list[str]) -> int:
     path = Path(target) if os.path.isabs(target) else cwd / target
     path = Path(os.path.normpath(path))
     if os.environ.get("COORDINATOR_LANE"):
-        problem = _lane_machinery_problem(cwd) or lane_edit_problem(path, cwd)
+        problem = _lane_machinery_problem(cwd)
+        if not problem and in_lane_scratch(path):
+            scratch, top = lane_scratch(), repo_root(path)
+            below = _resolved(path).relative_to(scratch).parts
+            if {".git", ".claude"} & set(below) or (top is not None and top.resolve().is_relative_to(scratch)):
+                return _decision("deny", f"coordinator lane: {path} is in a repo inside the scratch directory: "
+                                         f"scratch holds plain files")
+            return 0    # the lane's own scratch: in no repo, owned by no role
+        problem = problem or lane_edit_problem(path, cwd)
         if problem:
             return _decision("deny", f"coordinator lane: {problem}")
     root = repo_root(path)
@@ -1281,6 +1331,8 @@ def _lane_file_problem(value: str, where: Path) -> str | None:
         return f"a lane reads files from its worktree only, not {value!r}"
     root = repo_root(where)
     p = Path(os.path.normpath(value if os.path.isabs(value) else where / value))
+    if in_lane_scratch(p):
+        return None
     try:
         inside = root is not None and p.resolve().is_relative_to(root.resolve())
     except OSError:
@@ -1375,6 +1427,16 @@ def lane_push_problem(g: Gated, sid: str, args: list[str]) -> str | None:
     return None
 
 
+def _is_head_commit(where: Path, ref: str) -> bool:
+    """`git checkout -b x origin/main` in a worktree still at origin/main is a branch at HEAD."""
+    if not SAFE_REF.fullmatch(ref) or ref.startswith("-"):
+        return False
+    rev = lambda r: subprocess.run(["git", "-C", str(where), "rev-parse", "--verify", "--quiet",  # noqa: E731
+                                    f"{r}^{{commit}}"], capture_output=True, text=True).stdout.strip()
+    head = rev("HEAD")
+    return bool(head) and rev(ref) == head
+
+
 def _lane_new_branch_problem(g: Gated, sid: str, name: str) -> str | None:
     root, role, prefix = _lane_branch_prefix(g, sid)
     if root is None or not prefix:
@@ -1424,7 +1486,11 @@ def lane_git_problem(g: Gated, sid: str) -> str | None:
     elif sub in ("checkout", "switch"):
         # A new branch at HEAD, or (switch only) one of the role's own branches whose tree still
         # carries .claude/: moving the checkout to a commit without it drops the hooks.
-        if len(args) == 2 and args[0] in ("-b", "-c", "--create"):
+        args = [a for a in args if a not in ("-q", "--quiet")]
+        if len(args) in (2, 3) and args[0] in ("-b", "-c", "--create"):
+            if len(args) == 3 and not _is_head_commit(g.where, args[2]):
+                return (f"a lane creates its branch at HEAD; {args[2]!r} isn't HEAD's commit "
+                        f"(its worktree already starts at origin/main)")
             return _lane_new_branch_problem(g, sid, args[1])
         if sub == "switch" and len(args) == 1 and not args[0].startswith("-"):
             why = _lane_new_branch_problem(g, sid, args[0])
@@ -1453,6 +1519,8 @@ def lane_git_problem(g: Gated, sid: str) -> str | None:
                     if "$" in target or "`" in target:
                         continue    # `$(mktemp -d)/review`: /pre-pr's reviewer; the path isn't the lanes' dir
                     t = Path(os.path.normpath(target if os.path.isabs(target) else g.where / target)).resolve()
+                    if in_lane_scratch(t):
+                        return f"a lane never {verb}s a worktree in its scratch directory: scratch holds plain files"
                     if t == lanes or t.is_relative_to(lanes):
                         return f"a lane never {verb}s a worktree under the lanes' directory (.claude/worktrees)"
             except (subprocess.CalledProcessError, OSError):
@@ -1601,6 +1669,154 @@ def _lane_var_problem(command: str) -> str | None:
     return None
 
 
+# Flags that make the repo's build tools run something other than the repo's own targets: a lane's
+# `make check`/`go test` runs the Makefile and code on its branch, not a file or program it names.
+# (A Makefile variable can still change a command; the lane's OS user is the boundary for that.)
+LANE_EXEC_FLAGS = {"make": {"--eval", "-E", "-f", "--file", "--makefile", "-C", "--directory", "-I",
+                            "--include-dir"},
+                   "go": {"-exec", "--exec", "-toolexec", "--toolexec", "-overlay", "--overlay"}}
+
+
+def _lane_exec_flag_problem(seg: list[str]) -> str | None:
+    tool = seg[0]
+    if tool not in LANE_EXEC_FLAGS:
+        return None
+    for a in seg[1:]:
+        if a == "--":
+            break
+        name = a.split("=", 1)[0]
+        short = tool == "make" and re.fullmatch(r"-[A-Za-z]+.*", a) and not a.startswith("--") \
+            and any(c in "fCIE" for c in re.match(r"-([A-Za-z]+)", a).group(1))
+        if name in LANE_EXEC_FLAGS[tool] or short or (tool == "make" and name in ("SHELL", ".SHELLFLAGS",
+                                                                                     "MAKEFLAGS", "MAKEFILES")):
+            return f"a lane runs {tool} without {name} (it would run something other than the repo's own targets)"
+    return None
+
+
+# Readers a lane runs as commands (the coordinator allows them), and inside $(...): every file they
+# name is judged. Long options are matched exactly, from these tables: GNU tools take any unique
+# prefix (`diff --from=F` is `--from-file=F`) and some take an optional value (`--unified[=N]`), so
+# an option the tables don't know is refused rather than guessed at. Values: short options whose
+# value follows (`-n 5`, `-n5`), long ones (`--x v`, `--x=v`), and the ones whose value is a file.
+LANE_FILE_READERS = {"grep", "head", "tail", "wc", "ls", "diff", "cat", "cut", "tr", "sort", "uniq"}
+_GREP_FLAGS = {"--recursive", "--dereference-recursive", "--line-number", "--count", "--ignore-case",
+               "--no-ignore-case", "--invert-match", "--word-regexp", "--line-regexp", "--files-with-matches",
+               "--files-without-match", "--only-matching", "--quiet", "--silent", "--no-messages",
+               "--with-filename", "--no-filename", "--extended-regexp", "--fixed-strings", "--basic-regexp",
+               "--perl-regexp", "--text", "--null", "--null-data", "--byte-offset", "--initial-tab",
+               "--line-buffered", "--color", "--colour"}
+READER_OPTS = {   # cmd: (short with value, long flags, long with value, short file, long file)
+    "grep": ({"-e", "-m", "-A", "-B", "-C", "-d", "-D"}, _GREP_FLAGS,
+             {"--regexp", "--max-count", "--context", "--after-context", "--before-context", "--include",
+              "--exclude", "--exclude-dir", "--label", "--directories", "--devices", "--binary-files",
+              "--color", "--colour"}, {"-f"}, {"--file", "--exclude-from"}),
+    "head": ({"-n", "-c"}, {"--quiet", "--silent", "--verbose", "--zero-terminated"}, {"--lines", "--bytes"},
+             set(), set()),
+    "tail": ({"-n", "-c"}, {"--quiet", "--silent", "--verbose", "--zero-terminated"}, {"--lines", "--bytes"},
+             set(), set()),   # no -f/--follow: it never ends
+    "wc": (set(), {"--lines", "--words", "--chars", "--bytes", "--max-line-length"}, {"--total"}, set(), set()),
+    "ls": ({"-w", "-I", "-T"}, {"--all", "--almost-all", "--recursive", "--human-readable", "--classify",
+                                "--directory", "--size", "--reverse", "--numeric-uid-gid", "--inode",
+                                "--color", "--group-directories-first"},
+           {"--sort", "--time", "--format", "--width", "--ignore", "--hide", "--color", "--time-style"},
+           set(), set()),
+    "diff": ({"-U", "-C", "-L", "-I", "-x"}, {"--unified", "--context", "--recursive", "--brief", "--new-file",
+                                              "--ignore-case", "--ignore-all-space", "--ignore-space-change",
+                                              "--ignore-blank-lines", "--side-by-side", "--text", "--normal",
+                                              "--report-identical-files", "--minimal", "--strip-trailing-cr",
+                                              "--no-dereference", "--color", "--suppress-common-lines"},
+             {"--label", "--exclude", "--ignore-matching-lines", "--width"}, {"-X"}, {"--exclude-from"}),
+    "cat": (set(), {"--number", "--number-nonblank", "--show-all", "--show-ends", "--show-tabs",
+                    "--squeeze-blank"}, set(), set(), set()),
+    "cut": ({"-d", "-f", "-b", "-c"}, {"--complement", "--only-delimited"},
+            {"--delimiter", "--fields", "--bytes", "--characters", "--output-delimiter"}, set(), set()),
+    "tr": (set(), {"--delete", "--squeeze-repeats", "--complement", "--truncate-set1"}, set(), set(), set()),
+    "sort": ({"-k", "-t"}, {"--reverse", "--numeric-sort", "--unique", "--ignore-case", "--version-sort",
+                            "--human-numeric-sort", "--stable"}, {"--key", "--field-separator"}, set(), set()),
+    "uniq": ({"-f", "-s", "-w"}, {"--count", "--repeated", "--unique", "--ignore-case"},
+             {"--skip-fields", "--skip-chars", "--check-chars"}, set(), set()),
+}
+READER_NO_SHORT = {"tail": "fF", "sort": "oT", "ls": ""}   # -f follows forever; sort -o writes, -T is a dir
+OPTIONAL_VALUE = {"--unified", "--context", "--color", "--colour"}   # `=value` only
+
+
+def _reader_files(cmd: str, args: list[str]) -> tuple[list[str], str | None]:
+    """The files a reader names (its operands, grep's first being the pattern unless -e or -f gave
+    one, and file-taking options' values), or why its options can't be read."""
+    svals, lflags, lvals, sfiles, lfiles = READER_OPTS[cmd]
+    files, pos, given, i, ended = [], [], False, 0, False
+    while i < len(args):
+        a = args[i]
+        if ended or a == "-" or not a.startswith("-"):
+            pos.append(a)
+        elif a == "--":
+            ended = True
+        elif a.startswith("--"):
+            name, eq, v = a.partition("=")
+            if name in OPTIONAL_VALUE and (name in lflags or name in lvals):
+                pass        # `--unified`, `--unified=3`, `--color=never`: never takes the next word
+            elif name in lflags and not eq:
+                pass
+            elif name in lvals or name in lfiles:
+                if not eq:
+                    i += 1
+                    v = args[i] if i < len(args) else ""
+                if name in lfiles:
+                    files.append(v)
+                given = given or name in ("--regexp", "--file")
+            else:
+                return [], f"a lane spells {cmd}'s options in full, from the ones it knows, not {name!r}"
+        else:
+            for j, ch in enumerate(a[1:], 1):
+                o = "-" + ch
+                if ch in READER_NO_SHORT.get(cmd, ""):
+                    return [], f"a lane doesn't run {cmd} {o}"
+                if o in svals or o in sfiles:
+                    v = a[j + 1:]
+                    if not v:
+                        i += 1
+                        v = args[i] if i < len(args) else ""
+                    if o in sfiles:
+                        files.append(v)
+                    given = given or o in ("-e", "-f")
+                    break
+        i += 1
+    if cmd == "grep" and not given:
+        pos = pos[1:]
+    if cmd == "tr":
+        pos = []    # tr reads stdin only: its operands are sets
+    if cmd == "uniq" and len(pos) > 1:
+        return [], "a lane runs uniq on one input at most: its second operand is a file it writes"
+    return files + [p for p in pos if p != "-"], None
+
+
+def _lane_cd_problem(seg: list[str], where: Path) -> str | None:
+    """Files in a command are judged from the session's directory, so a `cd` inside it would move
+    them out from under the check. A lane changes directory only to its worktree's top."""
+    if os.path.basename(seg[0]) not in ("cd", "pushd", "popd"):
+        return None
+    root = repo_root(where)
+    args = [a for a in seg[1:] if a != "--"]
+    if seg[0] == "cd" and len(args) == 1 and root is not None and "$" not in args[0] and "~" not in args[0]:
+        t = _resolved(Path(args[0] if os.path.isabs(args[0]) else where / args[0]))
+        if t is not None and t == root.resolve():
+            return None
+    return "a lane changes directory only to its worktree's top (`cd <worktree>`); name paths from there"
+
+
+def _lane_reader_problem(seg: list[str], where: Path) -> str | None:
+    cmd = os.path.basename(seg[0])
+    if cmd not in LANE_FILE_READERS:
+        return None
+    files, why = _reader_files(cmd, seg[1:])
+    if why:
+        return why
+    for f in files:
+        if not f or _lane_file_problem(f, where):
+            return f"a lane reads files from its worktree or its scratch directory only, not {f!r}"
+    return None
+
+
 def lane_shell_problem(command: str, where: Path) -> str | None:
     """Shell syntax a lane may not use: builtins that change the environment or run text, a
     command substitution running anything but a reader, and redirections outside the worktree."""
@@ -1610,15 +1826,21 @@ def lane_shell_problem(command: str, where: Path) -> str | None:
     for seg in _simple_commands(command):
         if os.path.basename(seg[0]) in LANE_SHELL_BUILTINS:
             return f"a lane doesn't run the shell builtin {seg[0]!r}"
+        why = _lane_exec_flag_problem(seg)
+        if why:
+            return why
+        why = _lane_reader_problem(seg, where) or _lane_cd_problem(seg, where)
+        if why:
+            return why
     for body in _substitutions(command):
         for seg in _simple_commands(body):
             h = os.path.basename(seg[0])
             if VAR_RE.match(seg[0]):
                 return f"a lane sets no variables inside a command substitution ({seg[0].split('=', 1)[0]})"
             if h in LANE_READERS:
-                for t in seg[1:]:
-                    if not t.startswith("-") and _lane_file_problem(t, where):
-                        return f"a lane reads files from its worktree only, not {t!r}"
+                why = _lane_reader_problem(seg, where)
+                if why:
+                    return why
             elif h not in LANE_SUBST_OK and ".claude/bin/" not in seg[0]:
                 return f"a lane runs {seg[0]!r} as a command, not inside $(...) or backticks where it isn't judged"
     return _lane_redirect_problem(command, where)
@@ -1648,7 +1870,9 @@ def _lane_redirect_problem(command: str, where: Path) -> str | None:
                 continue
             why = _lane_file_problem(target, where)
             if why:
-                return f"a lane redirects to and from files in its worktree only, not {target!r}"
+                return f"a lane redirects to and from files in its worktree or its scratch directory only, not {target!r}"
+            if in_lane_scratch(Path(target if os.path.isabs(target) else where / target)):
+                continue
             root = repo_root(where)
             rel = Path(os.path.normpath(target if os.path.isabs(target) else where / target)).resolve()
             parts = rel.relative_to(root.resolve()).parts if root else ()
