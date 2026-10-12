@@ -1317,6 +1317,15 @@ LANE_GH_WRITE_OPTS = {   # the only options a lane passes to gh's writes (no --d
 }
 LANE_GH_VERBS = {"pr": {"create", "new", "view", "list", "diff", "checks", "comment", "status"},
                  "issue": {"list", "view", "comment", "close", "create"}}
+# gh run, for CI evidence: list and view only (never rerun, cancel, delete, download, or watch), and only
+# these options, per verb, because one letter means different things there (-w: --workflow on list,
+# --web on view). (options that take a value, flags)
+_GH_OUT = {"--json", "-q", "--jq", "-t", "--template"}
+LANE_GH_RUN_OPTS = {
+    "list": ({"-w", "--workflow", "-b", "--branch", "-e", "--event", "-c", "--commit", "-s", "--status",
+              "-u", "--user", "--created", "-L", "--limit"} | _GH_OUT, {"-a", "--all"}),
+    "view": ({"-j", "--job", "--attempt"} | _GH_OUT, {"--log", "--log-failed", "-v", "--verbose", "--exit-status"}),
+}
 LANE_API_READ = re.compile(r"(?:pulls|issues|commits|compare|branches)(?:/.*)?")
 LANE_API_REPLY = re.compile(r"(?:pulls/\d+/comments/\d+/replies|issues/\d+/comments)")
 LANE_WORKFLOW_DIRS = (".github/workflows/", ".github/actions/")
@@ -1558,6 +1567,17 @@ def lane_gh_problem(g: Gated, sid: str) -> str | None:
     if not pos:
         return "gh needs a verb"
     head, verb = pos[0], (pos[1] if len(pos) > 1 else None)
+    if head == "run":
+        if verb not in LANE_GH_RUN_OPTS:
+            return f"gh run {verb} isn't a lane's (CI runs: list and view only)"
+        values, flags = LANE_GH_RUN_OPTS[verb]
+        ropts, rpos = _split_opts(g.args, values)
+        bad = [n for n, _ in ropts if n not in values | flags]
+        if bad:
+            return f"gh run {verb} in a lane takes {', '.join(sorted(o for o in values | flags if o.startswith('--')))} only, not {bad[0]}"
+        if rpos[:2] != ["run", verb] or any(not re.fullmatch(r"\d+", x) for x in rpos[2:]):
+            return "a lane names runs by number (no URLs, other repos, or branch names)"
+        return None
     if head in LANE_GH_VERBS:
         if verb not in LANE_GH_VERBS[head]:
             return f"gh {head} {verb} isn't a lane's (it never merges, closes a PR, or approves)"
@@ -1819,7 +1839,7 @@ def _lane_reader_problem(seg: list[str], where: Path) -> str | None:
     return None
 
 
-def lane_shell_problem(command: str, where: Path) -> str | None:
+def lane_shell_problem(command: str, where: Path, sid: str = "") -> str | None:
     """Shell syntax a lane may not use: builtins that change the environment or run text, a
     command substitution running anything but a reader, and redirections outside the worktree."""
     why = _lane_var_problem(command)
@@ -1845,10 +1865,25 @@ def lane_shell_problem(command: str, where: Path) -> str | None:
                     return why
             elif h not in LANE_SUBST_OK and ".claude/bin/" not in seg[0]:
                 return f"a lane runs {seg[0]!r} as a command, not inside $(...) or backticks where it isn't judged"
-    return _lane_redirect_problem(command, where)
+    return _lane_redirect_problem(command, where, sid)
 
 
-def _lane_redirect_problem(command: str, where: Path) -> str | None:
+def _lane_owned_write_problem(root: Path, rel: str, sid: str) -> str | None:
+    """What Edit/Write would refuse this lane at `rel`, for a shell redirect that writes the same file.
+    A path no role owns is refused too: Edit asks Brian there, and a lane has no one to ask."""
+    roles = Roles(root)
+    if matches(rel, roles.repo.get("generated", [])):
+        return f"{rel} is generated: its make target writes it, never a lane"
+    role = hook_role(root, sid)
+    if role == UNRESTRICTED or (role and role in roles.owners(rel)):
+        return None
+    others = roles.owners(rel)
+    if others:
+        return f"{rel} belongs to the {'/'.join(others)} role, not {role}: a redirect is no way around that"
+    return f"{rel} isn't owned by any role, so a lane doesn't write it (Edit would ask Brian)"
+
+
+def _lane_redirect_problem(command: str, where: Path, sid: str = "") -> str | None:
     texts = [command, *_substitutions(command)]
     for text in texts:
         toks = _tokens(_prescan(_strip_heredocs(text))[0])
@@ -1880,6 +1915,10 @@ def _lane_redirect_problem(command: str, where: Path) -> str | None:
             parts = rel.relative_to(root.resolve()).parts if root else ()
             if parts and parts[0] in (".git", ".claude"):
                 return f"a lane never redirects into {parts[0]}/ ({target!r}): that is the repo's own machinery"
+            if ">" in op and parts:   # a write: the role's `writes`, as for Edit and Write
+                why = _lane_owned_write_problem(root, "/".join(parts), sid)
+                if why:
+                    return why
     return None
 
 
@@ -1969,7 +2008,7 @@ def hook_pre_bash(_: list[str]) -> int:
         if LANE_ENV_RE.search(command):
             return _decision("deny", f"coordinator lane {lane}: a lane doesn't set or unset the session "
                                      f"variables (CLAUDE_*, COORDINATOR_*)")
-        problem = lane_shell_problem(command, cwd) or _lane_machinery_problem(cwd)
+        problem = lane_shell_problem(command, cwd, data.get("session_id", "")) or _lane_machinery_problem(cwd)
         if problem:
             return _decision("deny", f"coordinator lane {lane}: {problem}")
         for g in found:

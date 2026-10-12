@@ -178,6 +178,8 @@ LANE_ALLOW = [
     "Bash(git worktree prune:*)",
     "Bash(gh pr create:*)", "Bash(gh pr view:*)", "Bash(gh pr list:*)", "Bash(gh pr diff:*)",
     "Bash(gh pr checks:*)", "Bash(gh pr comment:*)", "Bash(gh api:*)",
+    "Bash(gh run list:*)", "Bash(gh run view:*)",   # CI evidence (the hook: read-only, this repo, by number)
+    "Bash(echo:*)",
     "Bash(grep:*)", "Bash(head:*)", "Bash(tail:*)", "Bash(wc:*)", "Bash(ls:*)", "Bash(diff:*)",   # files: the hook
 ]
 WATCH_ALLOW = [   # added for a role that works an issue queue (product): plain issues, never stories
@@ -698,7 +700,11 @@ def prompt_for(lane: dict, run_id: str, ctx: Ctx, sid: str = "", scratch: Path |
             f"questions. If something needs a decision, record it on the story with "
             f"`.claude/bin/story comment <ID> --to <role>` (or in the PR for repo-wide choices) and stop. "
             f"Never merge, close, or approve a PR. Work from origin/main in this worktree. "
-            f"If a tool call is denied by the permission mode, don't look for another way to do the "
+            f"One command per Bash call: no `;`, `&&`, `||`, loops, or `$?` checks. Your allow-list judges "
+            f"every part of a chain, so one part outside it denies the whole call; piping into grep, head, "
+            f"tail or wc is fine. Run the repo's check (`make check`) as it is, piped to `tail` if it's long, "
+            f"never redirected to a file. A denied chain may be run once more as its separate commands. "
+            f"If a single command is denied by the permission mode, don't look for another way to do the "
             f"same thing: commit what you have, and end with `LANE RESULT: blocked: <what was denied>`.")
     if sid:   # a skill read from its file isn't expanded, and the shell may not expand it in a lane
         head += f" Your session id is {sid}: where a skill says `${{CLAUDE_SESSION_ID}}`, write {sid}."
