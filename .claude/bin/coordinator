@@ -14,14 +14,19 @@ launches one `claude -p` session per lane, and reports from live state. The same
 command works from a terminal, cron, or a systemd timer. `run` without --apply
 prints the plan and stops.
 
-Lanes (only roles with a charter in .claude/roles/ run; Brian runs the rest,
-architecture above all, in his own sessions):
+Lanes (only roles with a charter in .claude/roles/ run; Brian runs the rest in his own
+sessions):
 
   implementation   one lane per story: sprint stories at `ready` (or `in-progress`
                    with no live lane or open PR), blockers at `review` or later,
                    Rank order. No two lanes share a Component.
   sre              one lane running /sre-start-sprint when the sprint has drafts to
                    review, stories at review to verify, or SRE stories to build.
+  architecture     one lane running /arch-start-sprint when the sprint has drafts to
+                   contract-review, stories at review for §8, its own stories to build,
+                   or questions addressed to it, once SRE's lane has had its turn (it acts
+                   on SRE's reviews). It readies and closes stories itself;
+                   its ADR and spec changes come to Brian as PRs.
   pm               one lane running /pm-start-sprint when `sprint-state` says
                    first, closed, or planned. A finished sprint is reported, never
                    closed, unless --pm-close.
@@ -108,8 +113,9 @@ RUN_DEFAULTS = {
     "implementation": {"sprint_run": "story", "start_skill": "impl-start-sprint"},
     "sre": {"sprint_run": "session", "start_skill": "sre-start-sprint"},
     "pm": {"sprint_run": "session", "start_skill": "pm-start-sprint"},
+    "architecture": {"sprint_run": "session", "start_skill": "arch-start-sprint"},
 }
-ROLE_ORDER = ["implementation", "visual-designer", "product", "sre", "pm"]   # the order lanes are planned in
+ROLE_ORDER = ["implementation", "visual-designer", "architecture", "product", "sre", "pm"]   # the order lanes are planned in
 DEFAULT_ROLES = ["implementation", "sre", "pm"]
 
 
@@ -131,7 +137,7 @@ def role_settings(meta: dict, name: str) -> dict:
     return cfg
 
 
-SESSION_TRIGGERS = ("sre", "pm")   # session roles the coordinator knows when to start
+SESSION_TRIGGERS = ("sre", "pm", "architecture")   # session roles the coordinator knows when to start
 PICKABLE_BLOCKER = {"review", "done"}
 KILL_GRACE = 5  # seconds between SIGTERM and SIGKILL for a lane past its deadline
 HANDOFF_RETRY_DELAY = 3  # seconds between re-checks of a handoff: GitHub's search index lags a create
@@ -291,6 +297,11 @@ def questions_for(role_name: str, stories: list[Story]) -> list[str]:
     return out
 
 
+def own_comments(s: Story, role_name: str) -> int:
+    """How many of a story's comments carry this role's author stamp."""
+    return sum(1 for c in s.comments if (_FROM.search(c) or [None, None])[1] == role_name)
+
+
 def inbox_digests(role_name: str, stories: list[Story], ids: list[str] | None = None) -> dict[str, str]:
     """For each open question to a role, a digest of what the asker and anyone but the role has put on
     the story. The role's own comments (its answer, its punt to Brian) don't count, so a lane that
@@ -412,6 +423,28 @@ def select(stories: list[Story], state: dict, roles: list[str], running: set[str
                             "on": "this run"})
         else:
             lanes.append({"role": "sre", "story": None, "resume": False, "component": None})
+
+    if "architecture" in roles and kinds.get("architecture") == "session" and active \
+            and "architecture" not in running:
+        # contract reviews (drafts), §8 reviews (review), its own stories, and questions to it
+        work = [s for s in sprint if s.status in ("draft", "review")
+                or (s.lane == "architecture" and (s.status == "ready"
+                                                  or (s.status == "in-progress" and s.id not in open_pr)))]
+        sre_turn = "sre" in running or any(l["role"] == "sre" for l in lanes)
+        if not work and not questions_for("architecture", sprint):
+            pass
+        elif sre_turn:   # it readies or closes only what SRE has reviewed: never alongside SRE, or it could
+            #              finish after SRE's comment and save a board it never acted on
+            waiting.append({"story": "-", "status": "-", "lane": "architecture", "on": "sre",
+                            "why": "SRE's lane goes first: architecture acts on its reviews"})
+        elif "architecture" in unchanged:
+            waiting.append({"story": "-", "status": "-", "lane": "architecture", "on": "a board change",
+                            "why": "nothing changed since architecture's last lane"})
+        elif len(lanes) + len(running) >= max_lanes:
+            waiting.append({"story": "-", "status": "-", "lane": "architecture", "why": "no lane free",
+                            "on": "this run"})
+        else:
+            lanes.append({"role": "architecture", "story": None, "resume": False, "component": None})
 
     if "pm" in roles and kinds.get("pm") == "session" and "pm" not in running:
         if st in ("first", "closed", "planned"):
@@ -696,7 +729,10 @@ def prompt_for(lane: dict, run_id: str, ctx: Ctx, sid: str = "", scratch: Path |
                      f"leave without a comment or a close counts as not done.")
     tail = (" Your last message is one line: `LANE RESULT: <PR url>` or `LANE RESULT: blocked: <reason>` "
             "or `LANE RESULT: nothing to do`" + (", or `LANE RESULT: triaged <n>` (n items handled, no PR)."
-                                                 if lane.get("watch") else "."))
+                                                 if lane.get("watch") else
+                                                 ", or `LANE RESULT: recorded <n>` (n stories you reviewed, "
+                                                 "moved, or recorded on, with no PR)." if not lane["story"]
+                                                 else "."))
     return head + body + tail
 
 
@@ -755,7 +791,7 @@ def claude_cmd(ctx: Ctx, lane: dict, sid: str, run_id: str, budget: float,
 def lane_name(lane: dict) -> str:
     if lane.get("inbox"):  # one worktree per inbox lane: an earlier one may still hold a doc PR
         return f"{lane['role']}-inbox" + (f"-{lane['stamp']}" if lane.get("stamp") else "")
-    if lane.get("watch") and lane.get("stamp"):   # the last lane's PR may still hold its commits
+    if not lane["story"] and lane.get("stamp"):   # a session lane: the last one's PR may still hold its commits
         return f"{lane['role']}-{lane['stamp']}"
     return f"{lane['role']}-{slug(lane['story'])}" if lane["story"] else lane["role"]
 
@@ -948,6 +984,10 @@ class OsUser(SameUser):
         if self.as_lane(["sudo", "-n", "true"]).returncode == 0:
             return f"{self.user} can use sudo: a lane could become anyone"
         shared = uid_in_use(pw.pw_uid)
+        if shared and re.search(r"\((?:keyboxd|gpg-agent|dirmngr|scdaemon)\)", shared):
+            return (f"{self.user}'s UID {pw.pw_uid} is in use by {shared}, a GnuPG daemon it left (git starts gpg "
+                    f"to check GitHub-signed merge commits): `sudo -u {self.user} gpgconf --kill all`, and stop it "
+                    f"coming back with `no-autostart` (and no `use-keyboxd`) in {self.home}/.gnupg/common.conf")
         if shared:
             return (f"{self.user}'s UID {pw.pw_uid} is already in use by {shared}, so lanes could read those "
                     f"processes' environment and signal them: give {self.user} a UID nothing else runs as "
@@ -1172,6 +1212,20 @@ def inspect(ctx: Ctx, lane: dict, wt: Path, outcome: dict) -> dict:
             res["still_asked"] = [i for i in questions_for(lane["role"], stories) if i in (lane.get("asked") or [])]
         except (CoordError, story.StoryError, OSError):
             res["still_asked"] = None
+    if lane.get("board_before") is not None and re.fullmatch(r"recorded \d+\.?",
+                                                             (res.get("result_line") or "").strip().lower()):
+        try:   # a lane's "recorded" is believed only when a sprint story actually changed
+            ctx.board.refresh()
+            state = ctx.sprint_state()
+            after = ctx.stories(sprint_number(state.get("current")) if state["state"] == "active" else None)
+            now = {x.id: [x.status, x.notes] for x in after}
+            mine = {x.id: own_comments(x, lane["role"]) for x in after}
+            res["board_changed"] = (sum(1 for i, v in lane["board_before"].items() if now.get(i) != v)
+                                    + sum(1 for i, n in (lane.get("own_before") or {}).items()
+                                          if mine.get(i, 0) > n))
+        except (CoordError, story.StoryError, OSError):
+            res["board_changed"] = None
+    res["role"] = lane["role"]
     res["verdict"], res["ok"] = verdict(lane, res)
     approval = ctx.settings(lane["role"])["approval"]
     if res["ok"] and res["pr"] and approval:
@@ -1222,6 +1276,14 @@ def verdict(lane: dict, res: dict) -> tuple[str, bool]:
             return (line.strip().rstrip("."), True) if clean else (
                 "said answered, but left commits, uncommitted files, or an unreadable PR lookup", False)
         return line or "no result line", False
+    if line and re.fullmatch(r"recorded [1-9]\d*\.?", line.strip().lower()):   # board work, no PR
+        if not clean:
+            return "said recorded, but left commits, uncommitted files, or an unreadable PR lookup", False
+        if res.get("board_changed") is None:
+            return "said recorded, but the board couldn't be re-read to see it", False
+        if not res["board_changed"]:
+            return f"said {line.strip().rstrip('.')}, but no sprint story changed on the board", False
+        return line.strip().rstrip("."), True
     if line and line.strip().rstrip(".").lower() == "nothing to do":
         if res.get("pr_unknown"):
             return "nothing to do, but the PR lookup failed", False
@@ -1615,7 +1677,7 @@ def gather(ctx: Ctx, a, prune: bool = False) -> tuple[dict, list[Story], list[di
         queue[r] = [i for i in open_items[r] if seen.get(i["ref"]) != i["updated"]]
     unchanged = {r for r in roles if kinds[r] == "session" and r not in open_items and r not in unreadable
                  and last_signature(ctx, r) == sig
-                 and not pr_closed_unmerged(ctx, last_pr(ctx, r))}
+                 and not pr_settled(ctx, last_pr(ctx, r))}
     lanes, waiting = select(stories, state, roles, running, a.max_lanes, open_pr,
                             getattr(a, "pm_close", False), unchanged, kinds, inbox, tried,
                             {r: [i["ref"] for i in v] for r, v in queue.items()})
@@ -1624,6 +1686,12 @@ def gather(ctx: Ctx, a, prune: bool = False) -> tuple[dict, list[Story], list[di
             lane["asked_digests"] = inbox_digests(lane["role"], stories, lane["asked"])
         if lane.get("watch"):   # remember what each queued item looked like, to see it was touched
             lane["watch_updated"] = {i["ref"]: i["updated"] for i in queue[lane["role"]]}
+        if not lane["story"] and not lane.get("watch") and not lane.get("inbox"):
+            # the sprint as this lane is given it, to see it changed something. Story lanes' own
+            # stories move with their lanes, so on those only this role's own comments count
+            others = {l["story"] for l in lanes if l["story"]} | set(running)
+            lane["board_before"] = {x.id: [x.status, x.notes] for x in stories if x.id not in others}
+            lane["own_before"] = {x.id: own_comments(x, lane["role"]) for x in stories if x.id in others}
     for r, why in {**problems, **unreadable}.items():
         waiting.append({"story": "-", "status": "-", "lane": r, "why": why, "on": "Brian"})
     for r, items in open_items.items():   # what a lane left alone, or left open for a decision
@@ -1721,14 +1789,15 @@ def board_now(ctx: Ctx) -> str:
     return board_signature(ctx.stories(cur), state)
 
 
-def pr_closed_unmerged(ctx: Ctx, number: int | None) -> bool:
-    """The lane that set this role's signature opened a PR. If Brian closed it unmerged, the
-    board is unchanged but the work isn't there, so the role runs again."""
+def pr_settled(ctx: Ctx, number: int | None) -> bool:
+    """The lane that set this role's signature opened a PR. Once Brian merges or closes it, the
+    board may be unchanged, but what the lane left waiting on it (a draft held for an ADR's
+    ruling, say) is now decided, or the work isn't there: the role runs again."""
     if number is None:
         return False
     r = ctx.sh.run(["gh", "pr", "view", str(number), "--json", "state"], cwd=ctx.root)
     try:
-        return r.returncode == 0 and json.loads(r.stdout).get("state") == "CLOSED"
+        return r.returncode == 0 and json.loads(r.stdout).get("state") in ("CLOSED", "MERGED")
     except ValueError:
         return False
 
@@ -1766,7 +1835,9 @@ def cmd_plan(ctx: Ctx, a) -> int:
     return 0
 
 
-def render_report(run_id, results, waiting, state, ran=None) -> str:
+def render_report(run_id, results, waiting, state, ran=None, now_status: dict | None = None) -> str:
+    """`now_status` is each sprint story's status after the run (None: not re-read). A story that
+    waited on architecture is still listed unless its status moved after an architecture lane."""
     ran = DEFAULT_ROLES if ran is None else ran
     rows = ["| Lane | Story now | Result | PR | Codex | Cost |", "|---|---|---|---|---|---|"]
     for r in results:
@@ -1782,8 +1853,13 @@ def render_report(run_id, results, waiting, state, ran=None) -> str:
     needs += [f"- {r['lane']}: {r['codex']['handled']} Codex threads answered by the lane (a reply is not a "
               f"fix; read them on {r['pr']['url'] if r.get('pr') else 'the PR'})"
               for r in results if (r.get("codex") or {}).get("handled")]
+    arch_done = any(r.get("role") == "architecture" and r.get("ok") for r in results)   # requested isn't done
+
+    def still_on_architecture(w):   # its lane can leave a story where it was (a ruling for Brian)
+        return not arch_done or now_status is None or now_status.get(w["story"]) == w["status"]
     needs += [f"- {w['story']}: {w['why']} — waiting on {w['on']}" for w in waiting
-              if w["on"] in ("architecture", "Brian", "pm", "§8 review / merge") or w["lane"] not in ran]
+              if w["on"] in ("Brian", "pm", "§8 review / merge") or w["lane"] not in ran
+              or (w["on"] == "architecture" and still_on_architecture(w))]
     if needs:
         out += ["", "## Needs attention", ""] + needs
     return "\n".join(out)
@@ -2085,16 +2161,17 @@ def cmd_run(ctx: Ctx, a) -> int:
                         state_put(ctx, f"{wr}:stuck", {**old_stuck, **r["watch_stuck"]})
                         state_put(ctx, f"{wr}:open", {**(state_get(ctx, f"{wr}:open", {}) or {}),
                                                       **r["watch_open"]})
-                    if (h["lane"].get("watch") or h["lane"].get("inbox")) and r.get("tree_clean") \
-                            and not r.get("error"):   # one worktree per such lane: nothing here to keep
-                        if ctx.host.git(ctx.host.root, "worktree", "remove", str(h["wt"])).returncode == 0:
-                            ctx.host.rmtree(scratch_dir(ctx.host, h["wt"]))
-                    elif kinds_of(h["lane"]) == "session" and r.get("ok"):
+                    if kinds_of(h["lane"]) == "session" and r.get("ok") \
+                            and not (h["lane"].get("watch") or h["lane"].get("inbox")):
                         try:
                             after = board_now(ctx)
                         except (CoordError, story.StoryError, OSError):
                             after = sig  # can't re-read: the older signature only errs toward a rerun
                         save_signature(ctx, h["lane"]["role"], after, (r.get("pr") or {}).get("number"))
+                    if not h["lane"]["story"] and r.get("tree_clean") and not r.get("error"):
+                        # one worktree per session lane: nothing here to keep (a PR's commits stay put)
+                        if ctx.host.git(ctx.host.root, "worktree", "remove", str(h["wt"])).returncode == 0:
+                            ctx.host.rmtree(scratch_dir(ctx.host, h["wt"]))
                 if pending:
                     time.sleep(a.poll)
         except BaseException:
@@ -2124,7 +2201,14 @@ def cmd_run(ctx: Ctx, a) -> int:
             state, _, _, waiting, _, _ = gather(ctx, a)
         except (CoordError, story.StoryError, OSError):
             pass
-        report = render_report(run_id, results, waiting, state, getattr(a, "ran_roles", None))
+        now_status = None
+        if any(r.get("role") == "architecture" and r.get("ok") for r in results):
+            try:   # which drafts architecture actually moved: the plan's waits are from before it ran
+                ctx.board.refresh()
+                now_status = {x.id: x.status for x in ctx.stories(sprint_number(state.get("current")))}
+            except (CoordError, story.StoryError, OSError):
+                now_status = None
+        report = render_report(run_id, results, waiting, state, getattr(a, "ran_roles", None), now_status)
         write_report(run_dir, report, results)
         print("\n" + report)
         return 0 if all(r.get("ok") for r in results) else 1

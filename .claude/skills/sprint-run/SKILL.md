@@ -1,6 +1,6 @@
 ---
 name: sprint-run
-description: Plan the active sprint's role lanes and, once Brian confirms, start them in parallel. Reads the board, shows which stories and queues each role the repo runs as a lane (implementation, SRE, PM, and where the charters say so visual-designer and product) can pick up now and what everything else is waiting on, then runs one isolated `claude -p` session per lane (own worktree, role set, hooks on) via `.claude/bin/coordinator`, and reports from live state. Trigger on "run the sprint", "/sprint-run", "start the lanes", "what can the agents pick up", "kick off implementation and SRE". Not for working one story yourself (impl-start-sprint), architecture's contract review or §8 reviews (Brian's own session), activating or closing a sprint (pm-start-sprint, pm-close-sprint), or merging.
+description: Plan the active sprint's role lanes and, once Brian confirms, start them in parallel. Reads the board, shows which stories and queues each role the repo runs as a lane (implementation, architecture, SRE, PM, and where the charters say so visual-designer and product) can pick up now and what everything else is waiting on, then runs one isolated `claude -p` session per lane (own worktree, role set, hooks on) via `.claude/bin/coordinator`, and reports from live state. Trigger on "run the sprint", "/sprint-run", "start the lanes", "what can the agents pick up", "kick off implementation and SRE". Not for working one story yourself (impl-start-sprint), activating or closing a sprint (pm-start-sprint, pm-close-sprint), or merging.
 argument-hint: "[--roles implementation,visual-designer,product,sre,pm] [--max-lanes 3] [--yes]"
 disable-model-invocation: true
 allowed-tools: Bash(.claude/bin/coordinator:*) Bash(.claude/bin/sprint-state:*) Bash(.claude/bin/story list:*) Bash(.claude/bin/story show:*) Bash(gh pr view:*) Bash(git fetch:*)
@@ -45,8 +45,9 @@ output as it is, then point out:
 
 - **Lanes to start**, and the cap (3 at once by default, never two stories in one
   Component).
-- **Waiting on architecture or on Brian:** contract reviews, §8 reviews, a finished
-  sprint to close. These are his to do; list the story IDs.
+- **Waiting on architecture or on Brian:** contract reviews and §8 reviews when no
+  architecture lane can run (no charter, `--roles` left it out, or no lane free), a
+  finished sprint to close. List the story IDs.
 - **Not run by the coordinator:** stories of a role that has no charter here or
   no `sprint_run:` setting, or that `--roles` leaves out. In solo7.media the
   `visual-designer` runs, with an inbox lane for brand questions that block
@@ -82,8 +83,8 @@ you call a PR open, check it: `gh pr view <N> --json state,mergedAt,headRefOid`.
 
 Give Brian a table (lane, story now, PR, Codex), then **Needs you**: every lane
 that isn't `PR open, Codex clean` with its log path, every PR that awaits
-Brian's approval (the report says what), every story waiting on
-architecture, and a finished sprint. A lane that ended without a PR names its
+Brian's approval (the report says what), every story still waiting on
+architecture after the run, and a finished sprint. A lane that ended without a PR names its
 blocker; the story comment it posted is the handoff.
 
 End with one next action, e.g. "Review PR #212 and #213; architecture's contract
