@@ -53,6 +53,49 @@ func TestLoop_NoSnapshotWhenTheBoundaryWasNotPublished(t *testing.T) {
 	}
 }
 
+// AW-SRV-054: pre-stop's round checkpoints its own tick. With
+// sim.checkpoint_every_ticks far past the run, the only commit the loop makes
+// while it ticks is the forced round's, on the boundary after it.
+func TestLoop_ForcedRoundCommitsItsOwnTick(t *testing.T) {
+	snap, err := NewSnapshotter(SnapshotOptions{
+		Store:         store.NewFS(t.TempDir()),
+		Interval:      time.Hour, // no periodic round inside the run
+		MaxStall:      5 * time.Millisecond,
+		UploadTimeout: 30 * time.Second,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	var committed []sim.Tick
+	var h *harness
+	h = newHarness(t, func(o *Options) {
+		o.Snapshotter = snap
+		o.CheckpointEvery = 1000
+		o.OnTick = func(sim.StepResult, time.Duration) { committed = append(committed, h.loop.CommittedThrough()) }
+	})
+	ch := snap.Force()
+	if err := h.runFor(time.Second); err != nil {
+		t.Fatalf("run: %v", err)
+	}
+	snap.Wait()
+	var r ForcedRound
+	select {
+	case r = <-ch:
+	default:
+		t.Fatal("no forced round was taken")
+	}
+	if r.Err != nil || r.Tick == 0 {
+		t.Fatalf("forced round tick %d err %v", r.Tick, r.Err)
+	}
+	var seen sim.Tick
+	for _, c := range committed {
+		seen = max(seen, c)
+	}
+	if seen != r.Tick {
+		t.Fatalf("committed through %d while ticking (%v), want the forced round's tick %d", seen, committed, r.Tick)
+	}
+}
+
 // The gate is per tick, not a latch: once boundaries are published again, so
 // are snapshots.
 func TestLoop_SnapshotsResumeWhenTheBoundaryReturns(t *testing.T) {

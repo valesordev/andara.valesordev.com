@@ -48,8 +48,10 @@ func TestTagRoundWritesATagEveryListingSkips(t *testing.T) {
 	}
 }
 
-// A tag on only some of a round's objects still names the round.
-func TestRoundTagsReportsATagOnAnyObject(t *testing.T) {
+// A tag on only some of a round's objects, a tagging cut short, does not name
+// the round: a name counts when every object carries it (lifecycle.md, Round
+// tags, ListSnapshotRounds' rule).
+func TestRoundTagsReportsOnlyATagOnEveryObject(t *testing.T) {
 	t.Parallel()
 	ctx := context.Background()
 	fs := store.NewFS(t.TempDir())
@@ -57,11 +59,14 @@ func TestRoundTagsReportsATagOnAnyObject(t *testing.T) {
 	if err := store.TagRound(ctx, fs, keys[1:], "rollback:42"); err != nil {
 		t.Fatal(err)
 	}
-	if tags, err := store.RoundTags(ctx, fs, keys); err != nil || !reflect.DeepEqual(tags, []string{"rollback:42"}) {
-		t.Fatalf("RoundTags = %v, %v", tags, err)
+	if err := store.TagRound(ctx, fs, keys, "deploy:v1"); err != nil {
+		t.Fatal(err)
 	}
-	if tags, err := store.RoundTags(ctx, fs, keys[:1]); err != nil || len(tags) != 0 {
-		t.Fatalf("RoundTags of an untagged object = %v, %v", tags, err)
+	if tags, err := store.RoundTags(ctx, fs, keys); err != nil || !reflect.DeepEqual(tags, []string{"deploy:v1"}) {
+		t.Fatalf("RoundTags = %v, %v; want only the tag on every object", tags, err)
+	}
+	if tags, err := store.RoundTags(ctx, fs, keys[1:]); err != nil || !reflect.DeepEqual(tags, []string{"deploy:v1", "rollback:42"}) {
+		t.Fatalf("RoundTags of the tagged object = %v, %v", tags, err)
 	}
 }
 

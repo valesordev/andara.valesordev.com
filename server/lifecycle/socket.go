@@ -11,6 +11,7 @@ import (
 	"net/http"
 	"os"
 	"path/filepath"
+	"syscall"
 	"time"
 
 	"connectrpc.com/connect"
@@ -96,9 +97,9 @@ func Call(ctx context.Context, path string) (*adminv1.PrepareStopResponse, error
 	lc := adminv1connect.NewLifecycleClient(client, "http://lifecycle")
 	resp, err := lc.PrepareStop(ctx, connect.NewRequest(&adminv1.PrepareStopRequest{}))
 	if err != nil {
-		// A dial that ran out of time is a timeout, not a missing socket.
-		var oe *net.OpError
-		if ctx.Err() == nil && errors.As(err, &oe) && oe.Op == "dial" {
+		// Only a socket nothing listens on, or one removed since the Stat, is
+		// a missing socket; a call that ran out of time is a timeout.
+		if errors.Is(err, syscall.ECONNREFUSED) || errors.Is(err, syscall.ENOENT) {
 			return nil, fmt.Errorf("%w: %s: %w", ErrNoSocket, path, err)
 		}
 		return nil, err
