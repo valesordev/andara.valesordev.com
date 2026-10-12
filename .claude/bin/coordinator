@@ -178,6 +178,8 @@ LANE_ALLOW = [
     "Bash(git worktree prune:*)",
     "Bash(gh pr create:*)", "Bash(gh pr view:*)", "Bash(gh pr list:*)", "Bash(gh pr diff:*)",
     "Bash(gh pr checks:*)", "Bash(gh pr comment:*)", "Bash(gh api:*)",
+    "Bash(gh run list:*)", "Bash(gh run view:*)",   # CI evidence (the hook: read-only, this repo, by number)
+    "Bash(echo:*)",
     "Bash(grep:*)", "Bash(head:*)", "Bash(tail:*)", "Bash(wc:*)", "Bash(ls:*)", "Bash(diff:*)",   # files: the hook
 ]
 WATCH_ALLOW = [   # added for a role that works an issue queue (product): plain issues, never stories
@@ -267,6 +269,7 @@ class Story:
         self.notes = ""           # digest of the issue body and comments: handoffs and contract edits
         self.comments: list[str] = []
         self.body = ""
+        self.labels: list[str] = []   # the issue's labels: `person-only` keeps it from every lane
 
     def unmet(self) -> list[tuple[str, str]]:
         return [(i, s) for i, s in self.blockers if s not in PICKABLE_BLOCKER]
@@ -329,6 +332,15 @@ def sprint_number(v) -> int | None:
     return int(m.group(1)) if m else None
 
 
+# A story that needs what a lane may never have (docker, a cluster, the network, credentials) carries
+# this label: Brian runs it in his own session, and no lane starts, moves, or branches it.
+PERSON_ONLY = "person-only"
+
+
+def person_only(s: Story) -> bool:
+    return PERSON_ONLY in s.labels
+
+
 def select(stories: list[Story], state: dict, roles: list[str], running: set[str],
            max_lanes: int, open_pr: set[str] = frozenset(), pm_close: bool = False,
            unchanged: set[str] = frozenset(), kinds: dict | None = None,
@@ -388,6 +400,8 @@ def select(stories: list[Story], state: dict, roles: list[str], running: set[str
                 continue
             if s.status == "review":
                 wait(s, "in review", "§8 review / merge")
+            elif person_only(s):
+                wait(s, "person-only: run it in your own session", "Brian")
             elif s.id in running:
                 wait(s, "lane running", r)
             elif s.id in held:
@@ -417,9 +431,14 @@ def select(stories: list[Story], state: dict, roles: list[str], running: set[str
         if (s.lane not in roles or s.lane == "pm") and s.status not in ("done",):
             wait(s, f"lane {s.lane}", s.lane if s.status != "review" else "§8 review / merge")
 
+    for s in sprint:   # a session role's own person-only story: its lane leaves it alone, Brian sees it
+        if s.lane in roles and kinds.get(s.lane) == "session" and person_only(s) \
+                and s.status in ("ready", "in-progress"):
+            wait(s, "person-only: run it in your own session", "Brian")
+
     if "sre" in roles and kinds.get("sre") == "session" and active and "sre" not in running:
         work = [s for s in sprint if s.status == "draft" or s.status == "review"
-                or (s.lane == "sre" and s.status in ("ready", "in-progress"))]
+                or (s.lane == "sre" and s.status in ("ready", "in-progress") and not person_only(s))]
         if not work:
             pass
         elif "sre" in unchanged:
@@ -435,8 +454,8 @@ def select(stories: list[Story], state: dict, roles: list[str], running: set[str
             and "architecture" not in running:
         # contract reviews (drafts), §8 reviews (review), its own stories, and questions to it
         work = [s for s in sprint if s.status in ("draft", "review")
-                or (s.lane == "architecture" and (s.status == "ready"
-                                                  or (s.status == "in-progress" and s.id not in open_pr)))]
+                or (s.lane == "architecture" and not person_only(s)
+                    and (s.status == "ready" or (s.status == "in-progress" and s.id not in open_pr)))]
         sre_turn = "sre" in running or any(l["role"] == "sre" for l in lanes)
         if not work and not questions_for("architecture", sprint):
             pass
@@ -591,6 +610,7 @@ class Ctx:
             comments = b.gh.api("GET", f"/repos/{it['repo']}/issues/{it['number']}/comments",
                                 paginate=True) or []
             st_.comments = [c.get("body") or "" for c in comments]
+            st_.labels = [l.get("name") or "" for l in issue.get("labels") or []]
             st_.body = issue.get("body") or ""
             st_.notes = hashlib.sha256(json.dumps([issue.get("body"), [c.get("body") for c in comments]])
                                        .encode()).hexdigest()[:12]
@@ -698,10 +718,17 @@ def prompt_for(lane: dict, run_id: str, ctx: Ctx, sid: str = "", scratch: Path |
             f"questions. If something needs a decision, record it on the story with "
             f"`.claude/bin/story comment <ID> --to <role>` (or in the PR for repo-wide choices) and stop. "
             f"Never merge, close, or approve a PR. Work from origin/main in this worktree. "
-            f"If a tool call is denied by the permission mode, don't look for another way to do the "
+            f"One command per Bash call: no `;`, `&&`, `||`, loops, or `$?` checks. Your allow-list judges "
+            f"every part of a chain, so one part outside it denies the whole call; piping into grep, head, "
+            f"tail or wc is fine. Run the repo's check (`make check`) as it is, piped to `tail` if it's long, "
+            f"never redirected to a file. A denied chain may be run once more as its separate commands. "
+            f"If a single command is denied by the permission mode, don't look for another way to do the "
             f"same thing: commit what you have, and end with `LANE RESULT: blocked: <what was denied>`.")
     if sid:   # a skill read from its file isn't expanded, and the shell may not expand it in a lane
         head += f" Your session id is {sid}: where a skill says `${{CLAUDE_SESSION_ID}}`, write {sid}."
+    head += (f" A story labelled `{PERSON_ONLY}` is Brian's: never start, move, branch, or build one. If "
+             f"your work needs docker, a cluster, the network, or credentials, comment on the story "
+             f"`--to brian` that it should be `{PERSON_ONLY}`, and leave it.")
     head += (" A lane can't push a change under .github/workflows or .github/actions: commit it on your branch, "
              "don't try to push it, say on the story that Brian pushes it, and end with "
              "`LANE RESULT: blocked: workflow change on <branch>`; the coordinator hands the branch to him.")
@@ -1350,6 +1377,9 @@ def verdict(lane: dict, res: dict) -> tuple[str, bool]:
             return "PR open, but the worktree has uncommitted or untracked files (or couldn't be read)", False
         if cx.get("state") == "completed" and cx.get("findings") == 0:
             return "PR open, Codex clean", True
+        if cx.get("state") == "limited":
+            return ("PR open, Codex is out of review quota: the next run asks again, or comment "
+                    "`@codex review` once it resets"), False
         return f"PR open, Codex {cx.get('state', 'unknown')}" + (
             f" ({cx['findings']} unhandled)" if cx.get("findings") else ""), False
     if pr and pr["state"] == "MERGED":
@@ -1624,7 +1654,7 @@ def tend_lane_pr(ctx: Ctx, h: dict, token: LaneToken) -> None:
     except (ValueError, KeyError, TypeError):
         return      # unreadable: try again next time round
     asked.add(sha)
-    if state == "none":
+    if state in ("none", "limited"):   # a limit may have reset since: ask once more per run
         ctx.sh.run(["gh", "pr", "comment", str(n), "--body", "@codex review"], cwd=ctx.root)
 
 
@@ -2357,7 +2387,8 @@ def lane_worktrees(host: SameUser) -> list[Path]:
         return []
     paths = [Path(l[len("worktree "):]) for l in r.stdout.splitlines() if l.startswith("worktree ")]
     base = os.path.realpath(host.wt_dir)
-    return sorted(p for p in paths if os.path.realpath(p.parent) == base)
+    return sorted(p for p in paths if os.path.realpath(p.parent) == base   # a /role session's isn't a lane's
+                  and not p.name.startswith(role.ROLE_WORKTREE_PREFIX))
 
 
 def _clean(ctx: Ctx, a) -> int:

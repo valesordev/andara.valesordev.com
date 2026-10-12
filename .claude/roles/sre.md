@@ -8,6 +8,7 @@ skills: [sre-start-sprint]
 transitions: [ready>in-progress@lane]
 story_edits: [body]
 on_merge: [in-progress>review@lane]
+lane_allow: [Bash(terraform version:*), Bash(terraform fmt:*), Bash(make tf-validate:*)]
 ---
 # Role: SITE RELIABILITY ENGINEERING
 
@@ -61,6 +62,13 @@ and simulation lag are first-class from the first server story onward.
 2. **Instrumentation verification** of every story at `review`, recorded with
    `--record "§8 instrumentation"`. Architecture moves stories to `done`.
 3. **Your own backlog**, in the order the sprint lists it.
+
+### Terraform in a lane
+A lane runs `terraform version` and `terraform fmt` itself, and `init` and
+`validate` through `make tf-validate`, a §9 target you own: `terraform
+-chdir=<dir> init -backend=false -input=false`, then `validate`. Never a
+backend, `plan`, `apply`, or state. Stories that need docker, kind, a cluster,
+upstream downloads, or credentials are `person-only`: Brian runs them.
 
 ### You own
 - `deploy/` (Helm, manifests, dashboards, alert rules), `.github/` (CI, the

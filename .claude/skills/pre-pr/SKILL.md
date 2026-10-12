@@ -99,6 +99,7 @@ a PR for yet) and when `$ARGUMENTS` contains `--no-codex`.
    | `completed`, no `findings` | Clean. Go to the report. |
    | `completed`, `findings` (threads whose last comment isn't a `**pr-comments:**` reply) | Run `/pr-comments <PR> --auto`. It fixes, runs `/pre-pr` on the fixes (sections 1–5, then it returns here), pushes, and replies. Then repeat step 1 on the new HEAD. |
    | `failed` or `timeout` | Say so. Never report a PR as Codex-clean without a `completed` row for HEAD. Leave `@codex review` as the next action. |
+   | `limited` | Codex answered with its usage limit: say so, and don't wait or ask again. The PR isn't Codex-clean; the next action is `@codex review` once the limit resets. |
 
 3. At most 3 rounds of step 2. If findings remain after round 3, stop and
    list them for Brian.
