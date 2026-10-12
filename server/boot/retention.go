@@ -27,7 +27,7 @@ type RetentionMetrics struct {
 }
 
 // NewRetentionMetrics builds the sweep's instruments with both kinds
-// initialised, and registers them on reg when it isn't nil.
+// initialized, and registers them on reg when it isn't nil.
 func NewRetentionMetrics(reg prometheus.Registerer) *RetentionMetrics {
 	m := &RetentionMetrics{
 		Retained: prometheus.NewGaugeVec(prometheus.GaugeOpts{
