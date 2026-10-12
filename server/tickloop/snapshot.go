@@ -232,20 +232,21 @@ func (s *Snapshotter) CancelForce(ch <-chan ForcedRound) {
 	}
 }
 
-// takeForced returns the waiting Force request, clearing it, or nil.
-func (s *Snapshotter) takeForced() chan ForcedRound {
+// claimForced takes the waiting Force request and the in-flight slot together,
+// under the lock CancelForce takes, so a withdrawn request is never started.
+// pending reports a request that is waiting; ch is nil when it must wait for
+// the round in flight, and the request stays for a later boundary.
+func (s *Snapshotter) claimForced() (ch chan ForcedRound, pending bool) {
 	s.forceMu.Lock()
 	defer s.forceMu.Unlock()
-	ch := s.forced
-	s.forced = nil
-	return ch
-}
-
-// forcePending reports whether a Force request is waiting.
-func (s *Snapshotter) forcePending() bool {
-	s.forceMu.Lock()
-	defer s.forceMu.Unlock()
-	return s.forced != nil
+	if s.forced == nil {
+		return nil, false
+	}
+	if !s.inFlight.CompareAndSwap(false, true) {
+		return nil, true
+	}
+	ch, s.forced = s.forced, nil
+	return ch, true
 }
 
 var _ sim.BoundaryAcks = (*Snapshotter)(nil)
@@ -408,14 +409,14 @@ func (s *Snapshotter) Maybe(ctx context.Context, e *sim.Engine) (forced bool) {
 	// from the engine means AC-8 holds structurally instead of depending on
 	// every caller passing the right one.
 	tick := e.Tick()
-	if s.forcePending() {
-		if !s.inFlight.CompareAndSwap(false, true) {
+	if ch, pending := s.claimForced(); pending {
+		if ch == nil {
 			return false
 		}
 		s.mu.Lock()
 		s.lastRound = s.now()
 		s.mu.Unlock()
-		s.start(ctx, e, tick, s.takeForced())
+		s.start(ctx, e, tick, ch)
 		return true
 	}
 	now := s.now()
