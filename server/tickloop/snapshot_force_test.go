@@ -6,6 +6,7 @@ package tickloop_test
 import (
 	"context"
 	"errors"
+	"sync"
 	"testing"
 	"time"
 
@@ -117,6 +118,33 @@ func TestCancelForceWithdrawsTheRequest(t *testing.T) {
 	h.s.CancelForce(h.s.Force())
 	if h.s.Maybe(context.Background(), e) {
 		t.Fatal("a withdrawn Force was taken")
+	}
+}
+
+// A withdrawal racing the boundary either wins, and no round is taken, or
+// loses, and the round taken reports to the request it was taken for: a
+// boundary never takes a forced round whose request was withdrawn.
+func TestCancelForceRacingTheBoundary(t *testing.T) {
+	t.Parallel()
+	// No OnRound: the harness's channel would fill long before the loop ends.
+	h := newRoundHarness(t, func(o *tickloop.SnapshotOptions) { o.OnRound = nil })
+	e := snapshotEngine(t)
+	for i := range 300 {
+		ch := h.s.Force()
+		var wg sync.WaitGroup
+		wg.Add(1)
+		go func() { defer wg.Done(); h.s.CancelForce(ch) }()
+		forced := h.s.Maybe(context.Background(), e)
+		wg.Wait()
+		h.s.Wait()
+		if !forced {
+			continue
+		}
+		select {
+		case <-ch:
+		default:
+			t.Fatalf("iteration %d: a forced round was taken with no request to report to", i)
+		}
 	}
 }
 
