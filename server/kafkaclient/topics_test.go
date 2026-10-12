@@ -11,6 +11,7 @@ import (
 	"io/fs"
 	"path/filepath"
 	"regexp"
+	"strconv"
 	"strings"
 	"testing"
 
@@ -96,7 +97,12 @@ var topicLiteral = regexp.MustCompile(`"andara\.[a-z][a-z.]*\.v[0-9]+"`)
 func topicLiterals(fset *token.FileSet, f *ast.File) []token.Position {
 	var out []token.Position
 	ast.Inspect(f, func(n ast.Node) bool {
-		if lit, ok := n.(*ast.BasicLit); ok && lit.Kind == token.STRING && topicLiteral.MatchString(lit.Value) {
+		lit, ok := n.(*ast.BasicLit)
+		if !ok || lit.Kind != token.STRING {
+			return true
+		}
+		// A raw string is held to the same rule: quote it as Go would.
+		if v, err := strconv.Unquote(lit.Value); err == nil && topicLiteral.MatchString(strconv.Quote(v)) {
 			out = append(out, fset.Position(lit.Pos()))
 		}
 		return true
@@ -111,6 +117,7 @@ const b = "andara.admin.v1.Admin"
 const c = "andara.events.v1"
 const d = "Game/Submit"
 // "andara.state.v1" in a comment is not a literal.
+const e = ` + "`andara.audit.v1`" + `
 `
 	fset := token.NewFileSet()
 	f, err := parser.ParseFile(fset, "fixture.go", src, parser.ParseComments)
@@ -121,8 +128,8 @@ const d = "Game/Submit"
 	for _, p := range topicLiterals(fset, f) {
 		lines = append(lines, p.Line)
 	}
-	if fmt.Sprint(lines) != "[2 4]" {
-		t.Errorf("matched lines %v, want [2 4]", lines)
+	if fmt.Sprint(lines) != "[2 4 7]" {
+		t.Errorf("matched lines %v, want [2 4 7]", lines)
 	}
 }
 
