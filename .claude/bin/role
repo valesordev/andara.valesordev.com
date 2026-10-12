@@ -1415,8 +1415,10 @@ def lane_push_problem(g: Gated, sid: str, args: list[str]) -> str | None:
         srcref = cur if src == "HEAD" else src.removeprefix("refs/heads/")
         sha = _commit(root, srcref)
         try:
-            changed = _git(g.where, "diff", "--name-only", "--no-renames",
-                           f"refs/remotes/origin/main...{sha}").splitlines() if sha else None
+            # -z: plain output quotes a name with non-ASCII or special characters ("…), which
+            # would slip past the prefix check below
+            changed = [n for n in _git(g.where, "diff", "-z", "--name-only", "--no-renames",
+                                       f"refs/remotes/origin/main...{sha}").split("\0") if n] if sha else None
         except (subprocess.CalledProcessError, OSError):
             changed = None
         if changed is None:
