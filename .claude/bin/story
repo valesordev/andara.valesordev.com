@@ -296,6 +296,13 @@ def _text(a) -> str:
     raise StoryError("give --body or --body-file")
 
 
+PERSON_ONLY = "person-only"   # needs what a lane never has (docker, a cluster, the network, credentials)
+
+
+def labels_of(iss: dict) -> list[str]:
+    return [l.get("name") or "" for l in iss.get("labels") or []]
+
+
 def cmd_show(b: Board, who: Who, a) -> str:
     it = b.find(a.id)
     iss = b.issue(it["number"], it["repo"])
@@ -313,8 +320,10 @@ def cmd_show(b: Board, who: Who, a) -> str:
                         else f"#{d.get('number')} ({d.get('state')})")
     lines = [f"{it['title']}  (#{it['number']}, {iss.get('state')})  {iss.get('html_url', '')}",
              "  ".join(f"{k}: {_num(f.get(k)) if f.get(k) is not None else '-'}" for k in keys),
-             f"Blocked by: {', '.join(blockers) or '-'}",
-             "", (iss.get("body") or "").rstrip()]
+             f"Blocked by: {', '.join(blockers) or '-'}"]
+    if labels_of(iss):
+        lines.append(f"Labels: {', '.join(labels_of(iss))}")
+    lines += ["", (iss.get("body") or "").rstrip()]
     if a.comments:
         cs = b.comments(it["number"], it["repo"])[-a.comments:]
         lines += ["", f"--- last {len(cs)} comment(s) ---"]
@@ -399,6 +408,8 @@ def _move(b: Board, who: Who, sid: str, to: str, note: str | None, merge: bool =
     frm = it["fields"].get("Status") or "draft"
     if frm == to:
         return f"{sid} is already {to}"
+    if os.environ.get("COORDINATOR_LANE") and not merge and PERSON_ONLY in labels_of(b.issue(it["number"], it["repo"])):
+        raise StoryError(f"{sid} is {PERSON_ONLY}: Brian runs it in his own session, and no lane moves it")
     if not who.can_move(frm, to, it["fields"].get("Lane"), merge):
         raise StoryError(f"role {who.name} can't move {sid} {frm} → {to} "
                          f"(lane {it['fields'].get('Lane') or '-'}); see CLAUDE.md §2")

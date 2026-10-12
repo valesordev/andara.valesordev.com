@@ -18,7 +18,7 @@ account), so the coordinator asks for the review as the person.
 
 SHA defaults to the PR's head. Prints one JSON object:
 
-    state     completed | pending | failed | none | timeout
+    state     completed | pending | failed | limited | none | timeout
     sha       the full commit reviewed
     requested true if `wait` asked for a review
     findings  [{id, path, line, url, body}]  Codex's inline comments on SHA that have
@@ -26,9 +26,11 @@ SHA defaults to the PR's head. Prints one JSON object:
               (fixed, disputed, routed, deferred, answered)
     reviews   [{id, state}]                  Codex reviews of SHA
 
-`none`: no status row for SHA. `timeout`: still pending or none at --timeout.
-REST only (cloud sessions block GraphQL). Exit 0 for completed, 3 for failed or
-timeout, 2 when GitHub can't be read.
+`none`: no status row for SHA. `limited`: no row, and Codex answered the latest
+`@codex review` with its usage limit (ask again once it resets). `timeout`: still
+pending or none at --timeout.
+REST only (cloud sessions block GraphQL). Exit 0 for completed, 3 for failed,
+limited or timeout, 2 when GitHub can't be read.
 """
 from __future__ import annotations
 
@@ -102,6 +104,17 @@ def rows_for(comments: list[dict], sha: str) -> list[str]:
     return out
 
 
+LIMIT = re.compile(r"usage limits? for code reviews|reached your codex usage limit", re.I)
+
+
+def limited(comments: list[dict]) -> bool:
+    """Codex answered the latest `@codex review` with its usage limit (comments are oldest first)."""
+    asked = max((i for i, c in enumerate(comments)
+                 if (c.get("body") or "").strip().lower().startswith("@codex review")), default=-1)
+    return any(c.get("user", {}).get("login") == BOT and LIMIT.search(c.get("body") or "")
+               for c in comments[asked + 1:])
+
+
 def state_of(rows: list[str]) -> str:
     if not rows:
         return "none"
@@ -114,6 +127,8 @@ def state_of(rows: list[str]) -> str:
 def snapshot(pr: int, sha: str) -> dict:
     conv = gh_api(f"repos/{{owner}}/{{repo}}/issues/{pr}/comments")
     state = state_of(rows_for(conv, sha))  # type: ignore[arg-type]
+    if state == "none" and limited(conv):  # type: ignore[arg-type]
+        state = "limited"
     inline = gh_api(f"repos/{{owner}}/{{repo}}/pulls/{pr}/comments")
     reviews = gh_api(f"repos/{{owner}}/{{repo}}/pulls/{pr}/reviews")
     # A thread is handled when its last comment is a tagged reply that isn't Codex's own.
@@ -149,7 +164,7 @@ def wait(pr: int, sha: str, timeout: float, interval: float, grace: float, reque
     while True:
         snap = snapshot(pr, sha)
         elapsed = clock() - start
-        if snap["state"] in ("completed", "failed"):
+        if snap["state"] in ("completed", "failed", "limited"):
             break
         if snap["state"] == "none" and request and not requested and elapsed >= grace:
             gh_post_comment(pr, "@codex review")
@@ -184,7 +199,7 @@ def main(argv: list[str] | None = None) -> int:
         print(f"codex-review: {e}", file=sys.stderr)
         return 2
     print(json.dumps(res, indent=2))
-    return 3 if res["state"] in ("failed", "timeout") else 0
+    return 3 if res["state"] in ("failed", "limited", "timeout") else 0
 
 
 if __name__ == "__main__":
