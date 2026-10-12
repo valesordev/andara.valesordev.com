@@ -58,6 +58,10 @@ type Config struct {
 	// Broker (AW-SRV-008 is the first story to open a client). Comma-separated
 	// in the env var and the flag, a list in the file.
 	KafkaBrokers []string
+	// KafkaTopicPrefix isolates an environment's topics on a shared broker
+	// (AW-SRV-058, ADR-0013 decision 4): empty or [a-z0-9]+, joined to every
+	// topic name with a dot. Empty is the unprefixed names prod keeps.
+	KafkaTopicPrefix string
 
 	// Accounts and authentication (AW-SRV-008). AuthStore is kafka or memory;
 	// memory loses every Account on restart and exists for development.
@@ -453,6 +457,7 @@ func Parse(args []string, env EnvLookup, errOut io.Writer) (Config, error) {
 		c.KafkaBrokers = splitList(v)
 		return nil
 	})
+	fs.StringVar(&c.KafkaTopicPrefix, "kafka-topic-prefix", c.KafkaTopicPrefix, "prefix joined to every topic name with a dot; empty or [a-z0-9]+ (ANDARA_KAFKA_TOPIC_PREFIX)")
 	fs.StringVar(&c.AuthStore, "auth-store", c.AuthStore, "account store: kafka or memory (ANDARA_AUTH_STORE)")
 	fs.DurationVar(&c.AuthSessionTTL, "auth-session-ttl", c.AuthSessionTTL, "session token lifetime; must exceed session.linkdead_max (ANDARA_AUTH_SESSION_TTL)")
 	fs.DurationVar(&c.AuthRefreshTTL, "auth-refresh-ttl", c.AuthRefreshTTL, "refresh token lifetime (ANDARA_AUTH_REFRESH_TTL)")
@@ -558,6 +563,9 @@ func Parse(args []string, env EnvLookup, errOut io.Writer) (Config, error) {
 	}
 	if c.ContentSource != "kafka" && c.ContentSource != "dir" {
 		return Config{}, fmt.Errorf("content.source must be kafka or dir, got %q", c.ContentSource)
+	}
+	if err := ValidateTopicPrefix(c.KafkaTopicPrefix); err != nil {
+		return Config{}, err
 	}
 	if err := c.validateGateway(); err != nil {
 		return Config{}, err
@@ -911,6 +919,17 @@ func splitList(v string) []string {
 	return out
 }
 
+var topicPrefix = regexp.MustCompile(`^[a-z0-9]+$`)
+
+// ValidateTopicPrefix accepts kafka.topic_prefix when it is empty or a bare
+// [a-z0-9]+ token (AW-SRV-058): no dot, which the topic builder adds.
+func ValidateTopicPrefix(p string) error {
+	if p != "" && !topicPrefix.MatchString(p) {
+		return fmt.Errorf("kafka.topic_prefix must be empty or match [a-z0-9]+, got %q (ANDARA_KAFKA_TOPIC_PREFIX)", p)
+	}
+	return nil
+}
+
 // validateGateway rejects a configuration the gateway cannot serve. TLS
 // material is checked here, at parse time, so that a misconfigured process
 // fails before it loads content rather than after (AW-SRV-005: "starting
@@ -991,7 +1010,8 @@ type fileConfig struct {
 		MaxVersion *uint32 `yaml:"max_version"`
 	} `yaml:"protocol"`
 	Kafka *struct {
-		Brokers []string `yaml:"brokers"`
+		Brokers     []string `yaml:"brokers"`
+		TopicPrefix *string  `yaml:"topic_prefix"`
 	} `yaml:"kafka"`
 	Auth *struct {
 		Store        *string `yaml:"store"`
@@ -1197,6 +1217,9 @@ func applyFile(c *Config, path string) error {
 	}
 	if fc.Kafka != nil && fc.Kafka.Brokers != nil {
 		c.KafkaBrokers = fc.Kafka.Brokers
+	}
+	if fc.Kafka != nil && fc.Kafka.TopicPrefix != nil {
+		c.KafkaTopicPrefix = *fc.Kafka.TopicPrefix
 	}
 	if a := fc.Auth; a != nil {
 		if a.Store != nil {
@@ -1585,6 +1608,9 @@ func applyEnv(c *Config, env EnvLookup) error {
 	}
 	if v, ok := env("ANDARA_KAFKA_BROKERS"); ok {
 		c.KafkaBrokers = splitList(v)
+	}
+	if v, ok := env("ANDARA_KAFKA_TOPIC_PREFIX"); ok {
+		c.KafkaTopicPrefix = v
 	}
 	for _, sv := range []struct {
 		name string

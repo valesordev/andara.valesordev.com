@@ -20,7 +20,11 @@ import (
 )
 
 func realSites() []kafkaclient.Site {
-	return KafkaSites(config.Config{ServiceName: "andara-server", IngressProduceDeadline: 5 * time.Second})
+	sites, err := KafkaSites(config.Config{ServiceName: "andara-server", IngressProduceDeadline: 5 * time.Second})
+	if err != nil {
+		panic(err)
+	}
+	return sites
 }
 
 // The clients the code builds hold the contract: exit 0, every row printed.

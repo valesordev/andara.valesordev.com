@@ -220,7 +220,7 @@ func TestLoadContent_KafkaWithoutBrokersFailsNamingTheReason(t *testing.T) {
 	var logs bytes.Buffer
 	tel := telemetry.Setup(cfg, &logs)
 	t.Cleanup(func() { tel.Shutdown(context.Background()) })
-	rt := New(cfg, tel)
+	rt := mustNew(t, cfg, tel)
 	if code := rt.LoadContent(context.Background()); code != ExitFail {
 		t.Fatalf("exit %d", code)
 	}
@@ -278,7 +278,17 @@ func runtime(t *testing.T, path string, strict bool) (*Runtime, *bytes.Buffer) {
 	var logs bytes.Buffer
 	tel := telemetry.Setup(cfg, &logs)
 	t.Cleanup(func() { tel.Shutdown(context.Background()) })
-	return New(cfg, tel), &logs
+	return mustNew(t, cfg, tel), &logs
+}
+
+// mustNew is New for a configuration the test knows resolves.
+func mustNew(t *testing.T, cfg config.Config, tel *telemetry.Telemetry) *Runtime {
+	t.Helper()
+	rt, err := New(cfg, tel)
+	if err != nil {
+		t.Fatal(err)
+	}
+	return rt
 }
 
 func fixture(t *testing.T, name string) string {

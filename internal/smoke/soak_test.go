@@ -44,7 +44,7 @@ func soakEnv(key, fallback string) string {
 // client side and look exactly like the ingress close this test exists to detect.
 func soakClient(t *testing.T) gamev1connect.GameClient {
 	t.Helper()
-	return gamev1connect.NewGameClient(soakHTTP(t), "https://"+soakEnv("ANDARA_SOAK_ADDR", "andara.local:443"),
+	return gamev1connect.NewGameClient(soakHTTP(t), "https://"+soakAddr(os.Getenv),
 		connect.WithGRPC())
 }
 
@@ -57,7 +57,7 @@ func soakToken(t *testing.T) string {
 	if !ok {
 		t.Fatal("ANDARA_SOAK_OPERATOR must be username:password")
 	}
-	ac := authv1connect.NewAuthClient(soakHTTP(t), "https://"+soakEnv("ANDARA_SOAK_ADDR", "andara.local:443"), connect.WithGRPC())
+	ac := authv1connect.NewAuthClient(soakHTTP(t), "https://"+soakAddr(os.Getenv), connect.WithGRPC())
 	resp, err := ac.Authenticate(context.Background(), connect.NewRequest(&authv1.AuthenticateRequest{Username: user, Password: pass}))
 	if err != nil {
 		t.Fatalf("Authenticate through the edge: %v", err)

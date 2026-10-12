@@ -57,7 +57,7 @@ exiting. That's the state every new environment starts in, and the server waits 
 
 ### Configuration
 
-Beyond the shared keys it reads as the server does (`content.*`, `kafka.brokers`, `sim.seed`,
+Beyond the shared keys it reads as the server does (`content.*`, `kafka.brokers`, `kafka.topic_prefix`, `sim.seed`,
 `snapshot.store` and its `fs_path`/`s3_*`, `http.port`, `telemetry.*` except the service name,
 which is always `andara-projector-state`):
 

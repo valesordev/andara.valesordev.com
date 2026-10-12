@@ -87,6 +87,7 @@ func (rt *Runtime) RecoverOptions(ctx context.Context, engineCfg sim.Config, inE
 	}
 	o := recovery.Options{
 		Store:           ws,
+		EventsTopic:     rt.Topics.Events(),
 		Listed:          rt.listedZones(),
 		Config:          engineCfg,
 		Content:         rt.Content,
@@ -115,13 +116,14 @@ func (rt *Runtime) RecoverOptions(ctx context.Context, engineCfg sim.Config, inE
 		o.OpenRecords = func(context.Context, map[int32]int64) (sim.RecordSource, error) { return rt.replay, nil }
 		return o, func() {}, nil
 	}
-	br, err := tickloop.NewBoundaryReader(ctx, cfg.KafkaBrokers, tickloop.EventsTopic, recoveryClientID)
+	br, err := tickloop.NewBoundaryReader(ctx, cfg.KafkaBrokers, rt.Topics.Events(), recoveryClientID)
 	if err != nil {
 		return recovery.Options{}, nil, fmt.Errorf("recovery: boundary reader: %w", err)
 	}
 	o.Boundaries = br
+	commands := rt.Topics.Commands()
 	o.OpenRecords = func(ctx context.Context, start map[int32]int64) (sim.RecordSource, error) {
-		return tickloop.NewCommandSource(ctx, cfg.KafkaBrokers, tickloop.CommandsTopic, recoveryClientID, start)
+		return tickloop.NewCommandSource(ctx, cfg.KafkaBrokers, commands, recoveryClientID, start)
 	}
 	return o, br.Close, nil
 }

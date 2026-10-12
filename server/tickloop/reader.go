@@ -96,7 +96,7 @@ type BoundaryReader struct {
 // NewBoundaryReader starts reading the boundary Partition from its start.
 func NewBoundaryReader(ctx context.Context, brokers []string, eventsTopic, clientID string) (*BoundaryReader, error) {
 	if eventsTopic == "" {
-		eventsTopic = EventsTopic
+		return nil, errors.New("tickloop: NewBoundaryReader eventsTopic is required")
 	}
 	client, err := kgo.NewClient(boundaryAdminOpts(brokers, clientID)...)
 	if err != nil {
@@ -416,7 +416,7 @@ type CommandSource struct {
 // longer has: ErrLogGap, naming both.
 func NewCommandSource(ctx context.Context, brokers []string, topic, clientID string, start map[int32]int64) (*CommandSource, error) {
 	if topic == "" {
-		topic = CommandsTopic
+		return nil, errors.New("tickloop: NewCommandSource topic is required")
 	}
 	assign := map[int32]kgo.Offset{}
 	for p, off := range start {

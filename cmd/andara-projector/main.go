@@ -102,7 +102,11 @@ func runState(cfg config.Projector, stderr io.Writer) int {
 	// it replicates without the digest saying so. It is read-only: only the
 	// server writes andara.core, or anything else to the content store or
 	// the audit topic (#326).
-	rt := boot.New(cfg.Config, tel)
+	rt, err := boot.New(cfg.Config, tel)
+	if err != nil {
+		// New logged it at error, naming kafka.topic_prefix.
+		return projector.ExitConfig
+	}
 	rt.ContentReadOnly = true
 	if code := rt.LoadContent(ctx); code != boot.ExitOK {
 		return projector.ExitConfig
@@ -132,11 +136,14 @@ func runState(cfg config.Projector, stderr io.Writer) int {
 		tel.Log.Error("snapshot store", "detail", err.Error())
 		return projector.ExitConfig
 	}
-	go topicBytes(ctx, cfg.KafkaBrokers, metrics, tel.Log)
+	go topicBytes(ctx, cfg.KafkaBrokers, rt.Topics.State(), metrics, tel.Log)
 
 	err = projector.Run(ctx, projector.RunOptions{
 		Brokers:        cfg.KafkaBrokers,
 		Group:          config.ProjectorGroup(cfg.Environment),
+		CommandsTopic:  rt.Topics.Commands(),
+		EventsTopic:    rt.Topics.Events(),
+		StateTopic:     rt.Topics.State(),
 		World:          rt.World,
 		Content:        rt.Content,
 		OnSwaps:        rt.Content.Applied,
@@ -199,20 +206,20 @@ func handler(tel *telemetry.Telemetry, ready *atomic.Bool) http.Handler {
 // every 30s, and the gauge keeps its last good value in between: the runbook
 // reads this gauge, and a silent 0 is what it read before (AW-SRV-019 feedback
 // §1).
-func topicBytes(ctx context.Context, brokers []string, m *projector.Metrics, log *slog.Logger) {
+func topicBytes(ctx context.Context, brokers []string, stateTopic string, m *projector.Metrics, log *slog.Logger) {
 	cl, err := kgo.NewClient(projector.MetaOpts(brokers)...)
 	if err != nil {
-		log.Warn("andara_state_topic_bytes will not be reported", "topic", projector.StateTopic, "detail", err.Error())
+		log.Warn("andara_state_topic_bytes will not be reported", "topic", stateTopic, "detail", err.Error())
 		return
 	}
 	defer cl.Close()
 	adm := kadm.NewClient(cl)
 	t := time.NewTicker(30 * time.Second)
 	defer t.Stop()
-	var r topicBytesReport
+	r := topicBytesReport{topic: stateTopic}
 	for {
 		qctx, qcancel := context.WithTimeout(ctx, 10*time.Second)
-		n, err := projector.TopicBytes(qctx, adm, projector.StateTopic)
+		n, err := projector.TopicBytes(qctx, adm, stateTopic)
 		qcancel()
 		if ctx.Err() != nil {
 			return
@@ -227,19 +234,22 @@ func topicBytes(ctx context.Context, brokers []string, m *projector.Metrics, log
 }
 
 // topicBytesReport sets the gauge from one query and logs a change of state.
-type topicBytesReport struct{ failing bool }
+type topicBytesReport struct {
+	topic   string // the state topic, as resolved
+	failing bool
+}
 
 func (r *topicBytesReport) observe(n int64, err error, m *projector.Metrics, log *slog.Logger) {
 	if err != nil {
 		if !r.failing {
 			log.Warn("andara_state_topic_bytes not refreshed: the broker query failed; the gauge keeps its last value",
-				"topic", projector.StateTopic, "detail", err.Error())
+				"topic", r.topic, "detail", err.Error())
 		}
 		r.failing = true
 		return
 	}
 	if r.failing {
-		log.Info("andara_state_topic_bytes refreshed again", "topic", projector.StateTopic, "bytes", n)
+		log.Info("andara_state_topic_bytes refreshed again", "topic", r.topic, "bytes", n)
 	}
 	r.failing = false
 	m.TopicBytes.Set(float64(n))

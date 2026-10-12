@@ -13,12 +13,6 @@ import (
 	"github.com/valesordev/andara/server/recordlog"
 )
 
-// Topics the account store writes.
-const (
-	AccountsTopic = "andara.accounts.v1"
-	AuditTopic    = "andara.audit.v1"
-)
-
 // OpenAccounts builds the account store from configuration: the keyring,
 // the two record logs, the index replayed from the accounts topic, and the
 // bootstrap operator if none exists. A failure here is a failed boot — a
@@ -43,11 +37,11 @@ func (rt *Runtime) OpenAccounts(ctx context.Context) (*auth.Store, error) {
 		rt.Tel.Log.LogAttrs(ctx, slog.LevelWarn, "auth.store=memory: accounts are not persisted and will not survive a restart")
 		accounts, audit = recordlog.NewMemory(), recordlog.NewMemory()
 	case "kafka":
-		accounts, err = recordlog.NewKafka(ctx, recordlog.KafkaOptions{Brokers: cfg.KafkaBrokers, Topic: AccountsTopic, ClientID: cfg.ServiceName})
+		accounts, err = recordlog.NewKafka(ctx, recordlog.KafkaOptions{Brokers: cfg.KafkaBrokers, Topic: rt.Topics.Accounts(), ClientID: cfg.ServiceName})
 		if err != nil {
 			return nil, err
 		}
-		audit, err = recordlog.NewKafka(ctx, recordlog.KafkaOptions{Brokers: cfg.KafkaBrokers, Topic: AuditTopic, ClientID: cfg.ServiceName})
+		audit, err = recordlog.NewKafka(ctx, recordlog.KafkaOptions{Brokers: cfg.KafkaBrokers, Topic: rt.AuditTopicName, ClientID: cfg.ServiceName})
 		if err != nil {
 			_ = accounts.Close()
 			return nil, err

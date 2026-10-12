@@ -32,7 +32,7 @@ import (
 func TestKafka_RecoveryAcrossAContentSwap(t *testing.T) {
 	bk := brokers(t)
 	commands, events := topics(t, bk)
-	group := "andara-sim-test-" + commands[len(commands)-8:]
+	group := "it-sim-test-" + commands[len(commands)-8:]
 	content, err := simtest.TownVersions()
 	if err != nil {
 		t.Fatal(err)
@@ -44,11 +44,10 @@ func TestKafka_RecoveryAcrossAContentSwap(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	pub, err := NewKafkaPublisher(ctx, bk, "test")
+	pub, err := NewKafkaPublisher(ctx, bk, "test", commands, events)
 	if err != nil {
 		t.Fatal(err)
 	}
-	pub.Commands, pub.Events = commands, events
 	var swaps, relocations atomic.Int64
 	var applied atomic.Int64
 	loop, err := New(Options{

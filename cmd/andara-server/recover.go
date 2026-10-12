@@ -83,7 +83,10 @@ func runRecover(args []string, env config.EnvLookup, stdout, stderr io.Writer) i
 	ctx, stop := context.WithTimeout(ctx, cfg.RecoveryVerifyTimeout)
 	defer stop()
 
-	rt := boot.New(cfg, tel)
+	rt, err := boot.New(cfg, tel)
+	if err != nil {
+		return boot.ExitFail
+	}
 	rt.ContentReadOnly = true
 	rt.BuildVersion = version
 	if code := rt.LoadContent(ctx); code != boot.ExitOK {

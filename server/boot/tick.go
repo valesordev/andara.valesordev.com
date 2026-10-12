@@ -16,6 +16,7 @@ import (
 	"github.com/valesordev/andara/server/config"
 	"github.com/valesordev/andara/server/content"
 	"github.com/valesordev/andara/server/ingress"
+	"github.com/valesordev/andara/server/kafkaclient"
 	"github.com/valesordev/andara/server/recovery"
 	"github.com/valesordev/andara/server/sim"
 	"github.com/valesordev/andara/server/store"
@@ -111,11 +112,12 @@ func (rt *Runtime) StartTickLoop(ctx context.Context) (*tickloop.Loop, error) {
 			Group:    "andara-sim-" + cfg.Environment,
 			ClientID: cfg.ServiceName,
 			Start:    engine.State().Offsets,
+			Topic:    rt.Topics.Commands(),
 		})
 		if err != nil {
 			return nil, err
 		}
-		kp, err := tickloop.NewKafkaPublisher(ctx, cfg.KafkaBrokers, cfg.ServiceName)
+		kp, err := tickloop.NewKafkaPublisher(ctx, cfg.KafkaBrokers, cfg.ServiceName, rt.Topics.Commands(), rt.Topics.Events())
 		if err != nil {
 			_ = source.Close()
 			return nil, err
@@ -131,11 +133,7 @@ func (rt *Runtime) StartTickLoop(ctx context.Context) (*tickloop.Loop, error) {
 					rt.Events.Metrics().PublishLag.Set(lag.Seconds())
 				})
 				kp.OnFailure = func(topic string, err error) {
-					kind := "events"
-					if topic == tickloop.CommandsTopic {
-						kind = "commands"
-					}
-					loop.Metrics().PublishFailures.WithLabelValues(kind).Inc()
+					loop.Metrics().PublishFailures.WithLabelValues(publishFailureKind(kp, topic)).Inc()
 					rt.Tel.Log.LogAttrs(ctx, slog.LevelWarn, "record never acknowledged", slog.String("topic", topic), slog.String("detail", err.Error()))
 				}
 			}
@@ -326,25 +324,38 @@ type replayLog interface {
 }
 
 // kafkaLog is replayLog over the broker.
-type kafkaLog struct{ brokers []string }
+type kafkaLog struct {
+	brokers []string
+	topics  kafkaclient.Topics
+}
 
 func (k kafkaLog) Boundaries(ctx context.Context) ([]sim.TickCompleted, error) {
-	return tickloop.ReadBoundaries(ctx, k.brokers, tickloop.EventsTopic)
+	return tickloop.ReadBoundaries(ctx, k.brokers, k.topics.Events())
 }
 
 func (k kafkaLog) Fetch(p int32, from, to int64) ([]sim.Record, error) {
-	return tickloop.KafkaRecords{Brokers: k.brokers, Topic: tickloop.CommandsTopic}.Fetch(p, from, to)
+	return tickloop.KafkaRecords{Brokers: k.brokers, Topic: k.topics.Commands()}.Fetch(p, from, to)
 }
 
 func (k kafkaLog) End(ctx context.Context, p int32) (int64, error) {
-	return tickloop.EndOffset(ctx, k.brokers, tickloop.CommandsTopic, p)
+	return tickloop.EndOffset(ctx, k.brokers, k.topics.Commands(), p)
 }
 
 func (rt *Runtime) recoveryLog() replayLog {
 	if rt.replay != nil {
 		return rt.replay
 	}
-	return kafkaLog{brokers: rt.Cfg.KafkaBrokers}
+	return kafkaLog{brokers: rt.Cfg.KafkaBrokers, topics: rt.Topics}
+}
+
+// publishFailureKind is the andara_publish_failures_total kind of a record kp
+// never delivered: commands when it was for kp's commands topic, as resolved,
+// and events otherwise.
+func publishFailureKind(kp *tickloop.KafkaPublisher, topic string) string {
+	if topic == kp.Commands {
+		return "commands"
+	}
+	return "events"
 }
 
 // RecoveryError reports a pre-rule log as ErrPreRuleLog whichever way it
@@ -620,7 +631,7 @@ func (rt *Runtime) worldEnd(ctx context.Context) (int64, error) {
 	if rt.memSource != nil {
 		return rt.memSource.End(sim.WorldPartition), nil
 	}
-	return tickloop.EndOffset(ctx, rt.Cfg.KafkaBrokers, tickloop.CommandsTopic, sim.WorldPartition)
+	return tickloop.EndOffset(ctx, rt.Cfg.KafkaBrokers, rt.Topics.Commands(), sim.WorldPartition)
 }
 
 // FollowContent applies Active Pointer moves until ctx ends. The Loader logs
