@@ -451,7 +451,7 @@ func defaults() Config {
 		SnapshotKeepRounds:       DefaultSnapshotKeepRounds,
 		SnapshotKeepDeployRounds: DefaultSnapshotKeepDeployRounds,
 		SnapshotMaxRoundAge:      DefaultSnapshotMaxRoundAge,
-		RecoveryReplayBatch:     DefaultRecoveryReplayBatch,
+		RecoveryReplayBatch:      DefaultRecoveryReplayBatch,
 		RecoveryVerifyTimeout:    DefaultRecoveryVerifyTimeout,
 		RecoveryMismatchLinger:   DefaultRecoveryMismatchLinger,
 		DeployNoticeLead:         DefaultDeployNoticeLead,
@@ -1199,12 +1199,12 @@ type fileConfig struct {
 		AssumedEventRate  *int    `yaml:"assumed_event_rate"`
 	} `yaml:"egress"`
 	Snapshot *struct {
-		Interval      *string `yaml:"interval"`
-		MaxStallMS    *int    `yaml:"max_stall_ms"`
-		Store         *string `yaml:"store"`
-		FSPath        *string `yaml:"fs_path"`
-		S3Bucket      *string `yaml:"s3_bucket"`
-		S3Endpoint    *string `yaml:"s3_endpoint"`
+		Interval         *string `yaml:"interval"`
+		MaxStallMS       *int    `yaml:"max_stall_ms"`
+		Store            *string `yaml:"store"`
+		FSPath           *string `yaml:"fs_path"`
+		S3Bucket         *string `yaml:"s3_bucket"`
+		S3Endpoint       *string `yaml:"s3_endpoint"`
 		UploadTimeout    *string `yaml:"upload_timeout"`
 		KeepRounds       *int    `yaml:"keep_rounds"`
 		KeepDeployRounds *int    `yaml:"keep_deploy_rounds"`
