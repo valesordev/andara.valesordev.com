@@ -1,5 +1,5 @@
 {
-  "source": "automate.bashburn.com@a6da3fa",
+  "source": "automate.bashburn.com@dbe2a79",
   "target": "andaras-world",
   "files": {
     ".claude/skills/arch-start-sprint/SKILL.md": "94489be54f36d507c373fa734901625e137da6ae00f8d9c258c3513ce2914640",
@@ -56,9 +56,9 @@
     ".claude/skills/sre-start-sprint/SKILL.md": "d9b19fbd7f8d3a821ff2aa2e87ec9ddee1e57447a6ef02a3eb0190e0edf32cbb",
     ".claude/skills/sre-start-sprint/references/examples.md": "4d9da96908d1fa03115108cefc9f8c8c54a0e925cbd0092dc39b0b453b28da24",
     ".claude/bin/codex-review": "d495b2e131fd47c88f142d6cadc24507902a7467d1193eb466563d21cc259205",
-    ".claude/bin/coordinator": "7b42c5976d19c45b3c459395e48013a4e2056e58d38893520deabc50f2043423",
+    ".claude/bin/coordinator": "183b18050430a74241bef2f8f7f811cedaa4c9bd9c242d510b9e8fef5b36e9da",
     ".claude/bin/project-mirror": "a0c7c9689f2a98b0ab07b20ff60e41e0686a2a6a876bc941fb79f91012362c59",
-    ".claude/bin/role": "3241ada78ec62bd85268c56f2715c11958941c2d2dd48270974501f2583b6cbe",
+    ".claude/bin/role": "8ed8241208b2786a48693e06983940530775441736716de5f5cf5fc85117ee53",
     ".claude/bin/sprint-state": "6a8ae9cff5eb3f2a56255efaf542b27a9e7a4dc7a394eb6c58e1723402b14dfc",
     ".claude/bin/story": "f86fe014a8936a6aac581d8eadefa4ab436f1659972a2bd960b18317c5535427",
     ".github/workflows/story-merge.yml": "f6ac9f521771067aec73a5ee65c7b02527b988dbb761fb4e8ec5dd488bfd163d",
@@ -76,7 +76,7 @@
     ".claude/roles/_repo.md": "255c4b3ab5e9f0ce36400a1933bfe3f82bf4b5f0d4008d4a5a5be52d7a99250b",
     ".claude/roles/architecture.md": "5fed93ec2c230e5e45401d082a3d9a84ce34556903da916dc4918d9179444857",
     ".claude/roles/game-designer.md": "52c4c0456cb779f26774e1f2f7a84614cbcfb4a26d86e2123965cf8301edc6a4",
-    ".claude/roles/implementation.md": "b076139a5bb8717f01ea862bfd3538e734affa6ea53e2d8effbcf6b39b5a7296",
+    ".claude/roles/implementation.md": "f98408ce38869811fc6dffa1913ffe49d75e2dee9aa853f1eab51fdd432f93ca",
     ".claude/roles/pm.md": "c8dde7e970af911645acff4fc65e5caaca1bd670f094844062ebd7353ac58b66",
     ".claude/roles/product.md": "7cc62d8148695995dc51aaaf5b4c84e43edf733c1893be7c4153fd303fff908c",
     ".claude/roles/sre.md": "36fb5c0bad5415b22d0c1556b33099a7420fa3cc535e4d5032261cc704429d5c"

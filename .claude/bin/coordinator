@@ -144,10 +144,11 @@ DENY = ["Bash(gh pr merge:*)", "Bash(gh pr close:*)", "Bash(gh pr review:*)", "B
         "EnterWorktree", "ExitWorktree"]   # a lane stays in the worktree the coordinator records
 
 # What a lane may run without asking (`--allowedTools`; a lane has no one to ask, so anything else is
-# denied). Lane sessions only: it widens nothing for a person's session. Every Bash entry names a
-# command and a verb or an exact form, never a bare `git:*` or `gh:*`. This is the outer layer; the
-# `bin/role` Bash hook (COORDINATOR_LANE set) is the one that judges flags, remotes, refs and API
-# endpoints on the tokenized command, and the ownership hook decides which paths an edit may touch.
+# denied). Lane sessions only: it widens nothing for a person's session. Every git and gh entry names
+# a verb, never a bare `git:*` or `gh:*`; the readers are whole commands. This is the outer layer, a
+# prefix match that a flag in another order defeats; the `bin/role` Bash hook (COORDINATOR_LANE set)
+# is the one that judges flags, remotes, refs, API endpoints and the files a reader names on the
+# tokenized command, and the ownership hook decides which paths an edit may touch.
 LANE_ALLOW = [
     "Edit", "Write", "MultiEdit",                  # which paths: the hooks decide (own worktrees only)
     "Agent", "Task",                               # /pre-pr's reviewer subagent
@@ -157,13 +158,14 @@ LANE_ALLOW = [
     "Bash(git status:*)", "Bash(git diff:*)", "Bash(git log:*)", "Bash(git show:*)",
     "Bash(git fetch)", "Bash(git fetch origin:*)",
     "Bash(git branch --show-current:*)", "Bash(git branch --list:*)", "Bash(git switch:*)",
-    "Bash(git checkout -b:*)", "Bash(git add:*)", "Bash(git commit:*)",
-    "Bash(git push origin:*)", "Bash(git push -u origin:*)",   # always with the branch named
+    "Bash(git checkout:*)", "Bash(git add:*)", "Bash(git commit:*)",   # the hook: a new branch at HEAD only
+    "Bash(git push:*)",   # the hook: origin, a named branch under the role's prefix, reviewed commits
     "Bash(git merge-base:*)", "Bash(git rev-parse:*)", "Bash(git rev-list:*)", "Bash(git ls-files:*)",
     "Bash(git worktree add:*)", "Bash(git worktree remove:*)", "Bash(git worktree list:*)",
     "Bash(git worktree prune:*)",
     "Bash(gh pr create:*)", "Bash(gh pr view:*)", "Bash(gh pr list:*)", "Bash(gh pr diff:*)",
     "Bash(gh pr checks:*)", "Bash(gh pr comment:*)", "Bash(gh api:*)",
+    "Bash(grep:*)", "Bash(head:*)", "Bash(tail:*)", "Bash(wc:*)", "Bash(ls:*)", "Bash(diff:*)",   # files: the hook
 ]
 WATCH_ALLOW = [   # added for a role that works an issue queue (product): plain issues, never stories
     "Bash(gh issue list:*)", "Bash(gh issue view:*)", "Bash(gh issue comment:*)", "Bash(gh issue close:*)",
@@ -644,7 +646,7 @@ def slug(s: str) -> str:
     return re.sub(r"[^a-z0-9]+", "-", s.lower()).strip("-")
 
 
-def prompt_for(lane: dict, run_id: str, ctx: Ctx) -> str:
+def prompt_for(lane: dict, run_id: str, ctx: Ctx, sid: str = "", scratch: Path | None = None) -> str:
     r = lane["role"]
     skill = ctx.settings(r)["start_skill"]
     if not skill:
@@ -658,6 +660,14 @@ def prompt_for(lane: dict, run_id: str, ctx: Ctx) -> str:
             f"Never merge, close, or approve a PR. Work from origin/main in this worktree. "
             f"If a tool call is denied by the permission mode, don't look for another way to do the "
             f"same thing: commit what you have, and end with `LANE RESULT: blocked: <what was denied>`.")
+    if sid:   # a skill read from its file isn't expanded, and the shell may not expand it in a lane
+        head += f" Your session id is {sid}: where a skill says `${{CLAUDE_SESSION_ID}}`, write {sid}."
+    head += (" Your worktree already starts at origin/main: create your branch with `git switch -c <branch>`, "
+             "naming no start point. Read files with the Read tool.")
+    if scratch:
+        head += (f" Scratch files (PR and comment bodies, check output, notes) go in {scratch}, never in the "
+                 f"worktree. Text with backticks or `$` goes to gh and story through a file there "
+                 f"(`--body-file {scratch}/pr-body.md`), never inline.")
     if lane.get("inbox"):
         body = (f" Read .claude/skills/{skill}/SKILL.md and do only the part that answers questions "
                 f"addressed to `{r}` (stories {', '.join(lane.get('asked') or [])} have one waiting). "
@@ -728,13 +738,15 @@ def hook_settings(ctx: Ctx, run_dir: Path) -> Path:
 
 
 def claude_cmd(ctx: Ctx, lane: dict, sid: str, run_id: str, budget: float,
-               settings: Path | None = None) -> list[str]:
-    cmd = [ctx.claude, "-p", prompt_for(lane, run_id, ctx), "--session-id", sid,
+               settings: Path | None = None, scratch: Path | None = None) -> list[str]:
+    cmd = [ctx.claude, "-p", prompt_for(lane, run_id, ctx, sid, scratch), "--session-id", sid,
            "--output-format", "json", "--permission-mode", "dontAsk",
            "--max-budget-usd", str(budget),
            "--disallowedTools", ",".join(DENY)]
     if settings:
         cmd += ["--settings", str(settings)]
+    if scratch:   # outside the worktree: Claude Code's own directory check would refuse edits there
+        cmd += ["--add-dir", str(scratch)]
     if ctx.lane_allow:
         cmd += ["--allowedTools", ",".join(lane_allow(ctx, lane))]
     return cmd
@@ -814,6 +826,9 @@ class SameUser:
         p.mkdir(parents=True, exist_ok=True)
         exclude_worktrees(self.ctx, p)
 
+    def rmtree(self, p: Path) -> None:
+        shutil.rmtree(p, ignore_errors=True)
+
     def fetch(self) -> subprocess.CompletedProcess:
         return self.ctx.sh.run(["git", "fetch", "origin", "--quiet"], cwd=self.root)
 
@@ -862,6 +877,9 @@ class OsUser(SameUser):
 
     def mkdir(self, p: Path) -> None:
         self.as_lane(["mkdir", "-p", str(p)], check=True)
+
+    def rmtree(self, p: Path) -> None:
+        self.as_lane(["rm", "-rf", "--", str(p)])
 
     def fetch(self) -> subprocess.CompletedProcess:
         return self.git(self.root, "fetch", "origin", "--quiet")
@@ -1046,6 +1064,12 @@ def exclude_worktrees(ctx: Ctx, wt_dir: Path) -> None:
     if line not in have:
         f.parent.mkdir(parents=True, exist_ok=True)
         f.write_text("\n".join(have + [line]) + "\n")
+
+
+def scratch_dir(host: "SameUser", wt: Path) -> Path:
+    """A lane's scratch directory, beside its worktree and the lane user's own: what it writes there
+    (PR bodies, logs) is never committed. It goes when `clean` removes the worktree."""
+    return wt.with_name(wt.name + ".scratch")
 
 
 def setup_worktree(ctx: Ctx, lane: dict, sid: str) -> tuple[Path, bool]:
@@ -1299,6 +1323,28 @@ def o11y_problems(host: "OsUser", base: dict) -> list[str]:
     elif host.as_lane(["grep", "-qE", "^(export )?AGENTO11Y_LOCAL=true", cfg]).returncode == 0:
         out.append(f"{host.user}'s agento11y is in local mode: each lane starts a daemon of its own and nothing "
                    f"reaches Grafana (set AGENTO11Y_LOCAL=false in {cfg})")
+    elif out == []:   # set up: ask its own doctor whether Grafana takes what it sends
+        r = host.ctx.sh.run(["sudo", "-n", "-i", "-u", host.user, "agento11y", "doctor"], cwd=Path("/"))
+        out += [f"{host.user}'s agento11y doctor: {p}" for p in doctor_problems(r.stdout or "")]
+    return out
+
+
+def doctor_problems(text: str) -> list[str]:
+    """`agento11y doctor`'s failed checks, each with its first explanation (`✗ Analytics …` then
+    `! the OTLP endpoint rejected …`); its closing count isn't one."""
+    out, cur = [], None
+    for line in text.splitlines():
+        s = line.strip()
+        if s.startswith("✗"):
+            if cur:
+                out.append(cur)
+            head = s.lstrip("✗ ").strip()
+            cur = None if re.match(r"\d+ problem", head) else head
+        elif s.startswith("!") and cur:
+            out.append(f"{cur}: {s.lstrip('! ').strip()}")
+            cur = None
+    if cur:
+        out.append(cur)
     return out
 
 
@@ -1341,11 +1387,13 @@ def run_lane(ctx: Ctx, lane: dict, run_id: str, run_dir: Path, lane_dir: Path, a
     name = lane_name(lane)
     host = ctx.host
     wt, fresh = setup_worktree(ctx, lane, sid)
+    scratch = scratch_dir(host, wt)
+    host.mkdir(scratch)
     log = run_dir / f"{name}.log"
-    cmd = claude_cmd(ctx, lane, sid, run_id, args.budget_usd, hook_settings(ctx, lane_dir))
+    cmd = claude_cmd(ctx, lane, sid, run_id, args.budget_usd, hook_settings(ctx, lane_dir), scratch)
     env = lane_env(dict(os.environ))
     env.update(o11y_env(ctx, dict(os.environ), lane["role"], own_login=isinstance(host, OsUser)))
-    env.update(COORDINATOR_RUN=run_id, COORDINATOR_LANE=name)
+    env.update(COORDINATOR_RUN=run_id, COORDINATOR_LANE=name, COORDINATOR_SCRATCH=str(scratch))
     token = getattr(ctx, "lane_token", None)
     auth = token.path.parent if token else None
     if token:   # the lanes' app for gh and for git pushes over HTTPS, never your account or your SSH key
@@ -1368,6 +1416,7 @@ def run_lane(ctx: Ctx, lane: dict, run_id: str, run_dir: Path, lane_dir: Path, a
             host.put_role(sid, None)
             if fresh:
                 host.git(host.root, "worktree", "remove", "--force", str(wt))
+                host.rmtree(scratch)
             raise CoordError(f"couldn't start {cmd[0]}: {e}") from e
         rec = {"lane": name, "role": lane["role"], "story": lane["story"], "inbox": bool(lane.get("inbox")),
                "session": sid, "pid": proc.pid,
@@ -2038,7 +2087,8 @@ def cmd_run(ctx: Ctx, a) -> int:
                                                       **r["watch_open"]})
                     if (h["lane"].get("watch") or h["lane"].get("inbox")) and r.get("tree_clean") \
                             and not r.get("error"):   # one worktree per such lane: nothing here to keep
-                        ctx.host.git(ctx.host.root, "worktree", "remove", str(h["wt"]))
+                        if ctx.host.git(ctx.host.root, "worktree", "remove", str(h["wt"])).returncode == 0:
+                            ctx.host.rmtree(scratch_dir(ctx.host, h["wt"]))
                     elif kinds_of(h["lane"]) == "session" and r.get("ok"):
                         try:
                             after = board_now(ctx)
@@ -2144,6 +2194,7 @@ def _clean(ctx: Ctx, a) -> int:
         print(f"{'remove' if removable else 'keep  '}  {p.name}  ({why})")
         if removable and a.apply:
             host.git(host.root, "worktree", "remove", str(p), check=True)
+            host.rmtree(scratch_dir(host, p))
             n += 1
     if n:
         print(f"removed {n}")
