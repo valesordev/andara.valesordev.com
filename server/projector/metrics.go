@@ -62,7 +62,7 @@ func NewMetrics(reg prometheus.Registerer) *Metrics {
 		}),
 		RecordsProduced: prometheus.NewCounterVec(prometheus.CounterOpts{
 			Name: "andara_state_records_produced_total",
-			Help: "andara.state.v1 records acknowledged by the broker, by aggregate kind.",
+			Help: "State topic records acknowledged by the broker, by aggregate kind.",
 		}, []string{"kind"}),
 		Tombstones: prometheus.NewCounter(prometheus.CounterOpts{
 			Name: "andara_state_tombstones_total",
