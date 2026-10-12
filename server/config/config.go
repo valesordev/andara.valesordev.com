@@ -186,6 +186,15 @@ type Config struct {
 	SnapshotS3Bucket      string
 	SnapshotS3Endpoint    string
 	SnapshotUploadTimeout time.Duration
+	// Retention (AW-SRV-055; lifecycle.md, "Round tags"). The sweep keeps
+	// the newest SnapshotKeepRounds untagged rounds and the newest
+	// SnapshotKeepDeployRounds tagged ones (counted in rounds, not
+	// minutes), and deletes any round older than SnapshotMaxRoundAge; it
+	// never deletes the newest complete round or the round RecoveryPinRound
+	// names.
+	SnapshotKeepRounds       int
+	SnapshotKeepDeployRounds int
+	SnapshotMaxRoundAge      time.Duration
 
 	// Recovery (AW-SRV-007). RecoveryRequireSnapshot makes a boot with no
 	// complete round exit 7 instead of replaying the log from offset zero.
@@ -317,6 +326,12 @@ const (
 	DefaultSnapshotStore         = "fs"
 	DefaultSnapshotFSPath        = "/var/lib/andara/snapshots"
 	DefaultSnapshotUploadTimeout = 30 * time.Second
+	// Retention (AW-SRV-055): two hours of minute-rounds; 30 tagged rounds;
+	// 23 days, andara.events.v1's 30-day retention minus the 7 days
+	// broker-contract.md holds back.
+	DefaultSnapshotKeepRounds       = 120
+	DefaultSnapshotKeepDeployRounds = 30
+	DefaultSnapshotMaxRoundAge      = 552 * time.Hour
 
 	// DefaultKafkaSASLPasswordFile is kafka.sasl_password_file's default:
 	// the workload's Secret mount and the key Strimzi's User Operator writes
@@ -433,7 +448,10 @@ func defaults() Config {
 		SnapshotFSPath:           DefaultSnapshotFSPath,
 		KafkaSASLPasswordFile:    DefaultKafkaSASLPasswordFile,
 		SnapshotUploadTimeout:    DefaultSnapshotUploadTimeout,
-		RecoveryReplayBatch:      DefaultRecoveryReplayBatch,
+		SnapshotKeepRounds:       DefaultSnapshotKeepRounds,
+		SnapshotKeepDeployRounds: DefaultSnapshotKeepDeployRounds,
+		SnapshotMaxRoundAge:      DefaultSnapshotMaxRoundAge,
+		RecoveryReplayBatch:     DefaultRecoveryReplayBatch,
 		RecoveryVerifyTimeout:    DefaultRecoveryVerifyTimeout,
 		RecoveryMismatchLinger:   DefaultRecoveryMismatchLinger,
 		DeployNoticeLead:         DefaultDeployNoticeLead,
@@ -563,6 +581,9 @@ func Parse(args []string, env EnvLookup, errOut io.Writer) (Config, error) {
 	fs.StringVar(&c.SnapshotS3Bucket, "snapshot-s3-bucket", c.SnapshotS3Bucket, "bucket the s3 store writes to; required when snapshot.store=s3 (ANDARA_SNAPSHOT_S3_BUCKET)")
 	fs.StringVar(&c.SnapshotS3Endpoint, "snapshot-s3-endpoint", c.SnapshotS3Endpoint, "S3 endpoint; MinIO locally, empty for AWS (ANDARA_SNAPSHOT_S3_ENDPOINT)")
 	fs.DurationVar(&c.SnapshotUploadTimeout, "snapshot-upload-timeout", c.SnapshotUploadTimeout, "a round exceeding this is failed, not queued behind the next (ANDARA_SNAPSHOT_UPLOAD_TIMEOUT)")
+	fs.IntVar(&c.SnapshotKeepRounds, "snapshot-keep-rounds", c.SnapshotKeepRounds, "newest untagged snapshot rounds the retention sweep keeps (ANDARA_SNAPSHOT_KEEP_ROUNDS)")
+	fs.IntVar(&c.SnapshotKeepDeployRounds, "snapshot-keep-deploy-rounds", c.SnapshotKeepDeployRounds, "newest tagged snapshot rounds the retention sweep keeps, counted in rounds (ANDARA_SNAPSHOT_KEEP_DEPLOY_ROUNDS)")
+	fs.DurationVar(&c.SnapshotMaxRoundAge, "snapshot-max-round-age", c.SnapshotMaxRoundAge, "a snapshot round older than this is deleted, tagged or not (ANDARA_SNAPSHOT_MAX_ROUND_AGE)")
 	fs.BoolVar(&c.RecoveryRequireSnapshot, "recovery-require-snapshot", c.RecoveryRequireSnapshot, "exit 7 when no complete snapshot round exists instead of replaying from offset zero (ANDARA_RECOVERY_REQUIRE_SNAPSHOT)")
 	fs.IntVar(&c.RecoveryReplayBatch, "recovery-replay-batch", c.RecoveryReplayBatch, "boundaries one replay step takes; changes memory, never the result (ANDARA_RECOVERY_REPLAY_BATCH)")
 	fs.DurationVar(&c.RecoveryVerifyTimeout, "recovery-verify-timeout", c.RecoveryVerifyTimeout, "bounds `recover --verify` (ANDARA_RECOVERY_VERIFY_TIMEOUT)")
@@ -699,6 +720,17 @@ func (c Config) validateSnapshot() error {
 	}
 	if c.SnapshotUploadTimeout <= 0 {
 		return fmt.Errorf("snapshot.upload_timeout must be positive, got %s", c.SnapshotUploadTimeout)
+	}
+	// keys.yaml's bounds: at least the round being written is kept, and no
+	// tagged round at all is a legal (if odd) policy.
+	if c.SnapshotKeepRounds < 1 {
+		return fmt.Errorf("snapshot.keep_rounds must be at least 1, got %d", c.SnapshotKeepRounds)
+	}
+	if c.SnapshotKeepDeployRounds < 0 {
+		return fmt.Errorf("snapshot.keep_deploy_rounds must not be negative, got %d", c.SnapshotKeepDeployRounds)
+	}
+	if c.SnapshotMaxRoundAge <= 0 {
+		return fmt.Errorf("snapshot.max_round_age must be positive, got %s", c.SnapshotMaxRoundAge)
 	}
 	// A round that cannot finish before the next one starts would either
 	// queue or overlap; the story's answer is that it fails, so the two must
@@ -1173,7 +1205,10 @@ type fileConfig struct {
 		FSPath        *string `yaml:"fs_path"`
 		S3Bucket      *string `yaml:"s3_bucket"`
 		S3Endpoint    *string `yaml:"s3_endpoint"`
-		UploadTimeout *string `yaml:"upload_timeout"`
+		UploadTimeout    *string `yaml:"upload_timeout"`
+		KeepRounds       *int    `yaml:"keep_rounds"`
+		KeepDeployRounds *int    `yaml:"keep_deploy_rounds"`
+		MaxRoundAge      *string `yaml:"max_round_age"`
 	} `yaml:"snapshot"`
 	Deploy *struct {
 		NoticeLead    *string `yaml:"notice_lead"`
@@ -1581,6 +1616,7 @@ func applyFile(c *Config, path string) error {
 		}{
 			{"snapshot.interval", sn.Interval, &c.SnapshotInterval},
 			{"snapshot.upload_timeout", sn.UploadTimeout, &c.SnapshotUploadTimeout},
+			{"snapshot.max_round_age", sn.MaxRoundAge, &c.SnapshotMaxRoundAge},
 		} {
 			if d.v != nil {
 				if err := parseDuration(d.key, *d.v, d.dst); err != nil {
@@ -1590,6 +1626,12 @@ func applyFile(c *Config, path string) error {
 		}
 		if sn.MaxStallMS != nil {
 			c.SnapshotMaxStall = time.Duration(*sn.MaxStallMS) * time.Millisecond
+		}
+		if sn.KeepRounds != nil {
+			c.SnapshotKeepRounds = *sn.KeepRounds
+		}
+		if sn.KeepDeployRounds != nil {
+			c.SnapshotKeepDeployRounds = *sn.KeepDeployRounds
 		}
 	}
 	return nil
@@ -1774,6 +1816,7 @@ func applyEnv(c *Config, env EnvLookup) error {
 		{"ANDARA_RECOVERY_RTO_TARGET", &c.RecoveryRTOTarget},
 		{"ANDARA_SNAPSHOT_INTERVAL", &c.SnapshotInterval},
 		{"ANDARA_SNAPSHOT_UPLOAD_TIMEOUT", &c.SnapshotUploadTimeout},
+		{"ANDARA_SNAPSHOT_MAX_ROUND_AGE", &c.SnapshotMaxRoundAge},
 		{"ANDARA_RECOVERY_VERIFY_TIMEOUT", &c.RecoveryVerifyTimeout},
 		{"ANDARA_RECOVERY_MISMATCH_LINGER", &c.RecoveryMismatchLinger},
 		{"ANDARA_CONTENT_RELOAD_DEBOUNCE", &c.ContentReloadDebounce},
@@ -1823,6 +1866,8 @@ func applyEnv(c *Config, env EnvLookup) error {
 		{"ANDARA_CHARACTER_MAX_PER_ACCOUNT", &c.CharacterMaxPerAccount},
 		{"ANDARA_EGRESS_BUFFER", &c.EgressBuffer},
 		{"ANDARA_RECOVERY_REPLAY_BATCH", &c.RecoveryReplayBatch},
+		{"ANDARA_SNAPSHOT_KEEP_ROUNDS", &c.SnapshotKeepRounds},
+		{"ANDARA_SNAPSHOT_KEEP_DEPLOY_ROUNDS", &c.SnapshotKeepDeployRounds},
 		{"ANDARA_EGRESS_RESUME_WINDOW", &c.EgressResumeWindow},
 		{"ANDARA_EGRESS_ASSUMED_EVENT_RATE", &c.EgressAssumedEventRate},
 	} {

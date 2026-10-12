@@ -153,3 +153,39 @@ func (s *S3) List(ctx context.Context, zone sim.ZoneID) ([]string, error) {
 	}
 	return sortSnapshotKeys(found), nil
 }
+
+// ZoneTags returns a Zone's tagged snapshot keys and their tag names: the
+// same prefix scan as List, keeping the tag keys it skips. Implements
+// TagStore.
+func (s *S3) ZoneTags(ctx context.Context, zone sim.ZoneID) (map[string][]string, error) {
+	if zone == "" {
+		return nil, fmt.Errorf("store: empty zone")
+	}
+	out := map[string][]string{}
+	for obj := range s.client.ListObjects(ctx, s.bucket, minio.ListObjectsOptions{
+		Prefix:    string(zone) + "/",
+		Recursive: true,
+	}) {
+		if obj.Err != nil {
+			return nil, fmt.Errorf("%w: list tags %s: %w", sim.ErrStoreUnavailable, zone, obj.Err)
+		}
+		if object, _, ok := ParseTagKey(obj.Key); ok {
+			if z, _, _, _, _ := sim.ParseSnapshotKey(object); z == zone {
+				addTag(out, obj.Key)
+			}
+		}
+	}
+	return sortTags(out), nil
+}
+
+// Delete removes the object at key; S3 answers a missing key with success.
+// Implements TagStore.
+func (s *S3) Delete(ctx context.Context, key string) error {
+	if key == "" {
+		return fmt.Errorf("store: empty key")
+	}
+	if err := s.client.RemoveObject(ctx, s.bucket, key, minio.RemoveObjectOptions{}); err != nil {
+		return fmt.Errorf("%w: delete %s: %w", sim.ErrStoreUnavailable, key, err)
+	}
+	return nil
+}

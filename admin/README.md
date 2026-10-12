@@ -29,6 +29,7 @@ export ANDARA_CONFIG=/path/to/repo/.local/cli.yaml   # written by make up
 | `andara-cli account set-packs <id> --pack ID … \| --clear` | replace the Content Packs a Builder may publish to (`AW-SRV-035`, operator) |
 | `andara-cli sim repl` | drive the Command Pipeline in-process against content on disk (developer) |
 | `andara-cli snapshot list` | list a Zone's snapshot objects in the configured store (`AW-SRV-006`, operator) |
+| `andara-cli snapshot tag --name <t> [--round <tick>]` | tag a complete snapshot round so retention keeps it (`AW-SRV-055`, operator) |
 | `andara-cli character create <name>` / `list` | make a Character; list yours with where each is (`AW-CLI-007`) |
 | `andara-cli play` | enter the world: the Text Interface over the Protocol (`AW-CLI-004`, `--character` from `AW-CLI-007`) |
 | `andara-cli content compile` | compile a Content Language pack to canonical blobs, offline (`AW-CLI-006`, builder) |
@@ -189,7 +190,21 @@ like a missing one.
 `snapshot verify`, and a `snapshot list` that asks the running server what *it* can see
 over `Admin`, are `AW-SRV-007`'s. The two are not redundant: that one answers what the
 server sees, this one answers what is actually in the bucket, and a runbook wants the
-second when the first disagrees with it.
+second when the first disagrees with it. Over `Admin`, `snapshot list` prints a `TAGS`
+column: the Round Tags on every object of each round (`tags` in `--output json`).
+
+```
+andara-cli snapshot tag --name deploy:v1.4.2              # the newest complete round
+andara-cli snapshot tag --name rollback:4200 --round 4200
+```
+
+`snapshot tag` (`AW-SRV-055`, `Admin.TagSnapshotRound`, operator) writes a Round Tag on
+a complete round so the server's retention sweep keeps it among the newest
+`snapshot.keep_deploy_rounds` tagged rounds (`server/README.md`, "Round tags and
+retention"). The name is `deploy:<tag>` or `rollback:<tick>`. It exits `0` when the round
+is tagged, or already carried the name (`already_tagged`); `1` for no such round
+(`round <T> not found`), a round that isn't complete (`round <T> is not complete: …`), or a
+name outside the grammar; `3` when the server can't be reached.
 
 ## content — the Content Language compiler
 

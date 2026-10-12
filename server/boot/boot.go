@@ -26,6 +26,7 @@ import (
 	"github.com/valesordev/andara/server/recovery"
 	"github.com/valesordev/andara/server/roster"
 	"github.com/valesordev/andara/server/sim"
+	"github.com/valesordev/andara/server/store"
 	"github.com/valesordev/andara/server/telemetry"
 	"github.com/valesordev/andara/server/tickloop"
 )
@@ -91,6 +92,10 @@ type Runtime struct {
 	registry       *content.Registry
 	publishMetrics *content.PublishMetrics
 	core           *content.CoreBoot
+	// sweeper is the snapshot retention sweep's state and lock, shared with
+	// Admin.TagSnapshotRound (AW-SRV-055); see snapshotSweeper.
+	sweeperOnce sync.Once
+	sweeper     *store.Sweeper
 	// Templates is the loaded Template registry (AW-SRV-022); nil until
 	// LoadContent succeeds.
 	Templates *sim.TemplateRegistry

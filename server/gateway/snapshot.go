@@ -23,6 +23,9 @@ import (
 type SnapshotAdmin interface {
 	ListSnapshotRounds(context.Context, *adminv1.ListSnapshotRoundsRequest) (*adminv1.ListSnapshotRoundsResponse, error)
 	VerifySnapshotRound(context.Context, *adminv1.VerifySnapshotRoundRequest) (*adminv1.VerifySnapshotRoundResponse, error)
+	// TagSnapshotRound writes round tags (AW-SRV-055): the one method here
+	// that writes to the store, still never to the Engine.
+	TagSnapshotRound(context.Context, *adminv1.TagSnapshotRoundRequest) (*adminv1.TagSnapshotRoundResponse, error)
 }
 
 var errNoSnapshotAdmin = errors.New("snapshot rounds are not available on this server")
@@ -52,4 +55,8 @@ func (a *adminService) ListSnapshotRounds(ctx context.Context, req *connect.Requ
 
 func (a *adminService) VerifySnapshotRound(ctx context.Context, req *connect.Request[adminv1.VerifySnapshotRoundRequest]) (*connect.Response[adminv1.VerifySnapshotRoundResponse], error) {
 	return snapshotCall(ctx, a, req, SnapshotAdmin.VerifySnapshotRound)
+}
+
+func (a *adminService) TagSnapshotRound(ctx context.Context, req *connect.Request[adminv1.TagSnapshotRoundRequest]) (*connect.Response[adminv1.TagSnapshotRoundResponse], error) {
+	return snapshotCall(ctx, a, req, SnapshotAdmin.TagSnapshotRound)
 }

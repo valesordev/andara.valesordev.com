@@ -109,6 +109,9 @@ variable, and (where it is a process flag) by flag. Precedence is **flag > env >
 | `snapshot.s3_bucket` | `ANDARA_SNAPSHOT_S3_BUCKET` | — | Required when `snapshot.store=s3`; the server refuses to start without it rather than failing its first round a minute after it looked healthy. |
 | `snapshot.s3_endpoint` | `ANDARA_SNAPSHOT_S3_ENDPOINT` | — | S3 endpoint. versitygw locally; empty for AWS. |
 | `snapshot.upload_timeout` | `ANDARA_SNAPSHOT_UPLOAD_TIMEOUT` | `30s` | A round exceeding it is failed, not queued behind the next one; the next round starts on schedule. It also bounds the wait for the broker to acknowledge the round's `TickCompleted`: with `sim.source=kafka` nothing is encoded or written until that acknowledgement arrives, a boundary reported lost abandons the round as `andara_snapshot_failures_total{reason="boundary"}`, and no acknowledgement inside the timeout abandons it as `reason="timeout"`. A boundary whose `Publish` failed outright takes no round, and a round that was due counts `reason="boundary"`. Must not exceed `snapshot.interval` — if the two would have to meet, the body has outgrown the cadence. |
+| `snapshot.keep_rounds` | `ANDARA_SNAPSHOT_KEEP_ROUNDS` | `120` | The retention sweep keeps the newest this-many untagged rounds (two hours of minute-rounds) and deletes older untagged ones. At least `1`. See "Round tags and retention". |
+| `snapshot.keep_deploy_rounds` | `ANDARA_SNAPSHOT_KEEP_DEPLOY_ROUNDS` | `30` | The sweep keeps the newest this-many tagged rounds (a tag on any object of the round), counted in rounds, not minutes. At least `0`. |
+| `snapshot.max_round_age` | `ANDARA_SNAPSHOT_MAX_ROUND_AGE` | `552h` | A round taken longer ago than this is deleted, tagged or not, except the newest complete round and the round `recovery.pin_round` names. 23 days: at most `andara.events.v1` retention minus 7 days, since an older round refuses to recover (`ErrLogGap`). Positive. |
 | `recovery.require_snapshot` | `ANDARA_RECOVERY_REQUIRE_SNAPSHOT` | `false` | Boot with no complete snapshot round exits `7` instead of replaying the log from offset zero. `true` in prod once M2 lands: a cold replay is a retention bug, not a boot. |
 | `recovery.replay_batch` | `ANDARA_RECOVERY_REPLAY_BATCH` | `4096` | Boundaries one replay step takes. It bounds memory only: the State Hash sequence is the same at any value. At least `1`. |
 | `recovery.verify_timeout` | `ANDARA_RECOVERY_VERIFY_TIMEOUT` | `600s` | Bounds `andara-server recover --verify` and `Admin.VerifySnapshotRound`; past it the RPC answers `DEADLINE_EXCEEDED`. |
@@ -368,7 +371,30 @@ and not linkdead gets a `MarkLinkdead` (or an `UnbindCharacter{QUIT}` when `sess
 andara-server recover --verify [--round T]     # match or mismatch, both hashes, phase timings
 andara-cli snapshot list [--zone Z] [--local]  # rounds the server sees; --local reads the store
 andara-cli snapshot verify --round T           # Admin.VerifySnapshotRound, a scratch Engine
+andara-cli snapshot tag --name N [--round T]   # Admin.TagSnapshotRound; newest complete without --round
 ```
+
+**Round tags and retention** (`AW-SRV-055`; `docs/specs/deploy/lifecycle.md`, "Round tags"). A tag is
+a zero-byte object beside each of a round's objects, `{zone_id}/{tick}/{state_version}/{offset}.tag/{name}`,
+named `deploy:<tag>` or `rollback:<tick>` (`^(deploy|rollback):[A-Za-z0-9._@+-]{1,200}$`).
+`Admin.TagSnapshotRound` (OPERATOR only) writes it on every object of a Complete round, or of the newest
+Complete round for tick `0`: `INVALID_ARGUMENT` for a name outside the grammar, `NOT_FOUND` for no round,
+`FAILED_PRECONDITION` for one that isn't complete, and success with `already_tagged` when every object
+already carries the name. `ListSnapshotRounds` reports a round's `tags`: the names on every object.
+
+The retention sweep runs at start and then every `snapshot.interval`. Newest first, it keeps the newest
+complete round and the pinned round; deletes any other round past `snapshot.max_round_age`; keeps tagged
+rounds (a tag on *any* object, so a crash between two tag Puts fails safe) up to
+`snapshot.keep_deploy_rounds`, untagged ones up to `snapshot.keep_rounds`; and deletes the rest, tags
+first, then objects. A sweep and a tag never interleave in one process. Each sweep logs `snapshot retention
+sweep` at `info` with `deleted`, `kept_tagged` and `kept_newest` (untagged rounds kept), or `error` on a
+store error; each tag logs `snapshot round tagged` with the `actor` and `tick`.
+
+`ListSnapshotRounds` with a `limit` reads only the rounds it returns: the rest cost a key listing.
+
+| Metric | Type | Labels | Cardinality bound |
+|--------|------|--------|-------------------|
+| `andara_snapshot_rounds_retained` | gauge | `kind` | 2: `untagged`, `tagged`; the rounds the last sweep kept |
 
 `recover --verify` loads a round, replays to head, prints `match` or `mismatch reason=...`, and exits
 `0` or `8` (a restore mismatch is a mismatch too); `7`, `4` and `3` are refusals. It never binds

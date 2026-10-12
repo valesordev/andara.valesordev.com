@@ -34,6 +34,11 @@ func (f *fakeSnapshotAdmin) VerifySnapshotRound(context.Context, *adminv1.Verify
 	return nil, notFound{}
 }
 
+func (f *fakeSnapshotAdmin) TagSnapshotRound(context.Context, *adminv1.TagSnapshotRoundRequest) (*adminv1.TagSnapshotRoundResponse, error) {
+	f.calls++
+	return &adminv1.TagSnapshotRoundResponse{Tick: 7}, nil
+}
+
 func snapshotClient(t *testing.T, fs *fakeSnapshotAdmin, roles ...auth.Role) adminv1connect.AdminClient {
 	t.Helper()
 	h := start(t, func(o *Options) {
@@ -47,7 +52,8 @@ func snapshotClient(t *testing.T, fs *fakeSnapshotAdmin, roles ...auth.Role) adm
 	return adminv1connect.NewAdminClient(c, h.baseURL())
 }
 
-// Both snapshot RPCs are OPERATOR only: a builder never reaches the seam.
+// The snapshot RPCs are OPERATOR only: a builder never reaches the seam
+// (TagSnapshotRound, AW-SRV-055 AC-10).
 func TestSnapshotAdmin_IsOperatorOnly(t *testing.T) {
 	fs := &fakeSnapshotAdmin{}
 	ctx := context.Background()
@@ -57,6 +63,9 @@ func TestSnapshotAdmin_IsOperatorOnly(t *testing.T) {
 	}
 	if _, err := builder.VerifySnapshotRound(ctx, connect.NewRequest(&adminv1.VerifySnapshotRoundRequest{Tick: 7})); connect.CodeOf(err) != connect.CodePermissionDenied {
 		t.Fatalf("verify as builder: %v", err)
+	}
+	if _, err := builder.TagSnapshotRound(ctx, connect.NewRequest(&adminv1.TagSnapshotRoundRequest{Name: "deploy:v1", Tick: 7})); connect.CodeOf(err) != connect.CodePermissionDenied {
+		t.Fatalf("tag as builder: %v", err)
 	}
 	if fs.calls != 0 {
 		t.Fatalf("the seam ran %d times for a non-operator", fs.calls)
@@ -72,6 +81,9 @@ func TestSnapshotAdmin_IsOperatorOnly(t *testing.T) {
 	ce, ei := errorInfo(t, err)
 	if ce.Code() != connect.CodeNotFound || ei.GetReason() != "round_not_found" || ei.GetDomain() != "andara.snapshot" {
 		t.Fatalf("verify: %v %v", ce.Code(), ei)
+	}
+	if tr, err := op.TagSnapshotRound(ctx, connect.NewRequest(&adminv1.TagSnapshotRoundRequest{Name: "deploy:v1", Tick: 7})); err != nil || tr.Msg.GetTick() != 7 {
+		t.Fatalf("tag as operator: %v %v", tr, err)
 	}
 }
 

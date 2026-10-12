@@ -234,6 +234,91 @@ func (f *FS) List(ctx context.Context, zone sim.ZoneID) ([]string, error) {
 	return sortSnapshotKeys(found), nil
 }
 
+// ZoneTags returns a Zone's tagged snapshot keys and their tag names.
+// Implements TagStore. A tag is a file under {key}.tag/, the directory List
+// skips.
+func (f *FS) ZoneTags(ctx context.Context, zone sim.ZoneID) (map[string][]string, error) {
+	if err := ctx.Err(); err != nil {
+		return nil, err
+	}
+	dir, err := f.path(string(zone))
+	if err != nil {
+		return nil, err
+	}
+	out := map[string][]string{}
+	// {zone}/{tick}/{state_version}/{offset}.tag/{name}, walked the way List
+	// walks. A leftover {name}.tmp~ from a Put killed before its rename is
+	// outside the tag grammar, so addTag drops it as ListTags does.
+	ticks, err := os.ReadDir(dir)
+	switch {
+	case errors.Is(err, os.ErrNotExist):
+		return out, nil
+	case err != nil:
+		return nil, fmt.Errorf("%w: list tags: %w", sim.ErrStoreUnavailable, err)
+	}
+	for _, tk := range ticks {
+		if !tk.IsDir() {
+			continue
+		}
+		versions, err := os.ReadDir(filepath.Join(dir, tk.Name()))
+		if err != nil {
+			return nil, fmt.Errorf("%w: list tags: %w", sim.ErrStoreUnavailable, err)
+		}
+		for _, v := range versions {
+			if !v.IsDir() {
+				continue
+			}
+			objects, err := os.ReadDir(filepath.Join(dir, tk.Name(), v.Name()))
+			if err != nil {
+				return nil, fmt.Errorf("%w: list tags: %w", sim.ErrStoreUnavailable, err)
+			}
+			for _, o := range objects {
+				if !o.IsDir() || !strings.HasSuffix(o.Name(), tagDir) {
+					continue
+				}
+				names, err := os.ReadDir(filepath.Join(dir, tk.Name(), v.Name(), o.Name()))
+				if err != nil {
+					return nil, fmt.Errorf("%w: list tags: %w", sim.ErrStoreUnavailable, err)
+				}
+				for _, n := range names {
+					if !n.IsDir() {
+						addTag(out, strings.Join([]string{string(zone), tk.Name(), v.Name(), o.Name(), n.Name()}, "/"))
+					}
+				}
+			}
+		}
+	}
+	return sortTags(out), nil
+}
+
+// Delete removes the object at key, and then whichever of its directories
+// that leaves empty, up to the Zone's. Implements TagStore.
+func (f *FS) Delete(ctx context.Context, key string) error {
+	if err := ctx.Err(); err != nil {
+		return err
+	}
+	p, err := f.path(key)
+	if err != nil {
+		return err
+	}
+	if err := os.Remove(p); err != nil && !errors.Is(err, os.ErrNotExist) {
+		return fmt.Errorf("%w: delete: %w", sim.ErrStoreUnavailable, err)
+	}
+	// Prune the emptied directories: {offset}.tag/, {state_version}/, {tick}/.
+	// Best effort: a directory a concurrent Put just wrote into isn't empty,
+	// and Remove refuses it, which is the outcome wanted.
+	root, err := f.path(strings.SplitN(key, "/", 2)[0])
+	if err != nil {
+		return nil
+	}
+	for d := filepath.Dir(p); d != root && strings.HasPrefix(d, root+string(os.PathSeparator)); d = filepath.Dir(d) {
+		if os.Remove(d) != nil {
+			break
+		}
+	}
+	return nil
+}
+
 // snapshotEntry is one parsed key, for ordering a listing.
 type snapshotEntry struct {
 	key    string
