@@ -1,11 +1,11 @@
 #!/usr/bin/env python3
 """Mirror a Valesor repo's story files into an org GitHub Project (one way).
 
-Source of truth: automate.bashburn.com / plugins/valesor-dev/bin/project-mirror.
+Source of truth: automate.valesordev.com / plugins/valesor-dev/bin/project-mirror.
 Vendored into target repos as .claude/bin/project-mirror by `make install`.
 
     project-mirror [<repo-dir>] [--ref origin/main] [--repo owner/name]
-                   [--project TITLE] [--prefix AW] [--config FILE]
+                   [--project TITLE] [--prefix GS] [--config FILE]
                    [--apply | --offline]
 
 Files stay the source of truth: every run makes GitHub match them, and
@@ -16,8 +16,8 @@ board (Current and Next, by rank) without calling GitHub.
 Settings come from <repo-dir>/.claude/roles/_repo.md frontmatter (or --config),
 and flags override them:
 
-    project: Andara's World    the org Project's title (no `project:` = not mirrored)
-    story_prefix: AW           story IDs look like AW-CLI-003
+    project: Example Game    the org Project's title (no `project:` = not mirrored)
+    story_prefix: GS           story IDs look like GS-CLI-003
     github_repo: owner/name    default: the `origin` remote
 
 What it reads on <ref> (never the working tree):
@@ -188,7 +188,7 @@ def sprint_lists(text: str) -> list[str]:
 
 @dataclass
 class Want:
-    key: str                  # AW-CLI-003 / EPIC-05
+    key: str                  # GS-CLI-003 / EPIC-05
     title: str
     body: str
     closed: bool
@@ -314,7 +314,7 @@ def managed(title: str, body: str | None, by_title: bool = False) -> str | None:
     """The story or epic ID of an issue this mirror created, else None.
 
     Both the `<ID> — ` title and the mirror notice are required, so an issue
-    that is only about a story (`AW-INF-013: helm-install …`) is never touched.
+    that is only about a story (`GS-INF-013: helm-install …`) is never touched.
     `by_title` drops the notice check, for a cutover that has already stripped it."""
     m = TITLE_ID.match(title)
     if not m or not title[m.end():].startswith(" — "):

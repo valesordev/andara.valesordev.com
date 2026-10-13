@@ -11,7 +11,7 @@ Request: `$ARGUMENTS`
 
 ## Preflight
 0. Run `.claude/bin/role require product ${CLAUDE_SESSION_ID}`. If it fails,
-   stop and tell Brian to run `/role product`.
+   stop and tell the owner to run `/role product`.
 1. `git fetch origin` and work from `origin/main`. Read everything in
    `docs/product/`, then the sources in the order your role file lists them,
    including every delivery planner's roadmap.
@@ -22,8 +22,8 @@ Request: `$ARGUMENTS`
 ## Vision (when `docs/product/vision.md` doesn't exist)
 Draft it from what's already decided: the repo's `CLAUDE.md`, roadmaps, and the
 Notion pages your role file names. Mark every claim you inferred rather than
-found `[ASSUMED]`. The vision is Brian's call, so it goes in its own PR, ahead
-of the releases, and the checkpoint below asks him to confirm or correct each
+found `[ASSUMED]`. The vision is the owner's call, so it goes in its own PR, ahead
+of the releases, and the checkpoint below asks them to confirm or correct each
 `[ASSUMED]` line. Don't plan releases on an unmerged vision; stop after that PR.
 
 ## Steps
@@ -44,22 +44,22 @@ of the releases, and the checkpoint below asks him to confirm or correct each
    - each milestone with no player-visible change and no feature it enables;
      recommend dropping or re-homing it
 5. **Decide.** Make the calls that are yours (scope, order, cut lines) with a
-   one-line reason each. Brian's calls (vision, adding or dropping a release,
+   one-line reason each. The owner's calls (vision, adding or dropping a release,
    anything outward-facing) go to the checkpoint with a recommendation.
-6. **Checkpoint, only if a call is Brian's.** One message: each question, your
-   recommendation, and what you'll do if he says no. Wait for his answer.
-   Otherwise go straight to writing; he reviews the PR.
+6. **Checkpoint, only if a call is the owner's.** One message: each question, your
+   recommendation, and what you'll do if they say no. Wait for their answer.
+   Otherwise go straight to writing; they review the PR.
 7. **Write** `releases.md`. Branch `product/release-plan-<slug>`, label
    `role:product`, run `/pre-pr`, open the PR with "Decided this session" and
    the coverage findings in the body.
 8. **Hand off after merge.** Put every coverage finding a planner has to act
    on under "Release changes (after merge)" in the PR body: per planner, the
    milestone, the release and feature, and the change you're asking for. Open
-   no issues now. Once Brian merges the PR, the next product session opens one
+   no issues now. Once the owner merges the PR, the next product session opens one
    `release-change` issue per planner from that section (your role file's
-   pending handoffs), or this one does if he merges while it's still running.
+   pending handoffs), or this one does if they merge while it's still running.
 
 ## Output
 The releases (one line each), the PR URL, the release changes waiting on
-merge, decisions made, and anything waiting on Brian. One next action, usually
-Brian's review of the PR.
+merge, decisions made, and anything waiting on the owner. One next action, usually
+the owner's review of the PR.

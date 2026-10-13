@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """Wait for Codex's review of a PR commit and list what it found.
 
-Source of truth: automate.bashburn.com / plugins/valesor-dev/bin/codex-review.
+Source of truth: automate.valesordev.com / plugins/valesor-dev/bin/codex-review.
 Vendored into target repos as .claude/bin/codex-review. Don't edit it there.
 
     codex-review status <PR> [--sha SHA]

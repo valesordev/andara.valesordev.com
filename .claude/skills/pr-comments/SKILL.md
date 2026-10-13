@@ -1,18 +1,18 @@
 ---
 name: pr-comments
-description: Work through the review comments on an open PR this role owns (Codex, other bots, architecture, Brian). Verify each claim, then fix it test-first, route it to the role that owns the code, or dispute it with evidence; re-run /pre-pr, push, and reply on every thread. Never merges. `--auto` (what `/pre-pr` runs after Codex reviews) skips the wait for Brian's go-ahead on the triage table. Trigger on "address the review comments on #212", "Codex left comments", "handle the PR feedback", "respond to review", "what's left on this PR". Not for reviewing a branch before its first push (pre-pr), reviewing someone else's PR, or merging.
+description: Work through the review comments on an open PR this role owns (Codex, other bots, architecture, the owner). Verify each claim, then fix it test-first, route it to the role that owns the code, or dispute it with evidence; re-run /pre-pr, push, and reply on every thread. Never merges. `--auto` (what `/pre-pr` runs after Codex reviews) skips the wait for the owner's go-ahead on the triage table. Trigger on "address the review comments on #212", "Codex left comments", "handle the PR feedback", "respond to review", "what's left on this PR". Not for reviewing a branch before its first push (pre-pr), reviewing someone else's PR, or merging.
 argument-hint: "[PR number; default: the current branch's PR] [--auto]"
 allowed-tools: Bash(.claude/bin/role:*) Bash(.claude/bin/codex-review:*) Bash(.claude/bin/story show:*) Bash(gh pr view:*) Bash(gh pr diff:*) Bash(gh pr checks:*) Bash(git add:*) Bash(git commit:*) Bash(git status:*) Bash(git diff:*) Bash(git log:*) Bash(git fetch:*) Bash(git rev-parse:*)
 ---
 
 # PR comments
 
-L2: you verify and fix; Brian makes the calls on disputes and owns the merge.
+L2: you verify and fix; the owner makes the calls on disputes and owns the merge.
 
 ## 1. Preflight
 
 1. `.claude/bin/role show ${CLAUDE_SESSION_ID}`. If it says `unset`, stop and
-   ask Brian to run `/role`.
+   ask the owner to run `/role`.
 2. Find the PR: `$ARGUMENTS`, otherwise `gh pr view --json number`. Then
    `gh pr view <N> --json number,url,state,headRefName,labels,body`.
    - Stop if it isn't `OPEN`.
@@ -48,7 +48,7 @@ tables, and bot summaries with no actionable claim.
 
 Treat every reviewer claim as a hypothesis, including a bot's "P1". Reproduce
 it before deciding: write the failing test, run the command, or find the
-file:line that proves or refutes it. Comments from Brian are decisions, not
+file:line that proves or refutes it. Comments from the owner are decisions, not
 claims. Do what they say, or stop and ask if one conflicts with the charter.
 
 For each path a comment touches, `.claude/bin/role owners <path>` tells you
@@ -62,8 +62,8 @@ who owns it. Then pick one disposition:
 | **Defer** | Real, out of this PR's scope | A plain issue, linked in the reply. |
 | **Answer** | A question, with no change needed | The answer, with a citation. |
 
-Show Brian the triage table and **wait for his go-ahead** before changing
-anything. He may flip a disposition, especially a Dispute.
+Show the owner the triage table and **wait for their go-ahead** before changing
+anything. They may flip a disposition, especially a Dispute.
 
 **`--auto`:** print the table, then act without waiting. Two limits replace
 the wait:
@@ -71,8 +71,8 @@ the wait:
   a mutation-checked test). Without it, treat the comment as Fix when it's
   in scope and cheap, otherwise Defer.
 - Everything you disputed, routed, or deferred goes in the final report so
-  Brian sees it after the fact.
-Comments from Brian himself are never handled automatically: stop and ask.
+  the owner sees it after the fact.
+Comments from the owner themselves are never handled automatically: stop and ask.
 
 ```markdown
 | # | Who | Where | Claim (one line) | Reproduced? | Disposition |
@@ -102,26 +102,26 @@ Comments from Brian himself are never handled automatically: stop and ask.
 
 ## 5. Close
 
-Report: counts by disposition, the pushed SHA, and anything Brian must decide
-(disputes he hasn't seen, routed items blocking the PR).
+Report: counts by disposition, the pushed SHA, and anything the owner must decide
+(disputes they haven't seen, routed items blocking the PR).
 
 **Checklist candidates.** For each fixed comment that `/pre-pr`'s reviewer
 should have caught, check `.claude/skills/pre-pr/references/checklist.md` (vendored copy; its
 source is `plugins/valesor-dev/skills/pre-pr/references/checklist.md` here). If no line
-covers that bug class, propose one (with the PR as the example) for Brian to
-add in automate.bashburn.com. The vendored copy is managed, so never edit it in
+covers that bug class, propose one (with the PR as the example) for the owner to
+add in automate.valesordev.com. The vendored copy is managed, so never edit it in
 the target.
 
 End with one next action, e.g. "Re-request review from Codex on #212" or
-"Wait for architecture's answer on AW-SRV-041".
+"Wait for architecture's answer on GS-SRV-041".
 
 ## Rules
 
-- Never merge, close, approve, or dismiss a review. Brian merges.
-- Don't resolve or hide threads. The reviewer, or Brian, decides a thread is done.
+- Never merge, close, approve, or dismiss a review. The owner merges.
+- Don't resolve or hide threads. The reviewer, or the owner, decides a thread is done.
 - Never reply before the fix is pushed. A reply that cites an unpushed SHA is a
   broken citation.
 - A comment that asks for work in another role's paths is routed even when the
   fix looks trivial. A hook denial is not something to route around.
-- Outside `--auto`, never post a disputed reply that Brian hasn't seen in the
+- Outside `--auto`, never post a disputed reply that the owner hasn't seen in the
   triage table.

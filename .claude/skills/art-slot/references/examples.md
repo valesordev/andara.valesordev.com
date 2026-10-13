@@ -14,21 +14,21 @@ stipple on plain paper, since the treatment is `brands/_tools/treat/ink.py`, sav
 **Behavior:** Runs `python3 brands/_tools/treat/ink.py` on each into `assets/candidates/treated/`, composites over the
 paper token with the ink recoloured, and views each at 600 px and in the phone crop. The review table shows C has
 pseudo-text in the rock texture (Tells ✗) and B's canopy crosses into the type zone (Composition ~). Recommends A.
-Waits for Brian's selection.
+Waits for the owner's selection.
 
 **Prompt:** "A. The bend reads as wind, which is the point."
-**Behavior:** Records the selection with his reason, copies `hero-A.png` to
+**Behavior:** Records the selection with their reason, copies `hero-A.png` to
 `brands/valesordev/assets/illustration/hero-wide/hero.png`, fills Provenance (generated, ChatGPT, date, AD v1), and
 adds the Makefile rule for `brands/valesordev/dist/art/hero.png`. Makefile is sre's in this repo, so the rule goes
 in the PR body with `story comment <ID> --to sre`. Runs `make valesordev` once the rule lands, checks the done-when
-list, names `sites/valesordev.com` in the PR body, and reminds him to upload `hero.png` to the ChatGPT project files.
+list, names `sites/valesordev.com` in the PR body, and reminds them to upload `hero.png` to the ChatGPT project files.
 
 **Prompt:** "Generate a mark for solo7productions."
 **Behavior:** A mark slot, so it needs only the direction statement in an approved
 `brands/solo7productions/brand/foundation.md`. If it isn't approved, stops and says the foundation comes first.
 Otherwise it writes 2–3 mark-sheet prompts on one construction axis (S+7 monogram, slash/cut, maker's mark). After
-Brian picks a cell, it rebuilds the mark as grid geometry per `marks.md`, renders it at 16–512 beside the sibling
-marks, records the vertices and provenance in `assets/marks/README.md`, and leaves locking to Brian.
+the owner picks a cell, it rebuilds the mark as grid geometry per `marks.md`, renders it at 16–512 beside the sibling
+marks, records the vertices and provenance in `assets/marks/README.md`, and leaves locking to the owner.
 
 **Prompt:** "I drew the hero in Krita, swap it in." (attaches `hero.kra`)
 **Behavior:** Swap: `hero.kra` goes to `assets/illustration/hero-wide/`, the old source is kept as
@@ -36,4 +36,4 @@ marks, records the vertices and provenance in `assets/marks/README.md`, and leav
 becomes `hand`, and the `slots.md` row changes. Outputs keep their names, so the site needs no change.
 
 **Non-triggers:** "The renders all look too glossy" → art-direction. "What's intentional in the S9 target?" →
-brand-audit. "Lock the S9 type" → visual-designer, directly. "Concept the Andara gate" → andaras-world concept-sheet.
+brand-audit. "Lock the S9 type" → visual-designer, directly. "Concept a game's gate" → that game's concept-art role.

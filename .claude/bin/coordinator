@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """Run a sprint's role lanes in parallel, each in its own session and worktree.
 
-Source of truth: automate.bashburn.com / plugins/valesor-dev/bin/coordinator.
+Source of truth: automate.valesordev.com / plugins/valesor-dev/bin/coordinator.
 Vendored into target repos as .claude/bin/coordinator. Don't edit it there.
 
     coordinator plan   [--roles implementation,sre,pm] [--max-lanes 3] [--json]
@@ -15,7 +15,7 @@ launches one `claude -p` session per lane, and reports from live state. The same
 command works from a terminal, cron, or a systemd timer. `run` without --apply
 prints the plan and stops.
 
-Lanes (only roles with a charter in .claude/roles/ run; Brian runs the rest in his own
+Lanes (only roles with a charter in .claude/roles/ run; the owner runs the rest in their own
 sessions):
 
   implementation   one lane per story: sprint stories at `ready` (or `in-progress`
@@ -27,7 +27,7 @@ sessions):
                    contract-review, stories at review for §8, its own stories to build,
                    or questions addressed to it, once SRE's lane has had its turn (it acts
                    on SRE's reviews). It readies and closes stories itself;
-                   its ADR and spec changes come to Brian as PRs.
+                   its ADR and spec changes come to the owner as PRs.
   pm               one lane running /pm-start-sprint when `sprint-state` says
                    first, closed, or planned. A finished sprint is reported, never
                    closed, unless --pm-close.
@@ -65,7 +65,7 @@ A role whose board hasn't changed since its last finished lane isn't started aga
 minutes, so `story` retries misses and the coordinator waits for it.
 
 State: <git-common-dir>/claude-coordinator/ (lock, active lanes, runs/<id>/).
-Exit 0 on a finished run, 1 when a lane failed or needs Brian, 2 for usage or
+Exit 0 on a finished run, 1 when a lane failed or needs the owner, 2 for usage or
 environment errors.
 """
 from __future__ import annotations
@@ -112,7 +112,7 @@ role = story.role
 #   sprint_run: story | session   one lane per story, or one session per role
 #   start_skill: <skill>          the skill the lane follows
 #   inbox: true                   story roles: also start a lane for questions addressed to the role
-#   approval: <text>              what Brian still has to approve when the lane's PR is open
+#   approval: <text>              what the owner still has to approve when the lane's PR is open
 #   watch_label: <label>          session roles: run when issues with this label are open
 #   watch_pr_section: <heading>   ...or when a merged role:<role> PR has this heading in its body
 #   lane_allow: [Bash(<cmd> <verb>:*), ...]  extra commands this role's lanes may run
@@ -285,7 +285,7 @@ _FROM = re.compile(r"<!-- from: ([\w-]+) -->")
 
 def _answers(c: str, role_name: str, asker: str | None) -> bool:
     """Is this comment the role answering the asker? The answer is the role's own handoff back
-    to whoever asked (`story comment --to <asker>`), so a punt to Brian or architecture, or a
+    to whoever asked (`story comment --to <asker>`), so a punt to the owner or architecture, or a
     record, leaves the question open. An older comment has no author stamp: a record by the
     role, or a handoff to someone else, counts."""
     frm, to = _FROM.search(c), _FOR.match(c.strip())
@@ -317,7 +317,7 @@ def own_comments(s: Story, role_name: str) -> int:
 
 def inbox_digests(role_name: str, stories: list[Story], ids: list[str] | None = None) -> dict[str, str]:
     """For each open question to a role, a digest of what the asker and anyone but the role has put on
-    the story. The role's own comments (its answer, its punt to Brian) don't count, so a lane that
+    the story. The role's own comments (its answer, its punt to the owner) don't count, so a lane that
     handled a question doesn't change it; a new comment from anyone else does."""
     open_q = set(questions_for(role_name, stories))
     out = {}
@@ -336,7 +336,7 @@ def sprint_number(v) -> int | None:
 
 
 # A story that needs what a lane may never have (docker, a cluster, the network, credentials) carries
-# this label: Brian runs it in his own session, and no lane starts, moves, or branches it.
+# this label: the owner runs it in their own session, and no lane starts, moves, or branches it.
 PERSON_ONLY = "person-only"
 
 
@@ -384,7 +384,7 @@ def select(stories: list[Story], state: dict, roles: list[str], running: set[str
         if f"{r}:inbox" in running:
             answering.add(r)
         elif r in tried:
-            waiting.append({"story": ", ".join(inbox[r]), "status": "-", "lane": r, "on": "Brian",
+            waiting.append({"story": ", ".join(inbox[r]), "status": "-", "lane": r, "on": "the owner",
                             "why": "a lane already tried these questions and nothing has changed"})
         elif len(lanes) + len(running) < max_lanes:
             lanes.append({"role": r, "story": None, "resume": False, "component": None, "inbox": True,
@@ -404,7 +404,7 @@ def select(stories: list[Story], state: dict, roles: list[str], running: set[str
             if s.status == "review":
                 wait(s, "in review", "§8 review / merge")
             elif person_only(s):
-                wait(s, "person-only: run it in your own session", "Brian")
+                wait(s, "person-only: run it in your own session", "the owner")
             elif s.id in running:
                 wait(s, "lane running", r)
             elif s.id in held:
@@ -430,14 +430,14 @@ def select(stories: list[Story], state: dict, roles: list[str], running: set[str
                 lanes.append({"role": r, "story": s.id, "resume": s.status == "in-progress",
                               "component": s.component})
     for s in sprint:
-        # the PM lane handles sprint transitions, never a story, so PM-owned stories are Brian's to see
+        # the PM lane handles sprint transitions, never a story, so PM-owned stories are the owner's to see
         if (s.lane not in roles or s.lane == "pm") and s.status not in ("done",):
             wait(s, f"lane {s.lane}", s.lane if s.status != "review" else "§8 review / merge")
 
-    for s in sprint:   # a session role's own person-only story: its lane leaves it alone, Brian sees it
+    for s in sprint:   # a session role's own person-only story: its lane leaves it alone, the owner sees it
         if s.lane in roles and kinds.get(s.lane) == "session" and person_only(s) \
                 and s.status in ("ready", "in-progress"):
-            wait(s, "person-only: run it in your own session", "Brian")
+            wait(s, "person-only: run it in your own session", "the owner")
 
     if "sre" in roles and kinds.get("sre") == "session" and active and "sre" not in running:
         work = [s for s in sprint if s.status == "draft" or s.status == "review"
@@ -490,7 +490,7 @@ def select(stories: list[Story], state: dict, roles: list[str], running: set[str
                 lanes.append({"role": "pm", "story": None, "resume": False, "component": None,
                               "close": True})
             else:
-                waiting.append({"story": "-", "status": "-", "lane": "pm", "on": "Brian",
+                waiting.append({"story": "-", "status": "-", "lane": "pm", "on": "the owner",
                                 "why": "every sprint story is done: run /pm-close-sprint"})
     for r in roles:  # session roles that watch a queue (product: its issues and handoffs)
         if kinds.get(r) != "session" or r in SESSION_TRIGGERS or not watch.get(r) or r in running:
@@ -718,7 +718,7 @@ def prompt_for(lane: dict, run_id: str, ctx: Ctx, sid: str = "", scratch: Path |
     if lane.get("close"):
         skill = "pm-close-sprint"
     head = (f"You are the `{r}` lane of automated sprint run {run_id}, started by the coordinator. "
-            f"Your role is already set. Brian isn't watching: don't wait for him, and don't ask "
+            f"Your role is already set. The owner isn't watching: don't wait for them, and don't ask "
             f"questions. If something needs a decision, record it on the story with "
             f"`.claude/bin/story comment <ID> --to <role>` (or in the PR for repo-wide choices) and stop. "
             f"Never merge, close, or approve a PR. Work from origin/main in this worktree. "
@@ -730,12 +730,12 @@ def prompt_for(lane: dict, run_id: str, ctx: Ctx, sid: str = "", scratch: Path |
             f"same thing: commit what you have, and end with `LANE RESULT: blocked: <what was denied>`.")
     if sid:   # a skill read from its file isn't expanded, and the shell may not expand it in a lane
         head += f" Your session id is {sid}: where a skill says `${{CLAUDE_SESSION_ID}}`, write {sid}."
-    head += (f" A story labelled `{PERSON_ONLY}` is Brian's: never start, move, branch, or build one. If "
+    head += (f" A story labelled `{PERSON_ONLY}` is the owner's: never start, move, branch, or build one. If "
              f"your work needs docker, a cluster, the network, or credentials, comment on the story "
-             f"`--to brian` that it should be `{PERSON_ONLY}`, and leave it.")
+             f"`--to owner` that it should be `{PERSON_ONLY}`, and leave it.")
     head += (" A lane can't push a change under .github/workflows or .github/actions: commit it on your branch, "
-             "don't try to push it, say on the story that Brian pushes it, and end with "
-             "`LANE RESULT: blocked: workflow change on <branch>`; the coordinator hands the branch to him.")
+             "don't try to push it, say on the story that the owner pushes it, and end with "
+             "`LANE RESULT: blocked: workflow change on <branch>`; the coordinator hands the branch to them.")
     head += (" Your worktree already starts at origin/main: create your branch with `git switch -c <branch>`, "
              "naming no start point. A branch of yours that is behind origin/main catches up with "
              "`git rebase origin/main` while it is unpushed, `git merge origin/main` once it is pushed. "
@@ -747,8 +747,8 @@ def prompt_for(lane: dict, run_id: str, ctx: Ctx, sid: str = "", scratch: Path |
     if lane.get("inbox"):
         body = (f" Read .claude/skills/{skill}/SKILL.md and do only the part that answers questions "
                 f"addressed to `{r}` (stories {', '.join(lane.get('asked') or [])} have one waiting). "
-                f"Answer each as that skill says, but a decision that is Brian's call (direction, "
-                f"palette, type, marks, voice) is not yours: reply `story comment <ID> --to brian` with "
+                f"Answer each as that skill says, but a decision that is the owner's call (direction, "
+                f"palette, type, marks, voice) is not yours: reply `story comment <ID> --to owner` with "
                 f"one recommendation, leave that question unanswered, and never decide it yourself. "
                 f"Take any doc change an answer needs through "
                 f"`.claude/skills/pre-pr/SKILL.md` including section 6 (Codex), then stop: "
@@ -1337,7 +1337,7 @@ def inspect(ctx: Ctx, lane: dict, wt: Path, outcome: dict) -> dict:
             res["watch_seen"] = {ref: now_items[ref] for ref in lane["watch"] if ref in now_items}
             res["watch_stuck"] = {ref: now_items[ref] for ref in untouched}
             res["watch_open"] = {ref: now_items[ref] for ref in lane["watch"]       # commented on, not closed:
-                                 if ref.startswith("#") and ref in now_items and ref not in untouched}  # Brian's
+                                 if ref.startswith("#") and ref in now_items and ref not in untouched}  # the owner's
         except CoordError:
             res["untouched"] = None
     if lane.get("inbox"):  # did the questions get answered? read the board, not the lane's words
@@ -1365,7 +1365,7 @@ def inspect(ctx: Ctx, lane: dict, wt: Path, outcome: dict) -> dict:
     res["verdict"], res["ok"] = verdict(lane, res)
     approval = ctx.settings(lane["role"])["approval"]
     if res["ok"] and res["pr"] and approval:
-        res["approval"] = approval  # the lane is done; the decision it left is Brian's
+        res["approval"] = approval  # the lane is done; the decision it left is the owner's
     return res
 
 
@@ -1839,14 +1839,14 @@ def gather(ctx: Ctx, a, prune: bool = False) -> tuple[dict, list[Story], list[di
             lane["board_before"] = {x.id: [x.status, x.notes] for x in stories if x.id not in others}
             lane["own_before"] = {x.id: own_comments(x, lane["role"]) for x in stories if x.id in others}
     for r, why in {**problems, **unreadable}.items():
-        waiting.append({"story": "-", "status": "-", "lane": r, "why": why, "on": "Brian"})
+        waiting.append({"story": "-", "status": "-", "lane": r, "why": why, "on": "the owner"})
     for r, items in open_items.items():   # what a lane left alone, or left open for a decision
         now = {i["ref"]: i["updated"] for i in items}
         for key, why in (("stuck", "left untouched by the last lane"),
-                         ("open", "left open for Brian's decision")):
+                         ("open", "left open for the owner's decision")):
             for ref, upd in (state_get(ctx, f"{r}:{key}", {}) or {}).items():
                 if now.get(ref) == upd:
-                    waiting.append({"story": ref, "status": "-", "lane": r, "on": "Brian", "why": why})
+                    waiting.append({"story": ref, "status": "-", "lane": r, "on": "the owner", "why": why})
     return state, stories, lanes, waiting, live, sig
 
 
@@ -1936,7 +1936,7 @@ def board_now(ctx: Ctx) -> str:
 
 
 def pr_settled(ctx: Ctx, number: int | None) -> bool:
-    """The lane that set this role's signature opened a PR. Once Brian merges or closes it, the
+    """The lane that set this role's signature opened a PR. Once the owner merges or closes it, the
     board may be unchanged, but what the lane left waiting on it (a draft held for an ADR's
     ruling, say) is now decided, or the work isn't there: the role runs again."""
     if number is None:
@@ -2002,10 +2002,10 @@ def render_report(run_id, results, waiting, state, ran=None, now_status: dict | 
     needs += [f"- {r['lane']}: {handoff_steps(r['handoff'])}" for r in results if handoff_ready(r.get("handoff"))]
     arch_done = any(r.get("role") == "architecture" and r.get("ok") for r in results)   # requested isn't done
 
-    def still_on_architecture(w):   # its lane can leave a story where it was (a ruling for Brian)
+    def still_on_architecture(w):   # its lane can leave a story where it was (a ruling for the owner)
         return not arch_done or now_status is None or now_status.get(w["story"]) == w["status"]
     needs += [f"- {w['story']}: {w['why']} — waiting on {w['on']}" for w in waiting
-              if w["on"] in ("Brian", "pm", "§8 review / merge") or w["lane"] not in ran
+              if w["on"] in ("the owner", "pm", "§8 review / merge") or w["lane"] not in ran
               or (w["on"] == "architecture" and still_on_architecture(w))]
     if needs:
         out += ["", "## Needs attention", ""] + needs

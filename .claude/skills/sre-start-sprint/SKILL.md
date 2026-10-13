@@ -12,7 +12,7 @@ Follow the order of work in your role file.
 ## Preflight
 
 0. Run `.claude/bin/role require sre ${CLAUDE_SESSION_ID}`. If it
-   fails, stop and tell Brian to run `/role sre` first.
+   fails, stop and tell the owner to run `/role sre` first.
    Then confirm the repo has switched over: `.claude/roles/_repo.md` has
    `stories: github` and `sprints: project`. If it doesn't, stop. This skill
    works the GitHub board, and this repo still keeps stories in files.
@@ -49,9 +49,9 @@ Follow the order of work in your role file.
    "§8 instrumentation"`. Architecture moves the story to `done`.
 3. **Your own backlog**: `story list --sprint <n> --lane sre`, in Rank order.
    Skip a story whose `story show` lists `Labels: person-only`: it needs what a
-   lane never has (docker, a cluster, the network, credentials), so Brian runs it,
+   lane never has (docker, a cluster, the network, credentials), so the owner runs it,
    and `story start` refuses it in a lane. When a story you reach needs those and
-   isn't labelled, comment `--to brian` that it should be `person-only`, and leave
+   isn't labelled, comment `--to owner` that it should be `person-only`, and leave
    it. Start each other one with `story start <ID>`, and deliver it in an `sre/` PR
    carrying `Story: <ID>` and `role:sre`. The merge moves it to `review`.
 

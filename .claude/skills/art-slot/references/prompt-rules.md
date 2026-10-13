@@ -5,7 +5,7 @@ to the slot and the candidate.
 
 Each block, in this order:
 
-1. **Request line:** `<slot> · candidate <letter> · AD v<n>`. Brian matches files to candidates by it.
+1. **Request line:** `<slot> · candidate <letter> · AD v<n>`. The owner matches files to candidates by it.
 2. **Format:** the composition type, with its aspect ratio and orientation, from the spec (the generator picks the pixels; treatment
    and the build resize). State where the empty zone is: "keep the left third nearly empty".
 3. **Subject:** what's in the image, concrete nouns first, then position and scale.

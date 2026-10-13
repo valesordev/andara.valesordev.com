@@ -10,7 +10,7 @@ allowed-tools: Bash(.claude/bin/role:*) Bash(.claude/bin/sprint-state:*) Bash(.c
 ## Preflight
 
 0. Run `.claude/bin/role require pm ${CLAUDE_SESSION_ID}`. If it fails, stop
-   and tell Brian to run `/role pm` first.
+   and tell the owner to run `/role pm` first.
    Then confirm the repo has switched over: `.claude/roles/_repo.md` has
    `stories: github` and `sprints: project`. If it doesn't, stop. This skill
    works the GitHub board, and this repo still keeps stories in files.
@@ -46,9 +46,9 @@ allowed-tools: Bash(.claude/bin/role:*) Bash(.claude/bin/sprint-state:*) Bash(.c
   re-checked against the board. Anything now `done` drops out. Anything the
   close-out missed that is still `in-progress` or `review` is added and
   flagged as a status finding.
-- **DEFECTS**: every `§9 defect → AW-INF-NNN` in `docs/sprints/<PREV>-demo.md`.
+- **DEFECTS**: every `§9 defect → GS-INF-NNN` in `docs/sprints/<PREV>-demo.md`.
 - If PREV has no close-out or no demo on `origin/main`, it wasn't closed
-  properly. Stop and tell Brian; closing is `/pm-close-sprint`'s job.
+  properly. Stop and tell the owner; closing is `/pm-close-sprint`'s job.
 
 ## Activate a planned sprint (`state: planned`)
 

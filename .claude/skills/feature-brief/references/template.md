@@ -30,7 +30,7 @@ commons in under 5 minutes without reading docs."
 ## Decisions
 - <call> — <one-line reason>
 
-## Open for Brian
+## Open for the owner
 - <question> — recommendation: <option>, because …
 
 ## Sources

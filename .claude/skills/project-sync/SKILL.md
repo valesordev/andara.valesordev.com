@@ -22,10 +22,10 @@ Stories change on the board only after their PR merges.
 1. `git fetch origin`.
 2. Run `.claude/bin/project-mirror` (a dry run).
    - If it says **not configured**, stop and say so. This repo has no `project:` in `.claude/roles/_repo.md`.
-   - If `gh` reports a missing scope, stop and ask Brian to run `! gh auth refresh -s project`.
+   - If `gh` reports a missing scope, stop and ask the owner to run `! gh auth refresh -s project`.
    - The summary line comes just before the Project URL. If it is `in sync`, skip to step 4.
 3. Unless `$ARGUMENTS` contains `--dry-run`, run `.claude/bin/project-mirror --apply`.
-   - Writing to GitHub is outward-facing. Apply only when Brian asked for the sync, either directly or by running a sprint skill that calls this step.
+   - Writing to GitHub is outward-facing. Apply only when the owner asked for the sync, either directly or by running a sprint skill that calls this step.
    - Otherwise, show the dry run's summary line and ask first.
 4. Run the dry run again. Its summary line must be `in sync`. If it doesn't, report the remaining changes; don't loop.
 

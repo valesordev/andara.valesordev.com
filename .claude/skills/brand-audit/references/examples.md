@@ -1,6 +1,6 @@
 # Examples
 
-**Prompt:** (visual-designer) "/brand-audit valesordev freeze https://app.notion.com/p/3f26a339c86181249193d3b987def934"
+**Prompt:** (visual-designer) "/brand-audit valesordev freeze https://app.notion.com/p/<page-id>"
 **Behavior:** After `role require visual-designer`, fetches the page's image block, saves it untouched as
 `brands/valesordev/references/target-homepage.png`, and records URL, file name, 1586 × 992, date, and sha256 in
 `references/README.md`. Then audits: samples paper (~#FAFAF7), ink (#111), muted grey, rule grey, and one vermilion
@@ -18,7 +18,7 @@ core. Flags that "thin rules" also appears in the Valesor core: proposes how S9'
 so the imprints don't converge.
 
 **Prompt:** "Audit approved, with the band moved to core."
-**Behavior:** Records Brian's change in Decisions, flips every line to `[DECIDED <date>]` on the same branch, and
+**Behavior:** Records the owner's change in Decisions, flips every line to `[DECIDED <date>]` on the same branch, and
 names the next action: derive tokens from the decided palette and type.
 
 **Prompt:** "Just generate the tokens from the screenshot."
@@ -26,4 +26,4 @@ names the next action: derive tokens from the decided palette and type.
 the PR small so review is quick.
 
 **Non-triggers:** "Write the illustration system" → art-direction. "Does the built homepage match the brand?" →
-brand-qa. "Review these Andara concepts" → andaras-world art-review.
+brand-qa. "Review these game concepts" → that game's concept-art role.

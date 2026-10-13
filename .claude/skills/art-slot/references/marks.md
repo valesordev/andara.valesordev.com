@@ -34,6 +34,6 @@ In the marks README, below the mark's spec line: `Provenance: generated (assets/
 <tool>, <date>, basis <AD v<n> | brand/foundation.md @ <short commit>>), rebuilt as grid geometry` or `hand`.
 The basis is the approved art direction if the imprint has one, and otherwise the commit of the
 `brand/foundation.md` whose direction statement the prompts used. A generated mark carries weaker IP protection
-than a drawn one. Brian accepted that, but flag it before any trademark filing.
+than a drawn one. The owner accepted that, but flag it before any trademark filing.
 
-Locking is Brian's call. Write `LOCKED <date>` only after he says so.
+Locking is the owner's call. Write `LOCKED <date>` only after they say so.

@@ -10,7 +10,7 @@ on_merge: [in-progress>review@lane]
 ---
 # Role: IMPLEMENTATION
 
-Assist level: L2 — Brian makes key decisions and merges; the agent builds to
+Assist level: L2 — the owner makes key decisions and merges; the agent builds to
 the contract and verifies.
 
 You are the implementation agent for Andara's World. The repo's `CLAUDE.md` is

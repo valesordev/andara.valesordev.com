@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """Story operations on a repo's GitHub Project, for role sessions.
 
-Source of truth: automate.bashburn.com / plugins/valesor-dev/bin/story.
+Source of truth: automate.valesordev.com / plugins/valesor-dev/bin/story.
 Vendored into target repos as .claude/bin/story by `make install`.
 
 Stories are issues titled `<ID> — <title>` in the repo's org Project. The issue
@@ -11,7 +11,7 @@ Sprint, Plan, Rank and Story ID are Project fields. Comments carry feedback and
 block GraphQL.
 
     story show <ID> [--comments N]
-    story list [--plan P] [--sprint S] [--cycle N] [--status S] [--lane L] [--prefix AW]
+    story list [--plan P] [--sprint S] [--cycle N] [--status S] [--lane L] [--prefix GS]
     story create --comp SRV --title T --lane L --size S --risk R --component C
                  --body-file F [--epic EPIC-NN] [--depends ID,ID]
     story start <ID>                      ready -> in-progress (the story's lane)
@@ -58,7 +58,7 @@ story_components (the --comp codes; default SRV, CLI, INF, CLT), and
 The session id comes from --sid, or $CLAUDE_SESSION_ID (set by the
 SessionStart hook).
 
-Several repos can share one Project (Andara's server and content repos do).
+Several repos can share one Project (a game's server and content repos, say).
 Reads see every story on it, so `--depends` and `show` can name another repo's
 story. Writes touch only this repo's stories: an ID with another prefix, or an
 issue in another repository, is refused.
@@ -275,7 +275,7 @@ class Who:
 
     def require(self) -> None:
         if self.name is None:
-            raise StoryError("no role set for this session; ask Brian to run /role <name>")
+            raise StoryError("no role set for this session; ask the owner to run /role <name>")
 
 
 def session_role(root: Path, sid: str | None) -> Who:
@@ -409,7 +409,7 @@ def _move(b: Board, who: Who, sid: str, to: str, note: str | None, merge: bool =
     if frm == to:
         return f"{sid} is already {to}"
     if os.environ.get("COORDINATOR_LANE") and not merge and PERSON_ONLY in labels_of(b.issue(it["number"], it["repo"])):
-        raise StoryError(f"{sid} is {PERSON_ONLY}: Brian runs it in his own session, and no lane moves it")
+        raise StoryError(f"{sid} is {PERSON_ONLY}: the owner runs it in their own session, and no lane moves it")
     if not who.can_move(frm, to, it["fields"].get("Lane"), merge):
         raise StoryError(f"role {who.name} can't move {sid} {frm} → {to} "
                          f"(lane {it['fields'].get('Lane') or '-'}); see CLAUDE.md §2")
@@ -460,7 +460,7 @@ def cmd_comment(b: Board, who: Who, a) -> str:
     who.require()
     if bool(a.to) == bool(a.record):
         raise StoryError("give exactly one of --to ROLE or --record NAME")
-    me = who.name if not who.unrestricted else "brian"
+    me = who.name if not who.unrestricted else "owner"
     to = a.to
     if to:  # an alias (`design`, `impl`) is written as the role it names, or readers never match it
         full = role.Roles(role.repo_root(Path.cwd()) or Path.cwd()).resolve(to)

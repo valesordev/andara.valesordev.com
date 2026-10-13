@@ -10,7 +10,7 @@ allowed-tools: Bash(.claude/bin/role:*) Bash(.claude/bin/sprint-state:*) Bash(.c
 ## Preflight
 
 0. Run `.claude/bin/role require implementation ${CLAUDE_SESSION_ID}`. If it
-   fails, stop and tell Brian to run `/role implementation` first.
+   fails, stop and tell the owner to run `/role implementation` first.
    Then confirm the repo has switched over: `.claude/roles/_repo.md` has
    `stories: github` and `sprints: project`. If it doesn't, stop. This skill
    works the GitHub board, and this repo still keeps stories in files.

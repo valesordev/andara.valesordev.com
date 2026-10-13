@@ -1,6 +1,6 @@
 ---
 name: art-slot
-description: Fill one art slot for an imprint with generated artwork. Spec and brief the slot against one of the illustration system's composition types, write candidate prompts for Brian's ChatGPT project, review the candidates after treatment, then install the selected one as a source in the imprint's brand assets with its treatment, build outputs, and provenance. Marks, small cuts, and lockups go through the same flow and end as SVG on the kit's grid. Also swaps a slot to Brian's hand-made replacement. Trigger on "/art-slot", "we need a hero for System 9", "prompts for the valesordev OG image", "here are the hero candidates", "generate a mark for solo7productions", "I drew the hero, swap it in". Requires the visual-designer role. Not for an imprint's overall style (art-direction), reading a target image (brand-audit), tokens or type (visual-designer, directly), Andara concept art (andaras-world concept-sheet), or building pages (implementation).
+description: Fill one art slot for an imprint with generated artwork. Spec and brief the slot against one of the illustration system's composition types, write candidate prompts for the owner's ChatGPT project, review the candidates after treatment, then install the selected one as a source in the imprint's brand assets with its treatment, build outputs, and provenance. Marks, small cuts, and lockups go through the same flow and end as SVG on the kit's grid. Also swaps a slot to the owner's hand-made replacement. Trigger on "/art-slot", "we need a hero for System 9", "prompts for the valesordev OG image", "here are the hero candidates", "generate a mark for solo7productions", "I drew the hero, swap it in". Requires the visual-designer role. Not for an imprint's overall style (art-direction), reading a target image (brand-audit), tokens or type (visual-designer, directly), a game's concept art (that game's concept-art role), or building pages (implementation).
 argument-hint: "<slug> <slot> [candidates | select <letter> | hand <file>]"
 allowed-tools: Bash(.claude/bin/role:*) Bash(make:*) Bash(python3 brands/_tools/treat/*) Bash(inkscape:*) Bash(potrace:*) Bash(git log:*)
 ---
@@ -13,7 +13,7 @@ Paths below are relative to `brands/<slug>/` unless they start with `brands/`.
 
 ## Preflight
 0. Run `.claude/bin/role require visual-designer ${CLAUDE_SESSION_ID}`. If it
-   fails, stop and tell Brian to run `/role visual-designer`.
+   fails, stop and tell the owner to run `/role visual-designer`.
 1. Read `assets/slots.md` and the slot file `assets/slots/<slot>.md` if it
    exists. The request and the slot's `Status` say which stage you're in.
 2. Read `brand/foundation.md` and `tokens/tokens.json`. For an **illustration**
@@ -22,7 +22,7 @@ Paths below are relative to `brands/<slug>/` unless they start with `brands/`.
    direction statement in an approved `brand/foundation.md`. Its provenance
    basis is then that file's commit, not an AD version.
 3. Check that `.gitignore` covers `brands/*/assets/candidates/`. If it doesn't,
-   ask Brian before adding it (unowned path). Candidates are never committed.
+   ask the owner before adding it (unowned path). Candidates are never committed.
 
 ## 1. Open the slot (Status: `brief`)
 1. Add a row to `assets/slots.md` (`references/slot-template.md`). Slot ids
@@ -52,7 +52,7 @@ Set Status `prompted`.
 3. Review with `references/review.md`. Add the table to the slot file, and
    recommend one candidate, an iteration (revised prompts for the closest
    one), or rejecting all of them.
-4. Brian selects. Record his pick and reason in his words. The others become
+4. The owner selects. Record their pick and reason in their words. The others become
    `Rejected` lines with the reason. Their files stay uncommitted.
 
 ## 3. Install (Status: `installed`)
@@ -72,13 +72,13 @@ Set Status `prompted`.
 - Run `make <slug>`. View the outputs, check them against the spec's
   done-when list, and list any that fail.
 - If a built page uses the slot, name the site in the PR body.
-- Remind Brian to upload the source to the ChatGPT project's files, so later
+- Remind the owner to upload the source to the ChatGPT project's files, so later
   slots can stay consistent with it.
 
 ## 4. Swap to hand-made (`hand <file>`)
-Brian's replacement goes next to the generated source as
+The owner's replacement goes next to the generated source as
 `<slot>.<kra|svg|png>`. Rename the generated source to `<slot>.generated.png`,
-which no rule reads, and keep it until he says to delete it. In the same
+which no rule reads, and keep it until they say to delete it. In the same
 change, point the slot's Makefile rule at
 the new source. A `.kra` or `.svg` gets an export step into
 `brands/<slug>/dist/art/src/<slot>.png` ahead of the treatment

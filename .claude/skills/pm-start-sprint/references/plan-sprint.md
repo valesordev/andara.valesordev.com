@@ -4,7 +4,7 @@ Inputs from the calling skill:
 
 - **NEXT**: the sprint to write, from `.claude/bin/sprint-state` (`next:`)
 - **CARRYOVER**: the stories NEXT inherits, with why each one is unfinished
-- **DEFECTS**: any `§9 defect → AW-INF-NNN` stories the last demo produced
+- **DEFECTS**: any `§9 defect → GS-INF-NNN` stories the last demo produced
 
 Never assume NEXT is SPRINT-01, and never reuse a number `sprint-state` didn't give you.
 
@@ -35,17 +35,17 @@ one demoable slice, not everything that's ready.
 
 ## 4. Checkpoint: stop before writing
 
-Send Brian one message (the calling skill may add to it) containing:
+Send the owner one message (the calling skill may add to it) containing:
 
 - NEXT's demo goal, why, and what it is not
 - the story list per role (architecture, SRE, implementation), in pickup order
 - any game-design questions (up to 3, per repo §6)
 
-Wait for his answer, then write.
+Wait for their answer, then write.
 
 ## 5. Write
 
-Every step is a board change with `.claude/bin/story`, made after Brian's answer:
+Every step is a board change with `.claude/bin/story`, made after the owner's answer:
 
 1. New stories: write each contract to a file in your scratch directory, then
    `story create --comp <SRV|CLI|INF|CLT> --title … --lane … --size … --risk …

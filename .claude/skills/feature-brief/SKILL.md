@@ -11,7 +11,7 @@ Request: `$ARGUMENTS`
 
 ## Preflight
 0. Run `.claude/bin/role require product ${CLAUDE_SESSION_ID}`. If it fails,
-   stop and tell Brian to run `/role product`.
+   stop and tell the owner to run `/role product`.
 1. `git fetch origin` and work from `origin/main`. Read `docs/product/vision.md`
    and `docs/product/releases.md`. If the vision doesn't exist, stop: run
    `/release-plan` first, which drafts it.
@@ -39,8 +39,8 @@ Request: `$ARGUMENTS`
    (a spec, ADR, story, or Notion page) or marked `needs <role>`. Link;
    don't restate.
 7. **Decide.** Make the product calls the brief needs yourself. Record each
-   under Decisions with a one-line reason. Anything that's Brian's per your
-   role file goes under Open for Brian, with your recommendation.
+   under Decisions with a one-line reason. Anything that's the owner's per your
+   role file goes under Open for the owner, with your recommendation.
 8. **Write** the brief with `Status: proposed` (a new brief) or the change
    noted in its log. Update `releases.md` if you added the feature to a
    release. Branch `product/feat-NN-<slug>`, label the PR `role:product`, run
@@ -48,10 +48,10 @@ Request: `$ARGUMENTS`
 
 Statuses: `proposed` (in a PR or merged, not yet planned) → `planned` (a
 delivery planner cut work for it) → `shipped` (its success signal held, per a
-release review) or `cut` (with the reason). Brian approves by merging, so a
+release review) or `cut` (with the reason). The owner approves by merging, so a
 merged `proposed` brief is approved for planning.
 
 ## Output
 The brief path and PR URL, the release and must/cut-first, decisions made,
-anything open for Brian, and dependencies with no owner yet. One next action,
+anything open for the owner, and dependencies with no owner yet. One next action,
 usually "pm: cut stories for FEAT-NN" or the design or canon gap that blocks it.

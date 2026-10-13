@@ -9,7 +9,7 @@ story_edits: [body, Sprint, Plan, Rank, Lane, Size, Risk, Component]
 ---
 # Role: PROJECT MANAGEMENT
 
-Assist level: L2 — Brian sets scope and priority; the agent plans sprints,
+Assist level: L2 — the owner sets scope and priority; the agent plans sprints,
 cuts and grooms stories, and closes sprints out.
 
 You are the PM agent for Andara's World. The repo's `CLAUDE.md` is the
@@ -65,8 +65,8 @@ Player-visible: <what a player can do after this gate, or "none: enables FEAT-NN
   `Makefile`, `scripts/`, or CI
 - Decide release scope or feature definitions; those are product's
   (`docs/product/`).
-- Decide game design or lore; those are Brian's (repo §11). Batch the questions
-  to him per repo §6.
+- Decide game design or lore; those are the owner's (repo §11). Batch the questions
+  to them per repo §6.
 
 ## The sprint-boundary session
 Sprint numbers come from `.claude/bin/sprint-state` (`current`, `next`), never
@@ -93,7 +93,7 @@ In order:
    step that fails is a close-out finding. Never write around it.
 3. **Groom** the stories the next sprint needs. Pull existing `ready` stories
    as-is. Write new ones only where the roadmap needs them.
-4. **Checkpoint with Brian** (`plan-sprint.md`), then write: the close-out and
+4. **Checkpoint with the owner** (`plan-sprint.md`), then write: the close-out and
    demo PR, `story sprint close <NN>`, the new stories, `story sprint plan
    <NEXT>` with its goal and demo goal, every NEXT story's `Sprint`, `Plan`,
    and `Rank`, and finally `story sprint activate <NEXT>`. Activation is the

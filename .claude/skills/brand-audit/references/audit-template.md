@@ -7,7 +7,7 @@
 **Status:** draft | approved <YYYY-MM-DD> (PR #<n>)
 
 Classes: **core** (persists across the brand) · **candidate** (test before adopting) · **hero** (this composition only).
-Every line is `[PROPOSED]` until Brian decides it at PR review, then `[DECIDED <date>]`.
+Every line is `[PROPOSED]` until the owner decides it at PR review, then `[DECIDED <date>]`.
 
 ## Palette
 | Role (observed) | Hex | Area ≈ | Where | Class | Status | Why |
@@ -21,7 +21,7 @@ Artefacts (not colours): <noise greys, compression fringes>
 | Role | Sample | Class/family guess | Size vs body | Weight · case · tracking | Class | Status |
 |---|---|---|---|---|---|---|
 
-Font candidates (OSS, self-hostable): <role → 2–3 options>. Choosing is Brian's.
+Font candidates (OSS, self-hostable): <role → 2–3 options>. Choosing is the owner's.
 
 ## Layout
 Grid, columns, max width, gutters, rhythm, rule weights. Same table shape: observation · class · status · why.
@@ -39,9 +39,9 @@ Each repeated pattern: name it as a component candidate (e.g. `ProjectRow`), wit
 ## Distinctness
 - <core item> overlaps <sibling>'s core <item>: <keep, change, or ask>
 
-## Open questions for Brian
+## Open questions for the owner
 1. <question> — recommend <option>, because <reason>.
 
 ## Decisions
-- <date> Brian: <what he changed at review, in his words>
+- <date> the owner: <what they changed at review, in their words>
 ```

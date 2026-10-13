@@ -13,7 +13,7 @@ architecture, SRE, and implementation roles have stopped and reported.
 ## Preflight
 
 0. Run `.claude/bin/role require pm ${CLAUDE_SESSION_ID}`. If it fails, stop
-   and tell Brian to run `/role pm` first.
+   and tell the owner to run `/role pm` first.
    Then confirm the repo has switched over: `.claude/roles/_repo.md` has
    `stories: github` and `sprints: project`. If it doesn't, stop. This skill
    works the GitHub board, and this repo still keeps stories in files.
@@ -24,15 +24,15 @@ architecture, SRE, and implementation roles have stopped and reported.
    | state | Do |
    |---|---|
    | `active` | continue: **NN** = `current`, **NEXT** = `next` (numbers come from the tool, never from memory or examples) |
-   | `closed` or `planned` | stop: nothing is active to close. Point Brian to `/pm-start-sprint` |
-   | `first` | stop: no sprint exists yet. Point Brian to `/pm-start-sprint` |
+   | `closed` or `planned` | stop: nothing is active to close. Point the owner to `/pm-start-sprint` |
+   | `first` | stop: no sprint exists yet. Point the owner to `/pm-start-sprint` |
    | `invalid` / error | stop and report the output verbatim; don't repair sprint issues |
 
 3. Check for an open PM PR. If one already closes NN, stop and report its URL.
 4. Read the session-start documents in the order repo §11 gives them.
 5. List NN's stories: `story list --sprint <nn>`. If any is still `ready`,
    `in-progress`, or `review` with no blocker or comment explaining it, the
-   working roles may not be finished. Tell Brian which stories, and ask
+   working roles may not be finished. Tell the owner which stories, and ask
    whether to proceed before closing anything.
 
 ## Close
@@ -48,7 +48,7 @@ architecture, SRE, and implementation roles have stopped and reported.
    `origin/main`. If this clone hasn't run `make bootstrap`, run it first.
    Record what actually happened. If a step fails, the demo goal wasn't met:
    say so in the close-out and don't write around it. Mark any step that isn't
-   a make target or an `andara-cli` command as `§9 defect → AW-INF-NNN`, with
+   a make target or an `game-cli` command as `§9 defect → GS-INF-NNN`, with
    an SRE story behind it.
 3. **Triage** GitHub issues opened during NN, `content-gap` issues, and story
    comments addressed `--to pm`. For each one, say which role owes it and
@@ -58,14 +58,14 @@ architecture, SRE, and implementation roles have stopped and reported.
 
 Read `.claude/skills/pm-start-sprint/references/plan-sprint.md` and follow it
 with NEXT, CARRYOVER = the close-out's carryover, and DEFECTS = the demo's §9
-defects. At its checkpoint, lead your message to Brian with:
+defects. At its checkpoint, lead your message to the owner with:
 
 - the close-out: done, carried over, defects
 - whether the demo passed, step by step
 
 ## Ship
 
-After Brian's answer, in this order:
+After the owner's answer, in this order:
 
 1. On one `pm/<next-lower>-<slug>` branch, commit the close-out, the demo, and
    any roadmap or glossary change. Run `make check`, then `/pre-pr`, push, and

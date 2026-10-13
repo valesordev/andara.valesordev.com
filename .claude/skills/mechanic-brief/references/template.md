@@ -19,7 +19,7 @@ What the player should feel. One short paragraph.
 
 **Recommendation:** <option>, because <reason>.
 **Concept at work:** <term>: <what it means here, what it changes>.
-**Decided by Brian:** <answer, with date> / open
+**Decided by the owner:** <answer, with date> / open
 
 ## Stress test
 - Degenerate strategy: <what a rational player does always> → counter / accepted.
@@ -36,7 +36,7 @@ What the player should feel. One short paragraph.
 
 ## Open questions
 - Canon questions (routed to world-builder):
-- Design questions (Brian):
+- Design questions (the owner):
 
 ## Spec readiness
-Ready for `/mechanic-spec` when every decision above is decided by Brian.
+Ready for `/mechanic-spec` when every decision above is decided by the owner.

@@ -10,8 +10,8 @@ Valesor visual audit): branches `design/s7m-val-003-visual-audit`, runs `story s
 `--record "Verification"`.
 
 **Prompt:** (visual-designer role) "/design-start-sprint" when implementation asks which accent red to use
-**Behavior:** The palette is Brian's call. Brings him one recommendation with the sampled hex and contrast ratios,
-records his answer in the tokens on a `design/` branch, and replies on the story with the PR.
+**Behavior:** The palette is the owner's call. Brings them one recommendation with the sampled hex and contrast ratios,
+records their answer in the tokens on a `design/` branch, and replies on the story with the PR.
 
 **Prompt:** (visual-designer role) "/design-start-sprint" with no active sprint
 **Behavior:** `sprint-state` reports `state: planned`. Stops and reports it: PM hasn't activated the sprint.

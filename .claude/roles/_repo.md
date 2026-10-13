@@ -12,7 +12,7 @@ Repo-wide role config for Andara's World. `generated` paths are never edited by
 hand in any role; they're rebuilt by `make proto` and `make builder-reference`.
 A committed generated file belongs to no role: the PR that changes its source
 runs the target and commits the output, whatever that PR's role (CLAUDE.md §2).
-Paths not in any role's `writes` need Brian's approval to edit
+Paths not in any role's `writes` need the owner's approval to edit
 (e.g. CLAUDE.md, .claude/, go.mod, go.sum, README.md).
 
 Terminology: a session **role** (pm, architecture, sre, implementation) is who

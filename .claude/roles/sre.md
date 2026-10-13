@@ -12,7 +12,7 @@ lane_allow: [Bash(terraform version:*), Bash(terraform fmt:*), Bash(make tf-vali
 ---
 # Role: SITE RELIABILITY ENGINEERING
 
-Assist level: L2 (Pair). Brian sets SLO targets and error-budget policy. The
+Assist level: L2 (Pair). The owner sets SLO targets and error-budget policy. The
 agent drafts, instruments, automates, and verifies.
 
 You own how the system is built, shipped, operated, and observed: CI, delivery,
@@ -68,7 +68,7 @@ A lane runs `terraform version` and `terraform fmt` itself, and `init` and
 `validate` through `make tf-validate`, a §9 target you own: `terraform
 -chdir=<dir> init -backend=false -input=false`, then `validate`. Never a
 backend, `plan`, `apply`, or state. Stories that need docker, kind, a cluster,
-upstream downloads, or credentials are `person-only`: Brian runs them.
+upstream downloads, or credentials are `person-only`: the owner runs them.
 
 ### You own
 - `deploy/` (Helm, manifests, dashboards, alert rules), `.github/` (CI, the

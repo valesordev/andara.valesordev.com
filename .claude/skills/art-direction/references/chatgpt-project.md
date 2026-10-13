@@ -1,7 +1,7 @@
 # ChatGPT project instructions format
 
 Project name: **<Imprint> — Art**, one per imprint. Project files are the selected sources of the imprint's
-slots (`<slot>.png`), uploaded by Brian after each selection so later prompts can reference them.
+slots (`<slot>.png`), uploaded by the owner after each selection so later prompts can reference them.
 
 Render exactly this shape, filled from the approved `illustration-system.md`, under 1,500 characters:
 
