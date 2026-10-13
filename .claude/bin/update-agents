@@ -1,0 +1,171 @@
+#!/usr/bin/env python3
+"""Update this repo's vendored agents from a signed tag of the agent-config repo they come from.
+
+Source of truth: automate.valesordev.com / plugins/valesor-dev/bin/update-agents.
+Vendored into target repos as .claude/bin/update-agents. Don't edit it there.
+
+    update-agents <tag> [--no-pr] [--repo OWNER/NAME|URL] [--target NAME]
+
+From a clean `main` that matches origin/main:
+
+1. Reads `repo` and `target` from .claude/.automate.json. An install made before
+   `repo` was recorded needs `--repo` once; `--target` names the target of a repo
+   with no install yet.
+2. Fetches <tag> from the repo into a scratch directory and refuses unless
+   `git tag -v <tag>` verifies it with your git signing setup (for SSH signatures,
+   `gpg.ssh.allowedSignersFile`).
+3. There: `make deps` (if it has a deps.json), `make install`, then `make check-target`,
+   with TARGET=<target> DEST=<this repo>.
+4. Here: creates the branch chore/update-agents-<tag>, commits .claude/ and .github/,
+   pushes, and opens a PR against main. `--no-pr` stops after the commit.
+
+Exit 0 when done or already at <tag>; 1 when refused or a step fails, with nothing
+committed. A failed install can leave .claude/ changed: `git checkout -- .claude .github`.
+
+The repo's Makefile carries one line for it:
+
+    update-agents: ## Update the vendored agents from a signed tag: make update-agents REF=<tag> [PR=0]
+    	@.claude/bin/update-agents "$(REF)" $(if $(filter 0,$(PR)),--no-pr)
+"""
+from __future__ import annotations
+
+import argparse
+import json
+import re
+import subprocess
+import sys
+import tempfile
+from pathlib import Path
+
+MANIFEST = ".claude/.automate.json"
+BASE = "main"
+PATHS = (".claude", ".github")
+TAG = re.compile(r"[A-Za-z0-9][\w.+-]*")
+GITHUB = re.compile(r"[\w.-]+/[\w.-]+")
+
+
+class Refused(Exception):
+    pass
+
+
+def git(cwd: Path, *args: str, check: bool = True) -> str:
+    r = subprocess.run(["git", "-C", str(cwd), *args], capture_output=True, text=True)
+    if check and r.returncode != 0:
+        raise Refused(f"git {' '.join(args)}: {(r.stderr or r.stdout).strip()}")
+    return r.stdout.strip() if r.returncode == 0 else ""
+
+
+def step(cmd: list[str], what: str) -> None:
+    """Run a step with its output shown; stop on failure."""
+    print(f"update-agents: {what}", flush=True)
+    if subprocess.run(cmd).returncode != 0:
+        raise Refused(f"{what} failed")
+
+
+def url_of(repo: str) -> str:
+    return f"https://github.com/{repo}.git" if GITHUB.fullmatch(repo) else repo
+
+
+def preflight(root: Path, pr: bool) -> None:
+    branch = git(root, "symbolic-ref", "--short", "-q", "HEAD", check=False)
+    if branch != BASE:
+        raise Refused(f"on {branch or 'a detached HEAD'}; switch to {BASE} first")
+    if git(root, "status", "--porcelain"):
+        raise Refused("the working tree has changes; commit or stash them first")
+    if not git(root, "remote", "get-url", "origin", check=False):
+        if pr:
+            raise Refused("no origin remote to open the PR on (use --no-pr)")
+        return
+    git(root, "fetch", "-q", "origin", BASE)
+    if git(root, "rev-parse", "HEAD") != git(root, "rev-parse", f"origin/{BASE}"):
+        raise Refused(f"{BASE} differs from origin/{BASE}; pull (or push) first")
+
+
+def fetch_tag(scratch: Path, url: str, tag: str) -> None:
+    """The tag, and only the tag, checked out in `scratch`; refused unless its signature verifies."""
+    git(scratch, "init", "-q")
+    git(scratch, "remote", "add", "origin", url)
+    if not git(scratch, "ls-remote", "--tags", "origin", f"refs/tags/{tag}"):
+        raise Refused(f"{url} has no tag {tag}")
+    git(scratch, "fetch", "-q", "--depth", "1", "origin", f"refs/tags/{tag}:refs/tags/{tag}")
+    if git(scratch, "cat-file", "-t", f"refs/tags/{tag}") != "tag":
+        raise Refused(f"{tag} is a lightweight tag: a release tag is signed (`git tag -s`)")
+    r = subprocess.run(["git", "-C", str(scratch), "tag", "-v", tag], capture_output=True, text=True)
+    if r.returncode != 0:
+        raise Refused(f"{tag}'s signature doesn't verify: {(r.stderr or r.stdout).strip()}\n"
+                      f"  (unsigned, or signed by a key your git config doesn't trust: for SSH "
+                      f"signatures, add it to gpg.ssh.allowedSignersFile)")
+    print(f"update-agents: {(r.stderr or r.stdout).strip().splitlines()[0]}")
+    git(scratch, "-c", "advice.detachedHead=false", "checkout", "-q", f"refs/tags/{tag}")
+
+
+def main(argv: list[str]) -> int:
+    ap = argparse.ArgumentParser(prog="update-agents", description=__doc__.split("\n\n")[0])
+    ap.add_argument("tag", nargs="?", default="")
+    ap.add_argument("--no-pr", action="store_true", help="stop after the commit: no push, no PR")
+    ap.add_argument("--repo", help="the agent-config repo: OWNER/NAME on GitHub, or a git URL")
+    ap.add_argument("--target", help="the target to install (default: the one installed)")
+    a = ap.parse_args(argv)
+    if not a.tag:
+        print("usage: update-agents <tag> [--no-pr]   (make update-agents REF=<tag> [PR=0])", file=sys.stderr)
+        return 1
+    try:
+        if not TAG.fullmatch(a.tag):
+            raise Refused(f"{a.tag!r} isn't a tag name")
+        top = subprocess.run(["git", "rev-parse", "--show-toplevel"], capture_output=True, text=True)
+        if top.returncode != 0:
+            raise Refused("not in a git repo")
+        root = Path(top.stdout.strip())
+        m = root / MANIFEST
+        old = json.loads(m.read_text()) if m.is_file() else {}
+        repo, target = a.repo or old.get("repo"), a.target or old.get("target")
+        if not repo or not target:
+            raise Refused(f"{MANIFEST} names no {'repo' if not repo else 'target'}: "
+                          f"pass --{'repo' if not repo else 'target'} (once; the install records it)")
+        branch = f"chore/update-agents-{a.tag}"
+        preflight(root, not a.no_pr)
+        if git(root, "rev-parse", "-q", "--verify", f"refs/heads/{branch}", check=False):
+            raise Refused(f"branch {branch} already exists")
+        with tempfile.TemporaryDirectory(prefix="update-agents-") as d:
+            src = Path(d)
+            fetch_tag(src, url_of(repo), a.tag)
+            mk = ["make", "--no-print-directory", "-C", str(src)]
+            if (src / "deps.json").is_file():
+                step(mk + ["deps"], f"{repo}@{a.tag}: make deps")
+            dest = [f"TARGET={target}", f"DEST={root}"]
+            step(mk + ["install", *dest], f"{repo}@{a.tag}: make install {' '.join(dest)}")
+            step(mk + ["check-target", *dest], f"{repo}@{a.tag}: make check-target")
+        if not git(root, "status", "--porcelain", "--", *PATHS):
+            print(f"update-agents: already at {repo}@{a.tag}; nothing to commit")
+            return 0
+        other = git(root, "status", "--porcelain", "--", ".", *[f":!{p}" for p in PATHS])
+        if other:
+            raise Refused(f"the install changed files outside .claude/ and .github/:\n{other}")
+        stat = git(root, "diff", "--stat", "HEAD", "--", *PATHS)
+        title = f"chore: update agents to {repo}@{a.tag}"
+        git(root, "switch", "-q", "-c", branch)
+        git(root, "add", "-A", "--", *[p for p in PATHS if (root / p).exists()])
+        git(root, "commit", "-q", "-m", f"{title}\n\nInstalled with .claude/bin/update-agents "
+                                        f"(target {target}; was {old.get('source', 'not installed')}).")
+        print(f"update-agents: committed on {branch}")
+        if a.no_pr:
+            print(f"  next: git push -u origin {branch} && gh pr create --base {BASE} --fill")
+            return 0
+        git(root, "push", "-q", "-u", "origin", branch)
+        body = (f"Updates the vendored agents (target `{target}`) from `{repo}` at `{a.tag}` "
+                f"(signed tag, verified). Was: `{old.get('source', 'not installed')}`.\n\n"
+                f"`make check-target` is clean.\n\n```\n{stat}\n```\n\n"
+                f"Opened by `.claude/bin/update-agents`.")
+        r = subprocess.run(["gh", "pr", "create", "--base", BASE, "--head", branch,
+                            "--title", title, "--body", body], capture_output=True, text=True, cwd=root)
+        if r.returncode != 0:
+            raise Refused(f"pushed {branch}, but gh pr create failed: {(r.stderr or r.stdout).strip()}")
+        print(f"update-agents: {r.stdout.strip()}")
+        return 0
+    except Refused as e:
+        print(f"update-agents: {e}", file=sys.stderr)
+        return 1
+
+
+if __name__ == "__main__":
+    sys.exit(main(sys.argv[1:]))

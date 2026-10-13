@@ -62,7 +62,7 @@ HAS_GO := $(shell find . -name '*.go' -not -path './.git/*' -not -path './bin/*'
         argocd-install argocd-status argocd-ui argocd-recover argocd-uninstall world-reset content-seed env-destroy env-recover \
         objectstore-install projector-stop projector-start projector-rebuild server-stop server-start core-versions-check \
         builder-reference builder-reference-check guide-check \
-        stack-boundary-lost cli-offline-check stack-projector-check recovery-timing recovery-timing-previous recovery-timing-summary startup-budget-check alerts-sync alerts-diff
+        stack-boundary-lost cli-offline-check stack-projector-check recovery-timing recovery-timing-previous recovery-timing-summary startup-budget-check alerts-sync alerts-diff update-agents
 
 ## help: print this target list
 help:
@@ -489,3 +489,7 @@ goldens:
 clean:
 	@rm -rf bin/ .local/ coverage.out
 	@echo "clean: removed bin/, .local/, coverage.out"
+
+## update-agents: update the vendored agents from a signed tag (make update-agents REF=<tag> [PR=0])
+update-agents:
+	@.claude/bin/update-agents "$(REF)" $(if $(filter 0,$(PR)),--no-pr)
