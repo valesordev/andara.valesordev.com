@@ -174,10 +174,13 @@ LANE_ALLOW = [
     "Bash(git checkout:*)", "Bash(git add:*)", "Bash(git commit:*)",   # the hook: a new branch at HEAD only
     "Bash(git push:*)",   # the hook: origin, a named branch under the role's prefix, reviewed commits
     "Bash(git merge-base:*)", "Bash(git rev-parse:*)", "Bash(git rev-list:*)", "Bash(git ls-files:*)",
+    "Bash(git grep:*)", "Bash(git ls-tree:*)",
+    "Bash(git rebase:*)", "Bash(git merge:*)",   # the hook: onto origin/main only, rebase while unpushed
     "Bash(git worktree add:*)", "Bash(git worktree remove:*)", "Bash(git worktree list:*)",
     "Bash(git worktree prune:*)",
     "Bash(gh pr create:*)", "Bash(gh pr view:*)", "Bash(gh pr list:*)", "Bash(gh pr diff:*)",
     "Bash(gh pr checks:*)", "Bash(gh pr comment:*)", "Bash(gh api:*)",
+    "Bash(gh issue view:*)",   # a story's own issue (the hook: this repo, by number)
     "Bash(gh run list:*)", "Bash(gh run view:*)",   # CI evidence (the hook: read-only, this repo, by number)
     "Bash(echo:*)",
     "Bash(grep:*)", "Bash(head:*)", "Bash(tail:*)", "Bash(wc:*)", "Bash(ls:*)", "Bash(diff:*)",   # files: the hook
@@ -530,6 +533,7 @@ class Ctx:
 
     def check_lane_role(self, name: str) -> None:
         cfg = self.settings(name)
+        tool_path(self, self.root)   # a bad `lane_path:` stops the plan, not a lane already set up
         if cfg["sprint_run"] not in ("story", "session"):
             raise CoordError(f"role {name!r} can't run as a lane: sprint_run is {cfg['sprint_run']!r}; "
                              f"set `sprint_run: story` or `session` in its charter")
@@ -733,7 +737,9 @@ def prompt_for(lane: dict, run_id: str, ctx: Ctx, sid: str = "", scratch: Path |
              "don't try to push it, say on the story that Brian pushes it, and end with "
              "`LANE RESULT: blocked: workflow change on <branch>`; the coordinator hands the branch to him.")
     head += (" Your worktree already starts at origin/main: create your branch with `git switch -c <branch>`, "
-             "naming no start point. Read files with the Read tool.")
+             "naming no start point. A branch of yours that is behind origin/main catches up with "
+             "`git rebase origin/main` while it is unpushed, `git merge origin/main` once it is pushed. "
+             "Read files with the Read tool.")
     if scratch:
         head += (f" Scratch files (PR and comment bodies, check output, notes) go in {scratch}, never in the "
                  f"worktree. Text with backticks or `$` goes to gh and story through a file there "
@@ -879,6 +885,20 @@ else:
 '''
 
 
+def tool_path(ctx: "Ctx", root: Path) -> str:
+    """`lane_path:` in _repo.md: directories of the clone a lane's worktree comes from (gitignored
+    tools `make bootstrap` installs, like `bin/`), for lanes' PATH. A fresh worktree has none of them."""
+    dirs = ctx.cfg.get("lane_path") or []
+    dirs = [dirs] if isinstance(dirs, str) else dirs
+    out = []
+    for d in dirs:
+        d = str(d).rstrip("/")
+        if not d or os.path.isabs(d) or ".." in d.split("/") or not re.fullmatch(r"[A-Za-z0-9._/-]+", d):
+            raise CoordError(f"_repo.md lane_path entry {d!r}: a plain directory relative to the repo root")
+        out.append(str(root / d))
+    return "".join(f"{x}{os.pathsep}" for x in out)
+
+
 class SameUser:
     """Lanes run as you, in worktrees of your checkout (`--same-os-user`): a lane's own code
     (`make check`, tests) can read whatever you can."""
@@ -917,6 +937,7 @@ class SameUser:
         return role.get_role(self.root, sid)
 
     def lane_env(self, env: dict, auth: Path | None) -> dict:
+        env["PATH"] = tool_path(self.ctx, self.root) + env.get("PATH", "")
         if auth:
             env["PATH"] = f"{auth / 'bin'}{os.pathsep}{env.get('PATH', '')}"
             env["GH_CONFIG_DIR"] = str(auth / "gh-config")   # a gh that misses the shim has no login of yours
@@ -1011,7 +1032,8 @@ class OsUser(SameUser):
                                                              "GH_CONFIG_DIR"]:
             env.pop(k, None)    # yours: paths the lane user can't (and mustn't) reach
         env.update(HOME=str(self.home), USER=self.user, LOGNAME=self.user)
-        env["PATH"] = (f"{auth / 'bin'}{os.pathsep}" if auth else "") + self.login_path()
+        env["PATH"] = (f"{auth / 'bin'}{os.pathsep}" if auth else "") + tool_path(self.ctx, self.root) + \
+            self.login_path()
         return env
 
     def start(self, cmd: list[str], cwd: Path, env: dict, log: Path, lane_dir: Path) -> subprocess.Popen:
@@ -1579,6 +1601,7 @@ def run_lane(ctx: Ctx, lane: dict, run_id: str, run_dir: Path, lane_dir: Path, a
     env = lane_env(dict(os.environ))
     env.update(o11y_env(ctx, dict(os.environ), lane["role"], own_login=isinstance(host, OsUser)))
     env.update(COORDINATOR_RUN=run_id, COORDINATOR_LANE=name, COORDINATOR_SCRATCH=str(scratch))
+    env["GIT_EDITOR"] = "true"   # no one is at an editor: `rebase --continue` and `merge` keep their messages
     token = getattr(ctx, "lane_token", None)
     auth = token.path.parent if token else None
     if token:   # the lanes' app for gh and for git pushes over HTTPS, never your account or your SSH key
