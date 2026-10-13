@@ -623,6 +623,19 @@ def lane_task_output(p: Path, sid: str) -> bool:
     return False
 
 
+def lane_tool_result(p: Path, sid: str) -> bool:
+    """Claude Code's spill file for this session's own large tool output,
+    <config>/projects/<project>/<session>/tool-results/<file>: the lane sees the output only there."""
+    r = _resolved(p)
+    if not sid or r is None:
+        return False
+    top = _resolved(Path(os.environ.get("CLAUDE_CONFIG_DIR") or Path.home() / ".claude") / "projects")
+    if top is None or not r.is_relative_to(top):
+        return False
+    parts = r.relative_to(top).parts
+    return len(parts) == 4 and parts[1] == sid and parts[2] == "tool-results"
+
+
 def lane_read_problem(tool: str, ti: dict, cwd: Path, sid: str = "") -> str | None:
     """A lane reads inside the worktree it runs in (its .claude/ skills included), its scratch
     directory, and its own background commands' output, judged on the resolved path: never /proc,
@@ -645,7 +658,8 @@ def lane_read_problem(tool: str, ti: dict, cwd: Path, sid: str = "") -> str | No
             r = Path(os.path.normpath(p)).resolve()
         except (OSError, RuntimeError):
             return f"can't resolve {t!r}"
-        if not r.is_relative_to(here) and not in_lane_scratch(r) and not lane_task_output(r, sid):
+        if not r.is_relative_to(here) and not in_lane_scratch(r) and not lane_task_output(r, sid) \
+                and not lane_tool_result(r, sid):
             return f"a lane reads files from its worktree only, not {t!r}"
     return None
 
@@ -1369,7 +1383,8 @@ LANE_ROLE_VERBS = {"require", "show", "owners", "check-cmd", "reviewed", "list"}
 LANE_TOOLS = {"role", "story", "sprint-state", "codex-review"}
 LANE_GIT_GLOBAL_OK = {"--no-pager", "-P", "--no-optional-locks"}
 LANE_GIT_SUBS = {"status", "diff", "log", "show", "fetch", "branch", "switch", "checkout", "add", "commit",
-                 "push", "merge-base", "rev-parse", "rev-list", "ls-files", "worktree"}
+                 "push", "merge-base", "rev-parse", "rev-list", "ls-files", "worktree", "grep", "ls-tree",
+                 "rebase", "merge"}
 LANE_GIT_DENIED_LONG = ("--output", "--upload-pack", "--receive-pack", "--exec", "--exec-path", "--ext-diff",
                         "--textconv", "--open-files-in-pager", "--git-dir", "--work-tree", "--config-env", "--no-index")
 SAFE_REF = re.compile(r"[A-Za-z0-9._/-]+")
@@ -1530,6 +1545,32 @@ def _lane_new_branch_problem(g: Gated, sid: str, name: str) -> str | None:
     return None
 
 
+def lane_catch_up_problem(g: Gated, sub: str, args: list[str]) -> str | None:
+    """A lane brings its branch up to date with origin/main and nothing else: `git rebase origin/main`
+    while the branch is unpushed (a rebased pushed branch needs a force push, which a lane never does),
+    `git merge origin/main` once it is pushed, and the --continue/--abort that finish either."""
+    args = [a for a in args if a not in ("-q", "--quiet")]
+    if sub == "merge":
+        args = [a for a in args if a != "--no-edit"]
+    ctl = ("--continue", "--abort", "--skip") if sub == "rebase" else ("--continue", "--abort")
+    if len(args) == 1 and args[0] in ctl:
+        return None
+    if args not in (["origin/main"], ["refs/remotes/origin/main"]):
+        return (f"a lane runs `git {sub} origin/main` (or `git {sub} {'|'.join(ctl)}`), "
+                f"with no other options or refs")
+    if sub == "merge":
+        return None
+    try:
+        cur = _git(g.where, "branch", "--show-current").strip()
+    except (subprocess.CalledProcessError, OSError):
+        return "can't tell which branch this rebase is on"
+    if cur and subprocess.run(["git", "-C", str(g.where), "rev-parse", "--verify", "--quiet",
+                               f"refs/remotes/origin/{cur}"], capture_output=True).returncode == 0:
+        return (f"{cur} is already on origin: rebasing it would need a force push. "
+                f"Use `git merge origin/main` instead")
+    return None
+
+
 def lane_git_problem(g: Gated, sid: str) -> str | None:
     glob, sub, args = _split_git(g.args)
     bad = [x for x in glob if x not in LANE_GIT_GLOBAL_OK]
@@ -1585,6 +1626,17 @@ def lane_git_problem(g: Gated, sid: str) -> str | None:
             return None
         return ("a lane creates a branch at HEAD with `git switch -c <name>` or `git checkout -b <name>`, or "
                 "switches to one of its own branches; it never moves its checkout elsewhere")
+    elif sub in ("rebase", "merge"):
+        return lane_catch_up_problem(g, sub, args)
+    elif sub == "grep":
+        # -O/--open-files-in-pager runs a command; -f reads patterns from a file
+        head = args[:args.index("--")] if "--" in args else args
+        if any(re.fullmatch(r"-[A-Za-z0-9]*O.*", a) for a in head):
+            return "a lane never passes -O to git grep (it runs a command)"
+        for f in _option_files(args, {"--file"}, {"-f"}):
+            why = _lane_file_problem(f, g.where)
+            if why:
+                return why
     elif sub == "branch":
         if not args or any(a not in ("--show-current", "--list", "-a", "-r", "-v", "-vv") for a in args):
             return "a lane reads branches (--show-current, --list); it doesn't delete or move them"
@@ -1628,13 +1680,34 @@ def lane_tool_problem(args: list[str], where: Path) -> str | None:
     return None
 
 
+def _without_repo(args: list[str], with_value: set[str]) -> list[str]:
+    """`args` without its -R/--repo options, parsed as `_split_opts` parses them (an option's value
+    that happens to read `-R` stays)."""
+    out, i = [], 0
+    while i < len(args):
+        a = args[i]
+        if a == "--":
+            return out + args[i:]
+        name = a[:2] if a.startswith("-R") and not a.startswith("--") else a.partition("=")[0]
+        if name in ("-R", "--repo"):
+            i += 1 if (a != name) else 2
+            continue
+        out.append(a)
+        if a.startswith("-") and "=" not in a and a in with_value and i + 1 < len(args):
+            out.append(args[i + 1]); i += 1
+        i += 1
+    return out
+
+
 def lane_gh_problem(g: Gated, sid: str) -> str | None:
     root = repo_root(g.where)
     repo = (Roles(root).repo.get("github_repo") if root else None) or ""
     opts, pos = _split_opts(g.args, LANE_GH_VALUE_OPTS)
-    for n, _ in opts:
-        if n in ("-R", "--repo", "--hostname") or re.fullmatch(r"-R.+", n):
-            return "a lane talks to this repo only (no --repo/-R/--hostname)"
+    for n, v in opts:
+        if n == "--hostname" or (n in ("-R", "--repo") or re.fullmatch(r"-R.+", n)) and (not repo or v != repo):
+            return f"a lane talks to this repo only (no --hostname, and --repo/-R only as {repo or '?'})"
+    args = _without_repo(g.args, LANE_GH_VALUE_OPTS)   # --repo <this repo> is the default anyway
+    opts, pos = _split_opts(args, LANE_GH_VALUE_OPTS)
     if not pos:
         return "gh needs a verb"
     head, verb = pos[0], (pos[1] if len(pos) > 1 else None)
@@ -1642,7 +1715,7 @@ def lane_gh_problem(g: Gated, sid: str) -> str | None:
         if verb not in LANE_GH_RUN_OPTS:
             return f"gh run {verb} isn't a lane's (CI runs: list and view only)"
         values, flags = LANE_GH_RUN_OPTS[verb]
-        ropts, rpos = _split_opts(g.args, values)
+        ropts, rpos = _split_opts(args, values)
         bad = [n for n, _ in ropts if n not in values | flags]
         if bad:
             return f"gh run {verb} in a lane takes {', '.join(sorted(o for o in values | flags if o.startswith('--')))} only, not {bad[0]}"
@@ -1666,14 +1739,14 @@ def lane_gh_problem(g: Gated, sid: str) -> str | None:
             for n, v in opts:
                 if n in ("-H", "--head") and ":" in v:
                     return "a lane opens a pull request from its own branch (no <owner>:<branch> head)"
-        for f in _option_files(g.args, {"--body-file", "--template", "--recover"}, {"-F", "-T"}):
+        for f in _option_files(args, {"--body-file", "--template", "--recover"}, {"-F", "-T"}):
             why = _lane_file_problem(f, g.where)
             if why:
                 return why
         return None
     if head != "api":
         return f"gh {head} isn't a lane's"
-    api = g.args[g.args.index("api") + 1:]
+    api = args[args.index("api") + 1:]
     aopts, apos = _split_opts(api, GH_API_OPTS_WITH_VALUE)
     if sum(1 for n, _ in aopts if n in ("-X", "--method")) > 1:
         return "gh api with more than one method"
