@@ -1,5 +1,5 @@
 {
-  "source": "automate.system9studios.com@7643a61",
+  "source": "automate.system9studios.com@4a3e139",
   "target": "andaras-world",
   "files": {
     ".claude/skills/arch-start-sprint/SKILL.md": "c8129dce9e5c851c6867342d7d93d89271e796886b0dbb7136f97fb73c92564d",
@@ -56,7 +56,7 @@
     ".claude/skills/sre-start-sprint/SKILL.md": "2c283eeee7463780086ec84320437f43db9a19efb77c65ffdae361cd31605456",
     ".claude/skills/sre-start-sprint/references/examples.md": "a22df600f0c3f11a3fc70c435de07f18d9837e4cc6d3fe440758bd31d28e62c2",
     ".claude/bin/codex-review": "db19ad0a18de9e34fc9228db167218b9973aa5d099fb3e4236eae4910e6368f5",
-    ".claude/bin/coordinator": "b4e8316fd1eb8e7ca0abc6b8cee6e1bda018ea017ab1ae5b20e4e148b5d26439",
+    ".claude/bin/coordinator": "e39187bea531adbed279b9accba0b573614339ddb02699ddab90e7c310d4b491",
     ".claude/bin/project-mirror": "5afd8e1e543d2244d4f7cb2f08083e516e29ebadb01e4dbfbe73bb9647a9c011",
     ".claude/bin/role": "a7b82fd1237b5b71c5188d6843b69d8f0a0e27d20889f89d4c1d045c047f9954",
     ".claude/bin/sprint-state": "db86f12d2c60c0bf39502d28242969b746682212e518dc07528ffff7954c8d6f",
@@ -75,10 +75,10 @@
     ".claude/skills/mechanic-spec/references/template.md": "7c048941fcc1e843a1adcd70bbc12454903c45bc3a3ef019b756125dd9caaa83",
     ".claude/roles/_repo.md": "de915da2eddc56ace098475fd6d899b57a8c87ebaa6d81fae194032f0c824da4",
     ".claude/roles/architecture.md": "5eb253f3b8448964a56c9df444d388208e37092ed2e10592c5faa0f03dadcb79",
-    ".claude/roles/game-designer.md": "373ef4442b67e9156ccbadd35128a6cd014dff2ef01044c2a3fd6d56247cb3ed",
+    ".claude/roles/game-designer.md": "69b53498f46add477bdc74413236ed94bdb2177253380326a20e796a422eecc1",
     ".claude/roles/implementation.md": "2897a811ed6c39402856468b7d218096b9d2c7c528a0b98a4d77c3bc74b14478",
     ".claude/roles/pm.md": "d07b1fe03b211623ab5c64d44bb839e10222331fbcf2e81a62490a95bc81091f",
-    ".claude/roles/product.md": "847ca854c94471f9c5488fa317db88c139b06bb546189300027ac0dae4438c23",
+    ".claude/roles/product.md": "9f2bacb0130764cfcac6c5f2917bf138bf13c2508c36a38951b3baaa6dbcda38",
     ".claude/roles/sre.md": "0802a4f403f55e5e718b7508d1b16b59838f7487a86693a94f305914ac5e989e"
   },
   "hook_commands": [
@@ -87,8 +87,8 @@
     "python3 \"${CLAUDE_PROJECT_DIR}/.claude/bin/role\" hook-session-start"
   ],
   "sources": {
-    "automate.system9studios.com": "7643a61",
-    "automate.valesordev.com": "ba5a5b8"
+    "automate.system9studios.com": "4a3e139",
+    "automate.valesordev.com": "c70e318"
   },
   "settings": {
     "permissions.allow": [

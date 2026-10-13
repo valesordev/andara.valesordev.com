@@ -85,10 +85,11 @@ player-visible change it makes.
 - **Out:** when a product change needs a planner to amend its plan (a
   milestone that names no release, a `must` feature nothing delivers), list
   the request under "Release changes (after merge)" in the PR body, one
-  bullet per planner. Open nothing while the PR is unmerged: an unapproved
-  plan isn't a request. After it merges, open one plain issue labeled
-  `release-change` in each planner's repo, linking the PR. Planners triage
-  them at their boundaries. Everything else reaches them through
+  bullet per planner, opening with its name (`- pm: …`), or `None.` when
+  there's nothing to hand off. Open nothing while the PR is unmerged: an
+  unapproved plan isn't a request. After it merges, open one plain issue
+  labeled `release-change` in each planner's repo, linking the PR. Planners
+  triage them at their boundaries. Everything else reaches them through
   `docs/product/` on `origin/main`.
 - **Pending handoffs:** at the start of every session, find merged
   `role:product` PRs with a "Release changes (after merge)" section
