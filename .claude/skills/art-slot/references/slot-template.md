@@ -14,7 +14,7 @@
 
 Kinds: `illustration`, `mark` (marks, small cuts, wordmarks, lockups).
 Provenance: `generated`, `hand`, or `—` (not yet filled).
-Status: `brief → prompted → review → installed` (marks: `locked` once Brian locks them).
+Status: `brief → prompted → review → installed` (marks: `locked` once the owner locks them).
 The rows with `generated` provenance are the backlog for hand-made replacements.
 
 ## brands/<slug>/assets/slots/<slot>.md
@@ -52,7 +52,7 @@ Axis: <variation axis>
 <table from review.md, recommendation>
 
 ## Selection
-<letter> — Brian, <date>: "<his reason>". Rejected: B (<reason>), …
+<letter> — the owner, <date>: "<their reason>". Rejected: B (<reason>), …
 
 ## Provenance
 - Provenance: generated | hand

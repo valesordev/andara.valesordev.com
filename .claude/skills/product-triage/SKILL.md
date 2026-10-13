@@ -13,7 +13,7 @@ Queue: `$ARGUMENTS` (when empty, everything below).
 ## Preflight
 
 1. `.claude/bin/role require product ${CLAUDE_SESSION_ID}`. If it fails, stop and
-   tell Brian to run `/role product` first.
+   tell the owner to run `/role product` first.
 2. `git fetch origin`; work from `origin/main`. Read `docs/product/vision.md`,
    `releases.md`, and the briefs your queue touches. You own `docs/product/` and
    nothing else.
@@ -27,14 +27,14 @@ For each issue, decide and leave a comment saying what you decided and why:
 - **Fold** it into a brief or release: change `docs/product/` on a `product/`
   branch (use `/feature-brief` or `/release-plan` for the content), comment with
   what changed and the PR, and close the issue ("folded into <PR>; reopen if the
-  PR is rejected"). The PR is where Brian vetoes it.
+  PR is rejected"). The PR is where the owner vetoes it.
 - **Close** it with the reason (out of scope, already decided at `file#section`,
   duplicate of #N).
 
 Every issue in the queue gets a comment or is closed: an issue you read and left
 alone is a failure, because the next run can't tell it was seen. If it needs
-Brian (the vision, adding or dropping a release, anything outward-facing), bring
-him one recommendation in the comment and leave the issue open; it comes back to
+the owner (the vision, adding or dropping a release, anything outward-facing), bring
+them one recommendation in the comment and leave the issue open; it comes back to
 you when someone comments on it.
 
 ## 2. Handoffs owed
@@ -53,7 +53,7 @@ opens it). Name PRs and issues by number, not by URL.
 
 If `docs/product/` changed, open one PR from the `product/` branch: label
 `role:product`, with the calls you made listed under "Decided this session" so
-Brian can veto them in review. Take it through `.claude/skills/pre-pr/SKILL.md`,
+the owner can veto them in review. Take it through `.claude/skills/pre-pr/SKILL.md`,
 including section 6 (Codex). Never merge it.
 
 ## Stop
@@ -61,4 +61,4 @@ including section 6 (Codex). Never merge it.
 Your last message is one line: `LANE RESULT: <PR url>` when you opened a PR,
 `LANE RESULT: triaged <n>` when you handled `n` issues or handoffs without one,
 `LANE RESULT: nothing to do`, or `LANE RESULT: blocked: <reason>`. Then list what
-Brian decides next.
+the owner decides next.

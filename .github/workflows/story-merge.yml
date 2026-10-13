@@ -1,4 +1,4 @@
-# INSTALLED from automate.bashburn.com (plugins/valesor-dev/workflows/); don't edit here.
+# INSTALLED from automate.valesordev.com (plugins/valesor-dev/workflows/); don't edit here.
 #
 # When a PR merges, apply its `Story: <ID>` / `Story-Done: <ID>` lines to the
 # Project board as the role its `role:<role>` label names (.claude/bin/story merged).

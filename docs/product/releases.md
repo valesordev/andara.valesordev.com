@@ -28,7 +28,7 @@ Features:
 - FEAT-?? — Manage my Characters (delete, name retention, switch bodies) (must; in flight as AW-SRV-032,
   inside M2, so cutting it frees no scope)
 Cut line: no NPCs that act, no Items, no combat, no second gameplay loop; room text may carry
-`TODO(brian)` placeholders where the content roadmap's C1 allows it. Reason: each of those tests a
+`TODO(owner)` placeholders where the content roadmap's C1 allows it. Reason: each of those tests a
 different bet, and R2 owns the first of them.
 Success signals (Brian runs them):
 - On `dev`, a Builder publishes the real settlement pack, Brian walks from the settlement's arrival Room (the Start Location, if Brian approves one) to every

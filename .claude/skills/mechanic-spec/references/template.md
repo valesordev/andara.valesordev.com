@@ -1,6 +1,6 @@
 # Mechanic: <name>
 
-**Status:** proposed — awaiting Brian's approval (quote his confirmation when approved)
+**Status:** proposed — awaiting the owner's approval (quote their confirmation when approved)
 **Canon source:** <page, section, version>
 **Brief:** <Notion URL>
 **Design intent:** <one line>

@@ -102,7 +102,7 @@ unowned paths (this file, `.claude/`, `go.mod`), and denies hand edits to genera
 (`gen/`, `docs/builders/reference.md`). A committed generated file
 belongs to no role. The PR that changes its source runs its target (`make proto`,
 `make builder-reference`) and commits the output, whatever that PR's role. `.claude/` is installed
-from automate.bashburn.com (`make install TARGET=andaras-world`); don't edit it here.
+from automate.system9studios.com (`make install TARGET=andaras-world`); don't edit it here.
 
 ### The sprint cycle
 
@@ -156,7 +156,7 @@ docs/
     SPRINT-05-demo.md     # operator demo instructions, written at close-out
   feedback/               # frozen archive from before the cutover; feedback is story comments now
 Makefile
-.claude/                  # INSTALLED from automate.bashburn.com — do not hand-edit
+.claude/                  # INSTALLED from automate.system9studios.com — do not hand-edit
   roles/                  # role charters + writable paths (pm, architecture, sre, implementation)
   skills/                 # /role, /pm-start-sprint, /pm-close-sprint, /arch-start-sprint, …
   bin/role                # role state + ownership hooks

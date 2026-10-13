@@ -25,7 +25,7 @@ judgment is his; the walk is the pass/fail.
 
 ## Scope
 - In: a real pack of 3 to 5 settlement zones with Rooms and exits from approved zone sheets (C1's gate); an
-  arrival Room inside the settlement; every zone reachable from it by exits; `TODO(brian)` room text where C1 allows it.
+  arrival Room inside the settlement; every zone reachable from it by exits; `TODO(owner)` room text where C1 allows it.
 - Out: NPCs that act, Items, combat (R2: each tests a different bet); surrounding zones outside the
   settlement (R2 `cut-first`, C3); the §18 room counts for the full region (C3); the room-text `director`
   pass beyond what C1's gate requires (follows C1); any new server capability beyond the Start Location mechanism #514 decides.

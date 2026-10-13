@@ -16,4 +16,4 @@ A model answers "does this behave the way the intent says?", not "is the number 
 6. **Teach:** name the concept the result illustrates (a snowball is a positive feedback loop; a free faucet is inflation) and what it changes about the decision.
 
 ## Output
-Chat summary with the table of strategies and outcomes, plus the model file path. One next action: usually a decision for Brian or a tunable to record in the spec.
+Chat summary with the table of strategies and outcomes, plus the model file path. One next action: usually a decision for the owner or a tunable to record in the spec.

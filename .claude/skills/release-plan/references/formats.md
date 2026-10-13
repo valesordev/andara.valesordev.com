@@ -20,7 +20,7 @@ Ordered tie-breakers for product calls. e.g. "A smaller world that reacts beats 
 larger one that doesn't."
 
 ## Log
-- YYYY-MM-DD: <change> (approved by Brian in PR #NN)
+- YYYY-MM-DD: <change> (approved by the owner in PR #NN)
 ```
 
 ## docs/product/releases.md
@@ -46,7 +46,7 @@ Delivered by: filled in from the planners' roadmaps (M<n>, C<n>); never planned 
 ```
 
 Statuses: `proposed` (in the plan), `committed` (a planner milestone targets it),
-`shipping` (its milestones are in progress), `shipped` (Brian's go, after a
+`shipping` (its milestones are in progress), `shipped` (the owner's go, after a
 `/release-review`). Exactly one release is ever `shipping`.
 
 `Delivered by` repeats what the roadmaps say so a reader sees it in one place.

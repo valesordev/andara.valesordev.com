@@ -21,7 +21,7 @@ test now catches that class mechanically.
       prefix vs. path segment (`foo/` vs `foobar/`), substring vs. token (the
       #132 tick-keep predicate).
 - [ ] Heuristic parsing of commands, paths, or arguments is tested against
-      flags, quoting, and `--` (the AW-INF-028 command-path extraction).
+      flags, quoting, and `--` (the GS-INF-028 command-path extraction).
 - [ ] Empty, nil, and zero inputs behave as specified.
 - [ ] Option parsing handles unique long-option prefixes (`--har` is `--hard`
       to git and getopt) and flag precedence (`-f` wins over `-b`) (the #38
@@ -69,7 +69,7 @@ test now catches that class mechanically.
 - [ ] Compose, k8s, and Helm manifests mount every file and volume the new
       code reads (the missing projector mounts).
 - [ ] Content or schema changes are replay- and recovery-safe against existing
-      data: digests, versions, migrations (AW-SRV-037's digest mismatch on
+      data: digests, versions, migrations (GS-SRV-037's digest mismatch on
       recovery replay).
 - [ ] Runbook and rollback steps are complete and in order, and each step
       names the command.

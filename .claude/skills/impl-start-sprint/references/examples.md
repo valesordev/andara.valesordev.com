@@ -1,10 +1,10 @@
 # Examples
 
 **Prompt:** (implementation role, SPRINT-07 active) "/impl-start-sprint"
-**Behavior:** Nothing is carried over as `in-progress`. `story list --sprint 7 --lane implementation` puts AW-SRV-061 first: it's `ready`, and its blocker AW-SRV-058 is at `done`. The agent branches `impl/aw-srv-061-snapshot-fields` from `origin/main` and runs `story start AW-SRV-061`. It builds to the issue's acceptance criteria and interface contract, runs `/pre-pr`, and opens the PR with `Story: AW-SRV-061` and `role:implementation`. It records `--record "Verification"` citing commits, then takes the next ready story.
+**Behavior:** Nothing is carried over as `in-progress`. `story list --sprint 7 --lane implementation` puts GS-SRV-061 first: it's `ready`, and its blocker GS-SRV-058 is at `done`. The agent branches `impl/aw-srv-061-snapshot-fields` from `origin/main` and runs `story start GS-SRV-061`. It builds to the issue's acceptance criteria and interface contract, runs `/pre-pr`, and opens the PR with `Story: GS-SRV-061` and `role:implementation`. It records `--record "Verification"` citing commits, then takes the next ready story.
 
 **Prompt:** (implementation role, resuming) "/impl-start-sprint"
-**Behavior:** AW-SRV-055 is still `in-progress`. The agent reads its thread with `--comments 30` and finds that PR #398 already merged the projector half. It builds only what's left, on a fresh branch.
+**Behavior:** GS-SRV-055 is still `in-progress`. The agent reads its thread with `--comments 30` and finds that PR #398 already merged the projector half. It builds only what's left, on a fresh branch.
 
 **Prompt:** (implementation role) "/impl-start-sprint" while all its stories are `draft`
 **Behavior:** Architecture's contract review isn't done. The agent stops and says so.

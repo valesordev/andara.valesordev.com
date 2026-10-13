@@ -9,8 +9,8 @@ file itself, so replacing or editing the source triggers a rebuild, and a clean 
 | `<slot>.svg` | `inkscape $< --export-type=png --export-width=<canvas W> --export-filename=$@` |
 | `<slot>.kra` | `krita --export --export-filename $@ $<` (headless; needs Krita on the build machine) |
 
-The slot file's spec gives the canvas width. Brian's Krita brief keeps paper and sketch layers hidden
-before saving, so the export is ink only. If a `.kra` exports with them visible, ask him to hide them and
+The slot file's spec gives the canvas width. The owner's Krita brief keeps paper and sketch layers hidden
+before saving, so the export is ink only. If a `.kra` exports with them visible, ask them to hide them and
 save. Don't add layer surgery to the build.
 
 Pattern, added once per slot to `brands/<slug>/brand.mk`, which the root Makefile includes (see the

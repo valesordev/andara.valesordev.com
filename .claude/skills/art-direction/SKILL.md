@@ -1,6 +1,6 @@
 ---
 name: art-direction
-description: Develop, revise, or export an imprint's illustration system (stable rules for subject matter, rendering, value and colour against the tokens, line, light, treatment, exclusions, and the approved composition types), kept separate from per-image prompts, in the imprint's art-direction folder, and render it as the instructions for that imprint's ChatGPT project. Trigger on "/art-direction", "set the illustration system for System 9", "the valesordev renders all look too X", "give me the ChatGPT project instructions for solo7.media", "what compositions do we allow". Requires the visual-designer role. Not for one image or mark (art-slot), reading a target image (brand-audit), tokens or type decisions (visual-designer, directly), or Andara's concept-art house style (andaras-world house-style).
+description: Develop, revise, or export an imprint's illustration system (stable rules for subject matter, rendering, value and colour against the tokens, line, light, treatment, exclusions, and the approved composition types), kept separate from per-image prompts, in the imprint's art-direction folder, and render it as the instructions for that imprint's ChatGPT project. Trigger on "/art-direction", "set the illustration system for System 9", "the valesordev renders all look too X", "give me the ChatGPT project instructions for solo7.media", "what compositions do we allow". Requires the visual-designer role. Not for one image or mark (art-slot), reading a target image (brand-audit), tokens or type decisions (visual-designer, directly), or a game's concept-art house style (that game's concept-art role).
 argument-hint: "<slug> [revise | export]"
 allowed-tools: Bash(.claude/bin/role:*) Bash(git log:*) Bash(git fetch:*)
 ---
@@ -11,7 +11,7 @@ Request: `$ARGUMENTS`
 
 ## Preflight
 0. Run `.claude/bin/role require visual-designer ${CLAUDE_SESSION_ID}`. If it
-   fails, stop and tell Brian to run `/role visual-designer`.
+   fails, stop and tell the owner to run `/role visual-designer`.
 1. Resolve the slug (`brands/<slug>/`). Read its `brand/foundation.md`,
    `brand/visual-language.md`, the approved `references/visual-audit.md`,
    `tokens/tokens.json`, and the existing `art-direction/` files.
@@ -22,7 +22,7 @@ Request: `$ARGUMENTS`
 ## Develop or revise
 1. **Evidence first.** Gather the audit's image observations (which were
    classified core, candidate, or hero-specific), the slots already selected
-   or rejected (`assets/slots/`), and Brian's reasons. A revision cites at
+   or rejected (`assets/slots/`), and the owner's reasons. A revision cites at
    least one image or finding.
 2. **Rules, not prompts.** `illustration-system.md` holds what stays true for
    every image. Anything specific to one composition (this tree, this moon)
@@ -42,10 +42,10 @@ Request: `$ARGUMENTS`
    with aspect, empty zone, and use. Slots name one of them.
 5. **Draft** `art-direction/illustration-system.md`, plus `prompt-template.md`
    (the slot prompt skeleton for this imprint) and `negative-examples.md`
-   (what drifted and why, with images). Attribute decisions to Brian, and
+   (what drifted and why, with images). Attribute decisions to the owner, and
    mark undecided items `[PROPOSED]`.
-6. **Version.** When Brian approves (in the session or at PR review; quote
-   him), set `**Status:** AD v<n> — approved <YYYY-MM-DD>` and add a changelog
+6. **Version.** When the owner approves (in the session or at PR review; quote
+   them), set `**Status:** AD v<n> — approved <YYYY-MM-DD>` and add a changelog
    line: what changed, why, and which images motivated it.
 7. **Render** the ChatGPT project instructions (below).
 
@@ -53,7 +53,7 @@ Request: `$ARGUMENTS`
 Fill `references/chatgpt-project.md` from the approved illustration system,
 under 1,500 characters, in one fenced block, followed by: "Paste into ChatGPT →
 Project *<Imprint> — Art* → Instructions, replacing everything. Version:
-AD v<n>." Brian never edits the instructions in ChatGPT, or the two drift.
+AD v<n>." The owner never edits the instructions in ChatGPT, or the two drift.
 Never render from a draft.
 
 ## Output

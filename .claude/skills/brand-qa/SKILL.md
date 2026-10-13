@@ -11,7 +11,7 @@ Request: `$ARGUMENTS`
 
 ## Preflight
 0. Run `.claude/bin/role show ${CLAUDE_SESSION_ID}`. It must print
-   `visual-designer` or `implementation`. Otherwise stop and tell Brian to run
+   `visual-designer` or `implementation`. Otherwise stop and tell the owner to run
    `/role visual-designer` or `/role implementation`.
 1. Resolve the slug (`brands/<slug>/`). Read `qa.md`, `brand/foundation.md`,
    `brand/visual-language.md`, `brand/voice.md`, `tokens/tokens.json`, and the
@@ -24,7 +24,7 @@ Request: `$ARGUMENTS`
 Fill `references/qa-template.md` from the imprint's brand docs and its Notion
 direction page's checklist. Every item must be observable on a page. Mark
 items the docs don't settle `[PROPOSED]`. It ships in a `design/` PR for
-Brian's review.
+the owner's review.
 
 ## Check
 Decide what you're checking: a running page (local `make` preview or a
@@ -53,7 +53,7 @@ preview deploy URL), a screenshot, a component, or `diff` (changes since
 ```
 
 Owners: `implementation` for code and page fixes, `visual-designer` for a
-rule that's missing or wrong. Rules that need Brian are marked as such.
+rule that's missing or wrong. Rules that need the owner are marked as such.
 Don't fix another role's files. As implementation, fix your own fails before
 the PR, and send rule gaps with `story comment <ID> --to visual-designer`. As
 visual-designer, report fails on the story with `story comment <ID> --to

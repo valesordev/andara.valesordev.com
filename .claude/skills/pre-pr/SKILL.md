@@ -14,7 +14,7 @@ for PR comments.
 ## 1. Preflight
 
 1. `.claude/bin/role show ${CLAUDE_SESSION_ID}`. If it says `unset`, stop and
-   ask Brian to run `/role`.
+   ask the owner to run `/role`.
 2. `git status --porcelain --untracked-files=no` must be empty. If it isn't,
    commit the work first: stage explicit paths only (`git add <path> …`), never
    `-A`, `.` or `commit -a`. Leave changes you didn't make unstaged and say so.
@@ -55,7 +55,7 @@ with the previous findings and your responses appended so it verifies them.
 Stop when a round returns no P0/P1, or after round 4.
 
 If P0/P1 findings remain after round 4, **don't** record the review. Stop and
-give Brian the open findings. He decides.
+give the owner the open findings. They decide.
 
 ## 5. Record and ship
 
@@ -90,7 +90,7 @@ a PR for yet) and when `$ARGUMENTS` contains `--no-codex`.
    status comment for the pushed HEAD (10 minutes), and posts `@codex review`
    once if no review of that commit starts, since Codex doesn't review on
    push. In a coordinator lane it never posts (the lane is the GitHub App, which
-   Codex won't review for); the coordinator asks as Brian. Run it as its own
+   Codex won't review for); the coordinator asks as the owner. Run it as its own
    call, in the foreground.
 2. Read `state` from its JSON:
 
@@ -102,7 +102,7 @@ a PR for yet) and when `$ARGUMENTS` contains `--no-codex`.
    | `limited` | Codex answered with its usage limit: say so, and don't wait or ask again. The PR isn't Codex-clean; the next action is `@codex review` once the limit resets. |
 
 3. At most 3 rounds of step 2. If findings remain after round 3, stop and
-   list them for Brian.
+   list them for the owner.
 4. Re-verify before reporting: `gh pr view <PR> --json state,mergedAt,headRefOid`
    and `.claude/bin/codex-review status <PR>`. Report from those, not from
    memory of earlier calls. Never merge.

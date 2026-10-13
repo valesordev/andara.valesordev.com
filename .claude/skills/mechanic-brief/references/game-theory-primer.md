@@ -5,7 +5,7 @@ Each concept below is something to use *on a specific mechanic*, not to recite. 
 | Concept | What it is | Ask of a mechanic | Andara-flavored example |
 |---|---|---|---|
 | **Dominant strategy** | A choice that is best whatever others do | Is there an option no one would ever skip? Then the others are dead content | "Always rest after a fight" beats every pacing decision if rest is free |
-| **Nash equilibrium** | A set of choices where no one gains by changing alone | Where does play settle if everyone is rational? Do you like that place? | Two factions each guard a rift toll; both stay hostile because defecting loses ground |
+| **Nash equilibrium** | A set of choices where no one gains by changing alone | Where does play settle if everyone is rational? Do you like that place? | Two factions each guard a portal toll; both stay hostile because defecting loses ground |
 | **Incentive compatibility** | The rewarded behavior is the intended behavior | Does the rule pay players for what you *meant*? | A bounty that pays per kill pays for farming, not for clearing the road |
 | **Risk/reward curve** | How payoff scales with risk taken | Does extra risk buy proportionally more? Is the tail survivable? | Strain: each extra cast risks more; flat risk makes the cap meaningless |
 | **Sinks and faucets** | Where a resource enters and leaves the world | Does inflow exceed outflow forever? | Coin from creatures with no repair or travel costs inflates |

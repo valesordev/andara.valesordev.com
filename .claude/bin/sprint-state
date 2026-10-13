@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """Report sprint state from sprint issues on GitHub, or from docs/sprints/ on a git ref.
 
-Source of truth: automate.bashburn.com / plugins/valesor-dev/bin/sprint-state.
+Source of truth: automate.valesordev.com / plugins/valesor-dev/bin/sprint-state.
 Vendored into target repos as .claude/bin/sprint-state. Don't edit it there.
 
     sprint-state [--source files|project] [--ref origin/main] [--dir docs/sprints] [--name SPRINT]

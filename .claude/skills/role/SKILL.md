@@ -1,6 +1,6 @@
 ---
 name: role
-description: Set this session's role (e.g. pm, product, architecture, sre, implementation, visual-designer, or none) and load its charter, then start an optional task given after the role; or show the current role when run with no argument. Brian runs it at session start. Never invoke it on your own or to change roles mid-task.
+description: Set this session's role (e.g. pm, product, architecture, sre, implementation, visual-designer, or none) and load its charter, then start an optional task given after the role; or show the current role when run with no argument. The owner runs it at session start. Never invoke it on your own or to change roles mid-task.
 argument-hint: "[role|none] [task]"
 disable-model-invocation: true
 allowed-tools: Bash(.claude/bin/role:*), EnterWorktree
@@ -27,12 +27,12 @@ Report the current role and the roles this repo defines, then stop.
 2. If it exits non-zero, report its output and stop. Don't pick a role yourself.
 3. If the output starts with `Worktree: <name> (enter it …)`, call
    EnterWorktree with that `name` now, before any other step. The session then
-   works in `.claude/worktrees/<name>`, on a branch from `origin/main`, and Brian
-   keeps the checkout he launched from. Create the role's branch there when work
-   begins. If EnterWorktree fails, report it and stop: never work in Brian's
+   works in `.claude/worktrees/<name>`, on a branch from `origin/main`, and the owner
+   keeps the checkout they launched from. Create the role's branch there when work
+   begins. If EnterWorktree fails, report it and stop: never work in the owner's
    checkout instead. `Worktree: this session already works in …` needs nothing.
    No `Worktree:` line (`/role none`, a cloud session) means stay where you are.
-4. The rest of the output is this session's **role charter**. From now until Brian runs
+4. The rest of the output is this session's **role charter**. From now until the owner runs
    `/role` again, it binds together with the repo's `CLAUDE.md`. Where the
    charter narrows the repo file, the charter wins. Where they conflict, stop
    and flag it.
@@ -46,7 +46,7 @@ Report the current role and the roles this repo defines, then stop.
    - the role's skills
    - what the active sprint says this role picks up next, or why it can't pick anything up
 
-   With no task, wait for Brian.
+   With no task, wait for the owner.
 
 8. With a task, start on it now, as this role and within its charter. If
    the task is another role's work, belongs to no sprint, or needs a skill
