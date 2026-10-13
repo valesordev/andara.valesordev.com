@@ -1,6 +1,7 @@
 ---
 generated: [gen/, docs/builders/reference.md]
 check: make check
+lane_path: [bin/]
 project: Andara's World
 story_prefix: AW
 github_repo: valesordev/andara.valesordev.com

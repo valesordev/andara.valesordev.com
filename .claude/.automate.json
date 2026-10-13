@@ -1,5 +1,5 @@
 {
-  "source": "automate.bashburn.com@be0ec67",
+  "source": "automate.bashburn.com@419ec8a",
   "target": "andaras-world",
   "files": {
     ".claude/skills/arch-start-sprint/SKILL.md": "94489be54f36d507c373fa734901625e137da6ae00f8d9c258c3513ce2914640",
@@ -56,9 +56,9 @@
     ".claude/skills/sre-start-sprint/SKILL.md": "9778b8b6d81ccb1bd2ef20e68b430ab3fdc640c3ceeb2b9e10c82684183b0f45",
     ".claude/skills/sre-start-sprint/references/examples.md": "4d9da96908d1fa03115108cefc9f8c8c54a0e925cbd0092dc39b0b453b28da24",
     ".claude/bin/codex-review": "930010419f491dc660ab5a69f2454221102108e8926645de74b258e9ab019007",
-    ".claude/bin/coordinator": "ad463144ae2b88c56435a51e8b9bf162d2d5959b3ce98beadeca5ccbf836e44c",
+    ".claude/bin/coordinator": "53588e756e1a6f9c4760694307929528b7e13d0b9c29666e86eb7eabcbbf4f98",
     ".claude/bin/project-mirror": "a0c7c9689f2a98b0ab07b20ff60e41e0686a2a6a876bc941fb79f91012362c59",
-    ".claude/bin/role": "d918d0a3dcf81ae16dfcc791b4374e5ec674f537b6327193f4d1f3f8a579b3f9",
+    ".claude/bin/role": "4c2027fa0a83588b5cc5e4435da0a415c0fa296bfc2ee74a435090dbe23dd9e8",
     ".claude/bin/sprint-state": "6a8ae9cff5eb3f2a56255efaf542b27a9e7a4dc7a394eb6c58e1723402b14dfc",
     ".claude/bin/story": "69bb9ed618c0ec4cf7e2dded526ad6d011c7643aef5491982307067c2a7b70ee",
     ".github/workflows/story-merge.yml": "f6ac9f521771067aec73a5ee65c7b02527b988dbb761fb4e8ec5dd488bfd163d",
@@ -73,17 +73,17 @@
     ".claude/skills/mechanic-spec/references/canon-rules.md": "43e4be9865d0cd013ba46a67e3e0b4c6cae446e8a93fd921b569fd5d96957e6b",
     ".claude/skills/mechanic-spec/references/examples.md": "887934d738602229b5b145cb2acea4522a50d9fce483264b01f0efe070fa4c26",
     ".claude/skills/mechanic-spec/references/template.md": "c063e34a83d70a60addc77b431036bf5b001e9a09d06602910b976ccb338b7c8",
-    ".claude/roles/_repo.md": "255c4b3ab5e9f0ce36400a1933bfe3f82bf4b5f0d4008d4a5a5be52d7a99250b",
+    ".claude/roles/_repo.md": "217a95a61c81747ca82eaf161639add50e1b5f10ef2f7b9759a968b0547f7140",
     ".claude/roles/architecture.md": "536ade4f6cabf3a95a7dbb231788e48c2d4080df7ca9803fedf6d4be8e040ea6",
     ".claude/roles/game-designer.md": "52c4c0456cb779f26774e1f2f7a84614cbcfb4a26d86e2123965cf8301edc6a4",
-    ".claude/roles/implementation.md": "f98408ce38869811fc6dffa1913ffe49d75e2dee9aa853f1eab51fdd432f93ca",
+    ".claude/roles/implementation.md": "374a1d71c2db765823136484df5505f6bc83c0ea86da748eae5c0826d7ff1623",
     ".claude/roles/pm.md": "c8dde7e970af911645acff4fc65e5caaca1bd670f094844062ebd7353ac58b66",
     ".claude/roles/product.md": "7cc62d8148695995dc51aaaf5b4c84e43edf733c1893be7c4153fd303fff908c",
     ".claude/roles/sre.md": "257356db0f3d6a740a296a4dcab52007599687cf814c6f2174814f0f5a8d32d5"
   },
   "hook_commands": [
-    "python3 \"${CLAUDE_PROJECT_DIR}/.claude/bin/role\" hook-pre-bash",
-    "python3 \"${CLAUDE_PROJECT_DIR}/.claude/bin/role\" hook-pre-tool-use",
+    "python3 \"${CLAUDE_PROJECT_DIR}/.claude/bin/role\" hook-pre-bash --project",
+    "python3 \"${CLAUDE_PROJECT_DIR}/.claude/bin/role\" hook-pre-tool-use --project",
     "python3 \"${CLAUDE_PROJECT_DIR}/.claude/bin/role\" hook-session-start"
   ],
   "settings": {
