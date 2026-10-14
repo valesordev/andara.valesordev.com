@@ -133,5 +133,5 @@ Then remove it: `make tf-test-alert-clean STACK=solo7dev ENV=<same>`. Record wha
 
 The bucket keeps every version (non-current ones for 90 days beyond the newest 20), and the default soft
 delete keeps a deleted object for 7 days. Restoring a previous generation of a root's state is not yet a
-`make` target (§9 defect, raised with `AW-INF-046`'s PR); until it is, the second recovery path is
+`make` target (§9 defect, #579); until it is, the second recovery path is
 `terraform import` of each resource from the live stack.
