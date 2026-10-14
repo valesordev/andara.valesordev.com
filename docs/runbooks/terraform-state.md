@@ -1,0 +1,137 @@
+<!--
+SPDX-FileCopyrightText: 2026 Valesor Development
+SPDX-License-Identifier: CC-BY-SA-4.0
+-->
+
+# Terraform state for Grafana Cloud
+
+**Not an alert.** Where the state of the Grafana Cloud Terraform roots lives, who can reach it, how it is
+bootstrapped, and what to do with a stale lock or a failed apply. **Written with:** `AW-INF-046`
+(`ADR-0012` decisions 3, 4, 5, 10 and 12).
+
+## What lives where
+
+| Root | Directory | State object | Planned and applied by |
+|---|---|---|---|
+| `solo7dev` | `deploy/terraform/grafana/stacks/solo7dev` | `gs://andara-tfstate/grafana/solo7dev/default.tfstate` | the dev box (`make tf-plan`, `make tf-apply`), and CI on `main` (`AW-INF-068`) |
+| `solo7` | `deploy/terraform/grafana/stacks/solo7` | `gs://andara-tfstate/grafana/solo7/default.tfstate` | CI only: `plan-prod`, then `apply-prod` after Brian approves (`AW-INF-068`) |
+| `solo7-irm` | `deploy/terraform/grafana/stacks/solo7-irm` | `gs://andara-tfstate/grafana/solo7-irm/default.tfstate` | CI only, as `solo7` |
+
+Each root locks by writing `default.tflock` beside its state; there is no lock table. State holds the
+Slack webhooks (and, in `solo7-irm`, the IRM integration URL), so **reading state is a secret read**. Every
+identity is granted one root's prefix only, by an IAM condition on the object name and on the listing
+prefix (`ADR-0012` decision 3). The dev box's identity, `GCP_DEVBOX_IDENTITY`, can write `solo7dev`'s
+prefix and nothing else, which is why `make tf-plan` and `make tf-apply` refuse `solo7` and `solo7-irm`
+outside GitHub Actions (exit 2).
+
+## Credentials on the dev box
+
+`.local/box.env` (gitignored, mode `0600`: the targets refuse it, exit 1, if group or others can read
+it). A variable already exported wins over the file.
+
+| Variable | For |
+|---|---|
+| `GRAFANA_SOLO7DEV_READ_TOKEN` | `make tf-plan STACK=solo7dev` |
+| `GRAFANA_SOLO7DEV_APPLY_TOKEN` | `make tf-apply STACK=solo7dev`, `make tf-test-alert` |
+| `SLACK_WEBHOOK_DEV` | both (`TF_VAR_slack_webhook`) |
+| `GCP_STATE_PROJECT`, `GCP_DEVBOX_IDENTITY` | `make tf-bootstrap-gcp` |
+| `GCP_STATE_REGION` | `make tf-bootstrap-gcp`, only when it creates the bucket |
+| `GCP_BILLING_ACCOUNT` | `make tf-bootstrap-gcp`, only when the project has no billing account |
+
+The tokens are made by hand (`ADR-0012` decision 4; the click paths are `AW-INF-076`'s
+`grafana-credentials.md`). A missing one exits 3 and names it, before any network call. The token reaches
+Terraform only as `GRAFANA_AUTH`. State is reached with Application Default Credentials: on the dev box,
+`gcloud auth application-default login` signed in as `GCP_DEVBOX_IDENTITY`, never as the owner.
+
+## Bootstrap (once, by Brian as the GCP project owner)
+
+What has to exist first, by hand (`ADR-0012` decision 6): the GCP project, or an empty one
+`GCP_STATE_PROJECT` names, and a billing account; the second Google identity `GCP_DEVBOX_IDENTITY`; the
+stacks; their tokens; the Slack webhooks.
+
+```
+gcloud auth login                     # as the project owner
+make tf-bootstrap-gcp                 # GCP_STATE_PROJECT, GCP_DEVBOX_IDENTITY (and GCP_STATE_REGION the first time)
+```
+
+It verifies, and creates or corrects only what does not match: the APIs, the bucket and its settings
+(uniform access, public access prevention, versioning, the 90-day/newest-20 lifecycle rule), the six
+keyless service accounts, their conditioned bucket bindings, the dev box's binding, the workload identity
+pool `github` and provider `github-actions`, each account's `workloadIdentityUser` binding, and the
+repository variables `TFSTATE_*_SA` and `GCP_WIF_PROVIDER`. It then reads the bucket's IAM policy back
+and exits 1 naming any account whose binding is missing or whose condition differs; seeds an empty state
+for each root as the owner; and runs `terraform init` of `solo7dev` as the dev box identity, which must
+succeed. A second run prints `tf-bootstrap-gcp: no changes; everything already matched`. Run it again
+whenever the bindings should be checked; it is safe at any time.
+
+If `terraform init` as the dev box fails at the end, sign in again as that identity:
+`gcloud auth application-default login`, then re-run `make tf-bootstrap-gcp`.
+
+The impersonation bindings are written from the claims GitHub is *expected* to send (`event_name` of
+`pull_request_target` or `schedule`; `environment` of `andara-main`, `andara-prod-plan`,
+`andara-prod-apply`). `AW-INF-068`'s first runs print the real claims; if they differ, the values in
+`scripts/tf_bootstrap_gcp.py` change and the bootstrap is re-run.
+
+## Day to day: `solo7dev` from the dev box
+
+```
+make tf-plan  STACK=solo7dev          # prints the plan
+make tf-apply STACK=solo7dev          # plan, apply that plan, then a second plan that must be empty
+```
+
+`tf-apply` prints `tf: plan: N to add, N to change, N to destroy`. With nothing to change it prints
+`0 to add, 0 to change, 0 to destroy` and applies nothing.
+
+## A held lock
+
+A run that finds the state locked fails at once (exit 1) and changes nothing:
+
+```
+tf: lock held: id=1760412345678901 who=brian@devbox
+```
+
+1. **Find the holder.** `who` is `user@host` for a dev-box run and `runner@<host>` for CI. If a run is
+   still going (a terminal, or the Actions run for the `terraform` workflow), wait for it; the lock is
+   released when it ends.
+2. **Only when the holder is gone** (a killed terminal, a cancelled job): release it with the id it
+   printed:
+
+   ```
+   make tf-unlock STACK=solo7dev LOCK_ID=1760412345678901
+   ```
+
+   Without `LOCK_ID` the target exits 2. Never release a lock a live run holds: two writers can lose
+   resources from state.
+3. Re-run what failed.
+
+A `solo7` or `solo7-irm` lock is held by CI only; its jobs share one concurrency group, so a stale one
+means a cancelled job. The dev box cannot release it (`make tf-unlock` refuses those roots outside GitHub
+Actions, and the dev box identity cannot write their prefixes); releasing it is `AW-INF-068`'s workflow.
+
+## A failed apply
+
+Terraform writes state after each resource, so a failed apply (a provider error, a 5xx from Grafana)
+leaves the resources it finished applied, recorded, and the lock released by the exiting process. Fix the
+cause if it is in the code, then run `make tf-apply STACK=solo7dev` again: the plan shows exactly the
+remainder and converges. No `terraform state` command is part of recovering from it. There is no automatic
+rollback; rolling back is reverting the commit and applying.
+
+## Checking the notification path end to end
+
+`make tf-test-alert STACK=solo7dev ENV=<local|dev|staging>` creates one always-firing rule,
+`AndaraTestAlert`, labelled with that `environment` and `severity=warning`, in a folder of its own,
+from a throwaway root with local state (`.local/tf-test-alert/`), never in the bucket. Within about two
+minutes:
+
+- `ENV=dev` or `staging`: `#andaras-world-dev` receives it.
+- `ENV=local`: no contact point is notified; the route ends at `blackhole`, muted by `always`.
+
+Then remove it: `make tf-test-alert-clean STACK=solo7dev ENV=<same>`. Record what was seen in the story's
+§8 record. `solo7`'s post to `#andaras-world` is recorded at `AW-INF-068`'s first `apply-prod`.
+
+## Recovering a state object
+
+The bucket keeps every version (non-current ones for 90 days beyond the newest 20), and the default soft
+delete keeps a deleted object for 7 days. Restoring a previous generation of a root's state is not yet a
+`make` target (§9 defect, raised with `AW-INF-046`'s PR); until it is, the second recovery path is
+`terraform import` of each resource from the live stack.
