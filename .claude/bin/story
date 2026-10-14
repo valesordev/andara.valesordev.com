@@ -456,6 +456,14 @@ def cmd_body(b: Board, who: Who, a) -> str:
     return f"{a.id}: body updated"
 
 
+def post(b: Board, sid: str, head: str, text: str, author: str) -> str:
+    """Post `<head> <text>` on one of this repo's stories, stamped with its author."""
+    text = text.strip()
+    it = b.own(sid)
+    b.comment(it["number"], f"{head} {text}" if "\n" not in text else f"{head}\n\n{text}", author)
+    return f"{sid}: comment posted ({head})"
+
+
 def cmd_comment(b: Board, who: Who, a) -> str:
     who.require()
     if bool(a.to) == bool(a.record):
@@ -466,10 +474,7 @@ def cmd_comment(b: Board, who: Who, a) -> str:
         full = role.Roles(role.repo_root(Path.cwd()) or Path.cwd()).resolve(to)
         to = full if full and full != role.UNRESTRICTED else to
     head = f"**For {to}:**" if to else f"**{a.record} ({me}):**"
-    text = _text(a).strip()
-    it = b.own(a.id)
-    b.comment(it["number"], f"{head} {text}" if "\n" not in text else f"{head}\n\n{text}", me)
-    return f"{a.id}: comment posted ({head})"
+    return post(b, a.id, head, _text(a), me)
 
 
 def _refs(text: str, key: str, prefix: str) -> list[str]:
