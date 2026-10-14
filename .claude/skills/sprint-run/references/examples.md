@@ -15,6 +15,9 @@
 **Prompt:** (a lane ended with `PR open, Codex pending`)
 **Behavior:** The report names the lane and the PR. The agent doesn't call it clean and doesn't start another lane for that story. Next action: `codex-review wait <PR>`, or comment `@codex review`.
 
+**Prompt:** "tell SRE the chart keys are missing before you start the lanes" (dispatcher session, no role)
+**Behavior:** The agent doesn't set a role. It writes the note to a scratch file and runs `.claude/bin/coordinator comment GS-SRV-031 --to sre --body-file <file>`, which posts `**For sre:**` stamped `from: coordinator`. SRE's lane sees the question and answers `--to owner`. Then it plans the run as usual.
+
 **Non-trigger:** "Pick up GS-SRV-042 and implement it" → `/impl-start-sprint`, a single role session.
 **Non-trigger:** "Close the sprint" → `/pm-close-sprint`.
 

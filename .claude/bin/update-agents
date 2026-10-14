@@ -1,8 +1,9 @@
 #!/usr/bin/env python3
 """Update this repo's vendored agents from a signed tag of the agent-config repo they come from.
 
-Source of truth: automate.valesordev.com / plugins/valesor-dev/bin/update-agents.
-Vendored into target repos as .claude/bin/update-agents. Don't edit it there.
+Source of truth: automate.valesordev.com / toolkit/update-agents.
+install.py vendors it into every repo it installs, as .claude/bin/update-agents,
+whatever the target's plugins. Don't edit it there.
 
     update-agents <tag> [--no-pr] [--repo OWNER/NAME|URL] [--target NAME]
 

@@ -9,6 +9,7 @@ Vendored into target repos as .claude/bin/coordinator. Don't edit it there.
     coordinator status
     coordinator handoff
     coordinator clean  [--apply]
+    coordinator comment <ID> --to ROLE (--body TEXT | --body-file F)
 
 It is a script, not a model: it reads the board, decides which lanes can start,
 launches one `claude -p` session per lane, and reports from live state. The same
@@ -282,6 +283,7 @@ class Story:
 _FOR = re.compile(r"\*\*For ([\w-]+):\*\*")
 _RECORD = re.compile(r"\*\*[^*\n]+\(([\w-]+)\):\*\*")
 _FROM = re.compile(r"<!-- from: ([\w-]+) -->")
+COORDINATOR_AUTHOR = "coordinator"   # `coordinator comment`: it asks for the owner, so answers go --to owner
 
 
 def _answers(c: str, role_name: str, asker: str | None) -> bool:
@@ -306,6 +308,7 @@ def questions_for(role_name: str, stories: list[Story]) -> list[str]:
         asks = [i for i, c in enumerate(s.comments)
                 if (m := _FOR.match(c.strip())) and m.group(1) == role_name]
         asker = (_FROM.search(s.comments[asks[-1]]) or [None, None])[1] if asks else None
+        asker = "owner" if asker == COORDINATOR_AUTHOR else asker
         if asks and not any(_answers(c, role_name, asker) for c in s.comments[asks[-1] + 1:]):
             out.append(s.id)
     return out
@@ -2401,6 +2404,28 @@ def cmd_run(ctx: Ctx, a) -> int:
         return 0 if all(r.get("ok") for r in results) else 1
 
 
+def cmd_comment(ctx: Ctx, a) -> int:
+    """Hand a role something on a story from the dispatcher: `**For <role>:**`, stamped
+    `from: coordinator`. The session that runs the coordinator stays role-free, so it can't use
+    `story comment`. Refused in a lane, and in any session holding a role other than `none`:
+    those post as themselves, with `story comment`."""
+    if os.environ.get("COORDINATOR_LANE"):
+        raise CoordError("`comment` is the dispatcher's; a lane posts with `story comment`")
+    sid = os.environ.get("CLAUDE_SESSION_ID")
+    held = role.get_role(ctx.root, sid) if sid else None
+    if held not in (None, role.UNRESTRICTED):
+        raise CoordError(f"this session's role is {held}: post with `story comment`, as {held}")
+    ctx.require_github_board()
+    to = ctx.roles.resolve(a.to)
+    if not to or to == role.UNRESTRICTED:
+        raise CoordError(f"no role {a.to!r} here (.claude/roles/)")
+    text = Path(a.body_file).read_text() if a.body_file else a.body or ""
+    if not text.strip():
+        raise CoordError("give --body or --body-file")
+    print(story.post(ctx.board, a.id, f"**For {to}:**", text, COORDINATOR_AUTHOR))
+    return 0
+
+
 def cmd_status(ctx: Ctx, a) -> int:
     live = active_lanes(ctx)
     for l in live:
@@ -2553,6 +2578,12 @@ def parser() -> argparse.ArgumentParser:
             s.add_argument("--worktrees")
             s.add_argument("--poll", type=float, default=15)
     sub.add_parser("status")
+    s = sub.add_parser("comment", help="post `**For <role>:**` on a story as the coordinator")
+    s.add_argument("id")
+    s.add_argument("--to", required=True)
+    g = s.add_mutually_exclusive_group(required=True)
+    g.add_argument("--body")
+    g.add_argument("--body-file")
     s = sub.add_parser("handoff")
     s.add_argument("--same-os-user", action="store_true", help="the worktrees lanes run as you left")
     s.add_argument("--worktrees")
@@ -2572,7 +2603,7 @@ def main(argv: list[str], gh=None, sh: Shell | None = None, claude: str | None =
     try:
         ctx = Ctx(root, sh or Shell(), gh, claude)
         return {"plan": cmd_plan, "run": cmd_run, "status": cmd_status, "handoff": cmd_handoff,
-                "clean": cmd_clean}[a.cmd](ctx, a)
+                "clean": cmd_clean, "comment": cmd_comment}[a.cmd](ctx, a)
     except (CoordError, story.StoryError, OSError) as e:
         print(f"coordinator: {e}", file=sys.stderr)
         return 2

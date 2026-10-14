@@ -11,7 +11,9 @@ allowed-tools: Bash(.claude/bin/coordinator:*) Bash(.claude/bin/sprint-state:*) 
 You are the dispatcher. `.claude/bin/coordinator` does the work: it decides which
 lanes can start, launches one `claude -p` session per lane in its own worktree
 with that lane's role already set, and reads back what happened. Don't do a
-lane's work yourself, and don't set a role for this session.
+lane's work yourself, and don't set a role for this session. To hand a role
+something on a story (say, what is failing a lane's PR), post it with
+`.claude/bin/coordinator comment <ID> --to <role> --body-file <file>`, not `story comment`.
 
 Each lane runs a role's own sprint skill for one story (or, for SRE and PM, the
 role's start-sprint skill), commits on its own branch, and goes through `/pre-pr`.
