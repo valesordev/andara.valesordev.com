@@ -145,6 +145,7 @@ def role_settings(meta: dict, name: str) -> dict:
 
 
 SESSION_TRIGGERS = ("sre", "pm", "architecture")   # session roles the coordinator knows when to start
+DELIVERY_PLANNERS = {"pm", "producer"}   # who a `release-change` handoff goes to
 PICKABLE_BLOCKER = {"review", "done"}
 KILL_GRACE = 5  # seconds between SIGTERM and SIGKILL for a lane past its deadline
 HANDOFF_RETRY_DELAY = 3  # seconds between re-checks of a handoff: GitHub's search index lags a create
@@ -1841,20 +1842,35 @@ def gather(ctx: Ctx, a, prune: bool = False) -> tuple[dict, list[Story], list[di
     for r, why in {**problems, **unreadable}.items():
         waiting.append({"story": "-", "status": "-", "lane": r, "why": why, "on": "the owner"})
     for r, items in open_items.items():   # what a lane left alone, or left open for a decision
-        now = {i["ref"]: i["updated"] for i in items}
+        now = {i["ref"]: i for i in items}
         for key, why in (("stuck", "left untouched by the last lane"),
                          ("open", "left open for the owner's decision")):
             for ref, upd in (state_get(ctx, f"{r}:{key}", {}) or {}).items():
-                if now.get(ref) == upd:
-                    waiting.append({"story": ref, "status": "-", "lane": r, "on": "the owner", "why": why})
+                if ref in now and now[ref]["updated"] == upd:
+                    waiting.append({"story": ref, "status": "-", "lane": r, "on": "the owner",
+                                    "why": now[ref].get("why") or why})
     return state, stories, lanes, waiting, live, sig
 
 
-def planners_named(body: str, heading: str) -> int:
-    """How many planners a PR's "Release changes" section asks something of: its bullets (at least 1)."""
+_BULLET = re.compile(r"(?m)^\s*[-*]\s+(\S.*)$")
+_BULLET_ROLE = re.compile(r"[*_`]*([\w-]+)[*_`]*\s*(?::|—|–| - )")
+
+
+def handoffs_owed(body: str, heading: str, roles=()) -> int:
+    """How many `release-change` issues a PR's "Release changes" section asks for: one per bullet,
+    except a bullet addressed to one of this repo's own `roles` that isn't a delivery planner
+    (that change travels some other way). A section that says "None", or has no bullets, owes none."""
     after = body.split(heading, 1)[1] if heading in body else ""
     section = re.split(r"\n#{1,6} ", after, maxsplit=1)[0]
-    return max(1, len(re.findall(r"(?m)^\s*[-*]\s+\S", section)))
+    if re.match(r"[\s*_]*none\b", section, re.I):
+        return 0
+    owed = 0
+    for bullet in _BULLET.findall(section):
+        m = _BULLET_ROLE.match(bullet)
+        to = m.group(1).lower() if m else None
+        if to in DELIVERY_PLANNERS or to not in roles:
+            owed += 1
+    return owed
 
 
 def watch_items(ctx: Ctx, role_name: str) -> list[dict]:
@@ -1898,8 +1914,10 @@ def watch_items(ctx: Ctx, role_name: str) -> list[dict]:
             if opened is None:
                 raise CoordError(f"couldn't check the handoffs of PR #{p['number']} "
                                  f"({(h.stderr or h.stdout or 'bad output').strip()[:120]})")
-            if len(opened) < planners_named(p.get("body") or "", section):   # one issue per planner
-                items.append({"ref": f"PR#{p['number']}", "updated": "merged"})
+            owed = handoffs_owed(p.get("body") or "", section, set(ctx.roles.roles))
+            if len(opened) < owed:   # one issue per planner
+                items.append({"ref": f"PR#{p['number']}", "updated": "merged",
+                              "why": f"merged; release-change handoff missing ({owed - len(opened)} of {owed})"})
     return items
 
 
