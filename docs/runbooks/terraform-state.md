@@ -27,7 +27,9 @@ outside GitHub Actions (exit 2).
 ## Credentials on the dev box
 
 `.local/box.env` (gitignored, mode `0600`: the targets refuse it, exit 1, if group or others can read
-it). A variable already exported wins over the file.
+it). A variable already exported wins over the file. Keep one copy, in the main checkout: an agent
+worktree (`.claude/worktrees/<name>`) with no `.local/box.env` of its own reads the main checkout's, and
+`ANDARA_BOX_ENV=<path>` names any other file.
 
 | Variable | For |
 |---|---|

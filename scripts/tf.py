@@ -17,7 +17,8 @@ decisions 3 and 4), so solo7 and solo7-irm are planned and applied by CI (AW-INF
 prod plan is read with `make tf-plan-show`.
 
 Credentials come from the environment, after .local/box.env is loaded when it exists (a
-variable already set wins); a box.env readable by group or others is refused. plan reads
+variable already set wins; in a linked worktree with no box.env of its own, the main checkout's
+is read; ANDARA_BOX_ENV names another file); a box.env readable by group or others is refused. plan reads
 GRAFANA_<STACK>_READ_TOKEN, apply GRAFANA_<STACK>_APPLY_TOKEN (<STACK> is SOLO7DEV, or SOLO7
 for solo7 and solo7-irm), and both read SLACK_WEBHOOK_DEV (solo7dev) or SLACK_WEBHOOK_PROD
 (solo7). The token reaches the provider only as GRAFANA_AUTH, the webhook as
@@ -59,6 +60,21 @@ TEST_ALERT_STATE = os.path.join(REPO, ".local", "tf-test-alert")
 # The environments each stack's policy tree routes (ADR-0012 decision 9).
 STACK_ENVIRONMENTS = {"solo7dev": ("local", "dev", "staging"), "solo7": ("prod",)}
 BOX_ENV = os.path.join(REPO, ".local", "box.env")
+
+
+def _main_checkout():
+    """The main checkout's directory when REPO is a linked worktree, else REPO."""
+    try:
+        common = subprocess.run(["git", "-C", REPO, "rev-parse", "--path-format=absolute", "--git-common-dir"],
+                                capture_output=True, text=True, check=True).stdout.strip()
+    except (OSError, subprocess.CalledProcessError):
+        return REPO
+    return os.path.dirname(common) if os.path.basename(common) == ".git" else REPO
+
+
+# A worktree (.claude/worktrees/<name>) has its own .local/, but credentials live once, in the
+# main checkout's .local/box.env. ANDARA_BOX_ENV names another file outright.
+MAIN_BOX_ENV = os.path.join(_main_checkout(), ".local", "box.env")
 PLUGIN_CACHE = os.path.join(REPO, ".local", "terraform-plugins")
 PLATFORMS = ("linux_amd64", "linux_arm64", "darwin_amd64", "darwin_arm64")
 
@@ -111,16 +127,26 @@ def check_stack(stack, env):
                       "read a prod plan with make tf-plan-show" % stack)
 
 
+def box_env_path(env):
+    """ANDARA_BOX_ENV, else this checkout's .local/box.env, else the main checkout's; None when none exists."""
+    if env.get("ANDARA_BOX_ENV"):
+        return env["ANDARA_BOX_ENV"]
+    for path in (BOX_ENV, MAIN_BOX_ENV):
+        if os.path.exists(path):
+            return path
+    return None
+
+
 def load_box_env(env, path=None):
     """env with path's KEY=VALUE lines added where env has no value. Refuses a group- or world-readable file."""
     env = dict(env)
-    path = path or BOX_ENV
-    if not os.path.exists(path):
+    path = path or box_env_path(env)
+    if not path or not os.path.exists(path):
         return env
     mode = stat.S_IMODE(os.stat(path).st_mode)
     if mode & 0o077:
         raise Exit(1, "%s is mode %04o; it holds credentials and must be readable by its owner only "
-                      "(chmod 600 %s)" % (os.path.relpath(path, REPO), mode, os.path.relpath(path, REPO)))
+                      "(chmod 600 %s)" % (path, mode, path))
     with open(path) as f:
         for line in f:
             line = line.strip()

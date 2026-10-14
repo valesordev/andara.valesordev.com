@@ -66,7 +66,8 @@ def main(argv, env, fake):
 class NoBoxEnv(unittest.TestCase):
     def setUp(self):
         self.dir = tempfile.TemporaryDirectory()
-        for name, value in (("BOX_ENV", "box.env"), ("TEST_ALERT_STATE", "tf-test-alert")):
+        for name, value in (("BOX_ENV", "box.env"), ("MAIN_BOX_ENV", "main-box.env"),
+                            ("TEST_ALERT_STATE", "tf-test-alert")):
             p = mock.patch.object(tf, name, os.path.join(self.dir.name, value))
             p.start()
             self.addCleanup(p.stop)
@@ -159,6 +160,30 @@ class BoxEnvTest(NoBoxEnv):
         self.assertEqual(rc, 0)
         self.assertEqual(fake.envs[-1]["GRAFANA_AUTH"], "from-file")
         self.assertEqual(fake.envs[-1]["TF_VAR_slack_webhook"], "https://env")
+
+    def test_worktree_falls_back_to_the_main_checkout(self):
+        with open(tf.MAIN_BOX_ENV, "w") as f:
+            f.write("GRAFANA_SOLO7DEV_READ_TOKEN=from-main\nSLACK_WEBHOOK_DEV=https://w\n")
+        os.chmod(tf.MAIN_BOX_ENV, 0o600)
+        fake = FakeTerraform()
+        rc, _, _ = main(["plan", "--stack", "solo7dev"], {}, fake)
+        self.assertEqual(rc, 0)
+        self.assertEqual(fake.envs[-1]["GRAFANA_AUTH"], "from-main")
+        # The worktree's own file wins over the main checkout's.
+        self.write("GRAFANA_SOLO7DEV_READ_TOKEN=from-worktree\nSLACK_WEBHOOK_DEV=https://w\n")
+        fake = FakeTerraform()
+        main(["plan", "--stack", "solo7dev"], {}, fake)
+        self.assertEqual(fake.envs[-1]["GRAFANA_AUTH"], "from-worktree")
+
+    def test_andara_box_env_names_the_file(self):
+        other = os.path.join(self.dir.name, "elsewhere.env")
+        with open(other, "w") as f:
+            f.write("GRAFANA_SOLO7DEV_READ_TOKEN=from-other\nSLACK_WEBHOOK_DEV=https://w\n")
+        os.chmod(other, 0o600)
+        fake = FakeTerraform()
+        rc, _, _ = main(["plan", "--stack", "solo7dev"], {"ANDARA_BOX_ENV": other}, fake)
+        self.assertEqual(rc, 0)
+        self.assertEqual(fake.envs[-1]["GRAFANA_AUTH"], "from-other")
 
     def test_group_or_world_readable_refused(self):
         for mode in (0o640, 0o604, 0o644):
