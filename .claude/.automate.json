@@ -1,8 +1,8 @@
 {
-  "source": "automate.system9studios.com@6641b64",
+  "source": "automate.system9studios.com@231358d",
   "target": "andaras-world",
   "repo": "system9studios/automate.system9studios.com",
-  "ref": "v0.3.0",
+  "ref": "v0.3.2",
   "files": {
     ".claude/skills/arch-start-sprint/SKILL.md": "c8129dce9e5c851c6867342d7d93d89271e796886b0dbb7136f97fb73c92564d",
     ".claude/skills/arch-start-sprint/references/examples.md": "c0e7eda4f832e4db41f7198f2438962be501d2668b0bbb0a696624f2cc199f36",
@@ -58,7 +58,7 @@
     ".claude/skills/sre-start-sprint/SKILL.md": "2c283eeee7463780086ec84320437f43db9a19efb77c65ffdae361cd31605456",
     ".claude/skills/sre-start-sprint/references/examples.md": "a22df600f0c3f11a3fc70c435de07f18d9837e4cc6d3fe440758bd31d28e62c2",
     ".claude/bin/codex-review": "db19ad0a18de9e34fc9228db167218b9973aa5d099fb3e4236eae4910e6368f5",
-    ".claude/bin/coordinator": "b5b48c4a3c446d6f310dc1eb4eee363764619e9011b61d0a587b3d2b584f8da0",
+    ".claude/bin/coordinator": "a8003de132e5d2dd39a1ef3f8fd6d7c8146bd84936c833b4368f8b4f4b5e22b6",
     ".claude/bin/project-mirror": "5afd8e1e543d2244d4f7cb2f08083e516e29ebadb01e4dbfbe73bb9647a9c011",
     ".claude/bin/role": "a7b82fd1237b5b71c5188d6843b69d8f0a0e27d20889f89d4c1d045c047f9954",
     ".claude/bin/sprint-state": "db86f12d2c60c0bf39502d28242969b746682212e518dc07528ffff7954c8d6f",
@@ -90,8 +90,8 @@
     "python3 \"${CLAUDE_PROJECT_DIR}/.claude/bin/role\" hook-session-start"
   ],
   "sources": {
-    "automate.system9studios.com": "6641b64",
-    "automate.valesordev.com": "517c6ab"
+    "automate.system9studios.com": "231358d",
+    "automate.valesordev.com": "6693895"
   },
   "settings": {
     "permissions.allow": [

@@ -1219,8 +1219,38 @@ def setup_worktree(ctx: Ctx, lane: dict, sid: str) -> tuple[Path, bool]:
             raise CoordError(f"{path} has uncommitted work or commits origin/main doesn't: resume it "
                              f"(the story is in-progress), or `coordinator clean` once it's carried")
         host.git(path, "switch", "--detach", "refs/remotes/origin/main", "--quiet", check=True)
+    else:
+        catch_up(host, path)
     host.put_role(sid, resolved, pinned=True)   # `role set/clear` refuse a pinned session
     return path, fresh
+
+
+def catch_up(host, wt: Path) -> None:
+    """Bring a resumed lane's branch up to origin/main before the lane starts: rebase it while it's
+    unpushed, merge origin/main once it's pushed (a lane never force-pushes). A lane could run either
+    itself, but its worktree also runs the branch's own vendored hook, and a deny from either copy
+    wins: a branch cut before lanes could catch up gets an older hook that refuses both. Caught up
+    here, the lane starts on the current .claude/. A conflict is the owner's to resolve."""
+    branch = host.git(wt, "branch", "--show-current").stdout.strip()
+    behind = host.git(wt, "rev-list", "--count", "HEAD..refs/remotes/origin/main").stdout.strip()
+    if not branch or behind in ("", "0"):
+        return
+    behind_by = f"{behind} commit{'' if behind == '1' else 's'} behind"
+    if host.git(wt, "status", "--porcelain", "--untracked-files=no").stdout.strip():
+        raise CoordError(f"needs the owner: {branch} is {behind_by} origin/main and {wt} has "
+                         f"uncommitted changes, so it can't be brought up to date: commit or discard them")
+    pushed = host.git(wt, "rev-parse", "--verify", "--quiet", f"refs/remotes/origin/{branch}").returncode == 0
+    sub, how = ("merge", ["--no-edit"]) if pushed else ("rebase", [])
+    r = host.git(wt, sub, *how, "refs/remotes/origin/main")
+    if r.returncode == 0:
+        print(f"{'merged origin/main into' if pushed else 'rebased onto origin/main:'} {branch} "
+              f"({behind_by})")
+        return
+    files = host.git(wt, "diff", "--name-only", "--diff-filter=U").stdout.split()
+    host.git(wt, sub, "--abort")
+    raise CoordError(f"needs the owner: {branch} doesn't {sub} cleanly onto origin/main"
+                     + (f" ({names_shown(files)})" if files else "")
+                     + f"; bring it up to date by hand in {wt}, then resume it")
 
 
 PLAIN_NAME = re.compile(r"[A-Za-z0-9._][A-Za-z0-9._/@+-]*")   # a branch or path the report may show as is
@@ -1571,6 +1601,22 @@ def git_auth(auth: Path) -> list[tuple[str, str]]:
             ("credential.https://github.com.helper", str(auth / "bin" / "git-credential-lane"))]
 
 
+def git_config_text(cfg: list[tuple[str, str]]) -> str:
+    """cfg as a git config file. A lane's environment carries only `include.path` to it: a tool that
+    drops empty variables when it runs git (buf does) would take the helper reset's "" with it, and
+    git refuses a GIT_CONFIG_COUNT with a value missing. Keys are <section>.<subsection>.<name>."""
+    out, section = [], None
+    for key, value in cfg:
+        sec, rest = key.split(".", 1)
+        sub, name = rest.rsplit(".", 1)
+        if (sec, sub) != section:
+            section = (sec, sub)
+            out.append(f'[{sec} "{sub}"]')
+        quoted = value.replace("\\", "\\\\").replace('"', '\\"')
+        out.append(f'\t{name} = "{quoted}"')
+    return "\n".join(out) + "\n"
+
+
 def lane_auth_files(token: LaneToken, lane_dir: Path, shared: bool = False) -> None:
     """The token file, and a `gh` and git credential helper that read it on every call, in
     <lane dir>/auth/. The private key stays out of a lane's environment. `shared`: the lane user
@@ -1589,6 +1635,8 @@ def lane_auth_files(token: LaneToken, lane_dir: Path, shared: bool = False) -> N
     for name, text in files.items():
         (auth / "bin" / name).write_text(text)
         (auth / "bin" / name).chmod(0o750 if shared else 0o700)
+    (auth / "gitconfig").write_text(git_config_text(git_auth(auth)))
+    (auth / "gitconfig").chmod(0o640 if shared else 0o600)
 
 
 def run_lane(ctx: Ctx, lane: dict, run_id: str, run_dir: Path, lane_dir: Path, args, pending: list) -> None:
@@ -1611,10 +1659,8 @@ def run_lane(ctx: Ctx, lane: dict, run_id: str, run_dir: Path, lane_dir: Path, a
     if token:   # the lanes' app for gh and for git pushes over HTTPS, never your account or your SSH key
         env.pop("GITHUB_TOKEN", None)
         env.pop("GH_TOKEN", None)
-        cfg = git_auth(auth)
-        env["GIT_CONFIG_COUNT"] = str(len(cfg))
-        for i, (k, v) in enumerate(cfg):
-            env[f"GIT_CONFIG_KEY_{i}"], env[f"GIT_CONFIG_VALUE_{i}"] = k, v
+        env.update(GIT_CONFIG_COUNT="1", GIT_CONFIG_KEY_0="include.path",
+                   GIT_CONFIG_VALUE_0=str(auth / "gitconfig"))   # not the entries: see git_config_text
     env = host.lane_env(env, auth)
     # Between the process existing and the run owning it, a signal must wait: the handler
     # below only notes it, and it is raised once the lane is in `pending` (or has been stopped).
