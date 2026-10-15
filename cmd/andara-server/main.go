@@ -37,6 +37,9 @@ func run(args []string, env config.EnvLookup, stdout, stderr io.Writer) (exit in
 	if len(args) > 0 && args[0] == "config-assert" {
 		return runConfigAssert(args[1:], env, stdout, stderr)
 	}
+	if len(args) > 0 && args[0] == "prestop" {
+		return runPrestop(args[1:], env, stdout, stderr)
+	}
 	cfg, err := config.Parse(args, env, stderr)
 	if err != nil {
 		_, _ = io.WriteString(stderr, err.Error()+"\n")
@@ -263,6 +266,23 @@ func run(args []string, env config.EnvLookup, stdout, stderr io.Writer) (exit in
 	// (AW-SRV-012), or, waiting for its first content, ready when it arrives
 	// (AW-SRV-042).
 	rt.MarkStarted()
+	// The interruption ends when the process first reports serving
+	// (AW-SRV-054 AC-7), probe or no probe.
+	watchCtx, stopWatch := context.WithCancel(ctx)
+	defer stopWatch()
+	go rt.WatchServing(watchCtx)
+
+	// The Lifecycle service pre-stop calls (AW-SRV-054), on the control
+	// socket, once the Gateway serves: there is a stop to prepare only once
+	// there are streams and Submits. A socket that cannot be bound is an
+	// error line, not a refusal to serve: without it `prestop` exits 3 and
+	// the previous complete round is the recovery point, a longer replay
+	// rather than a wrong one.
+	if lc, err := rt.StartLifecycle(loop); err != nil {
+		tel.Log.Error("lifecycle: pre-stop will find no socket; a deploy recovers from the previous round", "detail", err.Error())
+	} else {
+		defer func() { _ = lc.Close() }()
+	}
 
 	// Active Pointer moves, applied through the log for as long as the
 	// process runs (AW-SRV-012). A no-op for the dir source.

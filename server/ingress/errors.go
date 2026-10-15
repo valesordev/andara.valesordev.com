@@ -51,6 +51,10 @@ var (
 	// produce_deadline, which it retries: the player is told the World may
 	// or may not have taken the command, and looks (AW-SRV-031).
 	ErrOutcomeUnknown = errors.New("outcome unknown: the command may be in the log and its fate will not be known")
+	// ErrServerRestarting: pre-stop has set the draining flag (AW-SRV-054).
+	// UNAVAILABLE with reason server_restarting, retryable against the next
+	// pod; nothing produced. Not the degraded state.
+	ErrServerRestarting = errors.New("server restarting")
 )
 
 // Unsettled is the error Produce returns when the caller's wait ended —
@@ -98,6 +102,8 @@ const (
 	ReasonDuplicateClientRef = "duplicate_client_ref"
 	// ReasonOutcomeUnknown: the settled-unknown fate, terminal (AW-SRV-031).
 	ReasonOutcomeUnknown = "outcome_unknown"
+	// ReasonServerRestarting: the draining flag's refusal (AW-SRV-054).
+	ReasonServerRestarting = "server_restarting"
 	// ErrorDomain is ErrorInfo.domain for every ingress error.
 	ErrorDomain = "andara.command"
 )
@@ -112,6 +118,16 @@ const ReadOnlyMessage = "The world is read-only for a moment: your command was n
 type readOnly struct{}
 
 func (readOnly) Error() string { return ReadOnlyMessage }
+
+// RestartingMessage is what a player reads when Submit is refused for a
+// restart. Placeholder wording: the words are Brian's
+// (lifecycle.md ruling 3); the reason is the contract.
+const RestartingMessage = "The server is restarting: your command was not taken. Try it again shortly."
+
+// restarting is ErrServerRestarting's face on the wire.
+type restarting struct{}
+
+func (restarting) Error() string { return RestartingMessage }
 
 // retryAfter is the RetryInfo on UNAVAILABLE: what a well-behaved client
 // waits before trying again.
@@ -144,6 +160,12 @@ func connectError(err error) error {
 		return withInfo(connect.NewError(connect.CodeResourceExhausted, err), ReasonPendingFull, nil)
 	case errors.Is(err, ErrUnavailable):
 		ce := withInfo(connect.NewError(connect.CodeUnavailable, readOnly{}), ReasonReadOnly, nil)
+		if d, derr := connect.NewErrorDetail(&errdetails.RetryInfo{RetryDelay: durationpb.New(retryAfter)}); derr == nil {
+			ce.AddDetail(d)
+		}
+		return ce
+	case errors.Is(err, ErrServerRestarting):
+		ce := withInfo(connect.NewError(connect.CodeUnavailable, restarting{}), ReasonServerRestarting, nil)
 		if d, derr := connect.NewErrorDetail(&errdetails.RetryInfo{RetryDelay: durationpb.New(retryAfter)}); derr == nil {
 			ce.AddDetail(d)
 		}
@@ -209,7 +231,7 @@ func outcomeOf(err error) string {
 		return OutcomeRateLimited
 	case errors.Is(err, ErrPendingFull):
 		return OutcomePendingFull
-	case errors.Is(err, ErrUnavailable):
+	case errors.Is(err, ErrUnavailable), errors.Is(err, ErrServerRestarting):
 		return OutcomeUnavailable
 	case errors.Is(err, ErrDuplicateClientRef):
 		return OutcomeRejectedRef

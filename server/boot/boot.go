@@ -169,6 +169,11 @@ type Runtime struct {
 	recOnce    sync.Once
 	// orphans, when set, stands in for the roster in releaseOrphans: a test.
 	orphans orphanReleaser
+	// deploy is the interruption measurement (AW-SRV-054), registered by
+	// StartTickLoop; now is its clock, nil for time.Now (a test sets it).
+	deployOnce sync.Once
+	deploy     *interruption
+	now        func() time.Time
 }
 
 // LoadVerbs builds the verb table and the command metrics. A verb table
@@ -473,11 +478,14 @@ func (rt *Runtime) Ready() bool {
 	if !rt.ready.Load() {
 		return false
 	}
-	if rt.live == nil {
-		return true
+	if rt.live != nil {
+		if ticks, lag := rt.live(); ticks == 0 || lag >= 10*rt.Cfg.SimTickBudget {
+			return false
+		}
 	}
-	ticks, lag := rt.live()
-	return ticks > 0 && lag < 10*rt.Cfg.SimTickBudget
+	// The first serving answer ends the interruption (AW-SRV-054 AC-7).
+	rt.observeServing()
+	return true
 }
 
 // Drain flips readiness off. The gateway calls it when Shutdown begins, so

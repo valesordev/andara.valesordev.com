@@ -62,6 +62,18 @@ func renderEvent(env *gamev1.EventEnvelope) []string {
 		// Stream plumbing, not a thing that happened: no line. --output
 		// json still carries both.
 		return nil
+	case *gamev1.EventEnvelope_ServerStopping:
+		// AW-SRV-054. The server's message when it sends one (Brian's words);
+		// until then, this client's own line from expected_back_seconds. The
+		// reconnect after the close is the stream loop's.
+		ss := p.ServerStopping
+		if m := ss.GetMessage(); m != "" {
+			return []string{m}
+		}
+		if s := ss.GetExpectedBackSeconds(); s > 0 {
+			return []string{fmt.Sprintf("The server is restarting; it expects to be back in about %d seconds. You will be reconnected.", s)}
+		}
+		return []string{"The server is restarting. You will be reconnected."}
 	case *gamev1.EventEnvelope_Resync:
 		return []string{"You may have missed some events; the world continues from here."}
 	case *gamev1.EventEnvelope_ZoneFaulted:
