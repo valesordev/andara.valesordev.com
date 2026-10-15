@@ -52,7 +52,7 @@ func TestOpenAccounts_Bootstrap(t *testing.T) {
 	cfg := authConfig(t, func(c *config.Config) { c.AuthBootstrapOperator = "brian:first-operator-pw" })
 	tel := telemetry.Setup(cfg, &bytes.Buffer{})
 	defer tel.Shutdown(context.Background())
-	rt := New(cfg, tel)
+	rt := mustNew(t, cfg, tel)
 	store, err := rt.OpenAccounts(context.Background())
 	if err != nil {
 		t.Fatal(err)
@@ -77,7 +77,7 @@ func TestOpenAccounts_Bootstrap(t *testing.T) {
 	} {
 		bad := authConfig(t, mutate)
 		badTel := telemetry.Setup(bad, &bytes.Buffer{})
-		if _, err := New(bad, badTel).OpenAccounts(context.Background()); err == nil {
+		if _, err := mustNew(t, bad, badTel).OpenAccounts(context.Background()); err == nil {
 			t.Errorf("%s: boot succeeded", name)
 		}
 		badTel.Shutdown(context.Background())
@@ -92,7 +92,7 @@ func TestSnapshotBytesCarryNoAccountState(t *testing.T) {
 	cfg := authConfig(t, func(c *config.Config) { c.AuthBootstrapOperator = "planted-username-9c1e:planted-password-4f7a" })
 	tel := telemetry.Setup(cfg, &bytes.Buffer{})
 	defer tel.Shutdown(context.Background())
-	store, err := New(cfg, tel).OpenAccounts(context.Background())
+	store, err := mustNew(t, cfg, tel).OpenAccounts(context.Background())
 	if err != nil {
 		t.Fatal(err)
 	}

@@ -62,6 +62,8 @@ type Loader struct {
 	log     *slog.Logger
 	tracer  trace.Tracer
 	now     func() time.Time
+	// activeTopic names the Active Pointer topic in log lines.
+	activeTopic string
 	// strictOrphans promotes orphan_room from a warning to a refusal, the
 	// same policy knob the dir loader has (content.strict_orphans).
 	strictOrphans bool
@@ -126,6 +128,9 @@ type LoaderOptions struct {
 	ApplyWait time.Duration
 	// SpawnRoom is character.spawn_room. Zero skips the check.
 	SpawnRoom sim.RoomRef
+	// ActiveTopic is the Active Pointer topic the store reads, as resolved,
+	// for log lines; it changes nothing the Loader does.
+	ActiveTopic string
 }
 
 // swapResult is how a waiting load learns its swap's fate.
@@ -164,6 +169,7 @@ func NewLoader(o LoaderOptions) *Loader {
 		log:           l,
 		tracer:        tr,
 		now:           now,
+		activeTopic:   o.ActiveTopic,
 		strictOrphans: o.StrictOrphans,
 		producer:      o.Producer,
 		serving:       map[string]*Resolved{},
@@ -257,7 +263,7 @@ func (l *Loader) LoadAll(ctx context.Context) ([]Rejection, error) {
 			// operator meant, and silence here looks exactly like a pack that
 			// loaded fine.
 			l.log.Warn("configured content pack has no Active Pointer; nothing to load",
-				"pack", pack, "topic", TopicActive)
+				"pack", pack, "topic", l.activeTopic)
 			continue
 		}
 		l.moved(pack, active[pack])

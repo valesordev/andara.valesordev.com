@@ -108,7 +108,7 @@ func NewKafka(ctx context.Context, o KafkaOptions) (*Kafka, error) {
 		return nil, errors.New("recordlog: no brokers configured")
 	}
 	if o.Topic == "" {
-		return nil, errors.New("recordlog: topic is required")
+		return nil, errors.New("recordlog: KafkaOptions.Topic is required")
 	}
 	if o.ClientID == "" {
 		o.ClientID = "andara-server"

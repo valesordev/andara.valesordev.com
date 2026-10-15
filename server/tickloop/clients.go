@@ -91,14 +91,14 @@ func commandSourceOpts(brokers []string, clientID, topic string, assign map[int3
 }
 
 // Sites describes every Kafka client this package builds, for a server whose
-// client.id base is clientID.
-func Sites(brokers []string, clientID string, deliveryTimeout time.Duration) []kafkaclient.Site {
+// client.id base is clientID, on the topics t names.
+func Sites(brokers []string, clientID string, deliveryTimeout time.Duration, t kafkaclient.Topics) []kafkaclient.Site {
 	at := map[int32]kgo.Offset{0: kgo.NewOffset().At(0)}
 	return []kafkaclient.Site{
 		{Name: "tick boundary publisher", Role: kafkaclient.Producer, Opts: publisherOpts(brokers, clientID, deliveryTimeout), Partitioning: kafkaclient.Manual},
-		{Name: "tick loop command consumer", Role: kafkaclient.Consumer, Opts: simConsumerOpts(brokers, clientID, CommandsTopic, at)},
-		{Name: "tick boundary scan", Role: kafkaclient.Consumer, Opts: boundaryScanOpts(brokers, EventsTopic), OneShot: kafkaclient.TickBoundaryScan},
-		{Name: "commands fetch", Role: kafkaclient.Consumer, Opts: fetchOpts(brokers, CommandsTopic, 0, 0)},
+		{Name: "tick loop command consumer", Role: kafkaclient.Consumer, Opts: simConsumerOpts(brokers, clientID, t.Commands(), at)},
+		{Name: "tick boundary scan", Role: kafkaclient.Consumer, Opts: boundaryScanOpts(brokers, t.Events()), OneShot: kafkaclient.TickBoundaryScan},
+		{Name: "commands fetch", Role: kafkaclient.Consumer, Opts: fetchOpts(brokers, t.Commands(), 0, 0)},
 		{Name: "end offset query", Role: kafkaclient.Admin, Opts: offsetsOpts(brokers)},
 	}
 }
@@ -106,12 +106,12 @@ func Sites(brokers []string, clientID string, deliveryTimeout time.Duration) []k
 // ReaderSites describes the clients the BoundaryReader and the CommandSource
 // build for a caller whose client.id base is clientID: the server's recovery
 // and the projector's replay.
-func ReaderSites(brokers []string, clientID string) []kafkaclient.Site {
+func ReaderSites(brokers []string, clientID string, t kafkaclient.Topics) []kafkaclient.Site {
 	at := map[int32]kgo.Offset{0: kgo.NewOffset().At(0)}
 	return []kafkaclient.Site{
 		{Name: clientID + " boundary reader", Role: kafkaclient.Admin, Opts: boundaryAdminOpts(brokers, clientID)},
-		{Name: clientID + " boundary probe", Role: kafkaclient.Consumer, Opts: boundaryProbeOpts(brokers, clientID, EventsTopic, 0)},
-		{Name: clientID + " boundary consumer", Role: kafkaclient.Consumer, Opts: boundaryConsumerOpts(brokers, clientID, EventsTopic, 0)},
-		{Name: clientID + " command source", Role: kafkaclient.Consumer, Opts: commandSourceOpts(brokers, clientID, CommandsTopic, at)},
+		{Name: clientID + " boundary probe", Role: kafkaclient.Consumer, Opts: boundaryProbeOpts(brokers, clientID, t.Events(), 0)},
+		{Name: clientID + " boundary consumer", Role: kafkaclient.Consumer, Opts: boundaryConsumerOpts(brokers, clientID, t.Events(), 0)},
+		{Name: clientID + " command source", Role: kafkaclient.Consumer, Opts: commandSourceOpts(brokers, clientID, t.Commands(), at)},
 	}
 }

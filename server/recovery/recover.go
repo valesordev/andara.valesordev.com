@@ -47,6 +47,9 @@ type Options struct {
 	ZonesAt store.ZonesAt
 	// Boundaries is the boundary stream, positioned by Recover.
 	Boundaries Boundaries
+	// EventsTopic is the topic Boundaries reads, as resolved
+	// (kafkaclient.Topics.Events): what a LogGapError names.
+	EventsTopic string
 	// OpenRecords opens the Command source for the Partitions at their start
 	// offsets. It is called once, after the round is loaded, because the
 	// offsets are the round's. A source that is an io.Closer is closed.
@@ -444,7 +447,7 @@ func (o *Options) roundBoundary(ctx context.Context, round sim.Tick) (sim.TickCo
 	}
 	span.SetAttributes(attribute.Int64("offset", at))
 	if !o.Boundaries.BoundaryAfter() {
-		return sim.TickCompleted{}, &tickloop.LogGapError{Topic: tickloop.EventsTopic, Partition: tickloop.BoundaryPartition, Need: int64(round), Have: -1}
+		return sim.TickCompleted{}, &tickloop.LogGapError{Topic: o.EventsTopic, Partition: tickloop.BoundaryPartition, Need: int64(round), Have: -1}
 	}
 	for {
 		b, err := o.Boundaries.Next(ctx, 1, o.Poll)
@@ -456,7 +459,7 @@ func (o *Options) roundBoundary(ctx context.Context, round sim.Tick) (sim.TickCo
 		case b[0].Tick == round:
 			return b[0].TickCompleted, nil
 		default:
-			return sim.TickCompleted{}, &tickloop.LogGapError{Topic: tickloop.EventsTopic, Partition: tickloop.BoundaryPartition, Need: int64(round), Have: int64(b[0].Tick)}
+			return sim.TickCompleted{}, &tickloop.LogGapError{Topic: o.EventsTopic, Partition: tickloop.BoundaryPartition, Need: int64(round), Have: int64(b[0].Tick)}
 		}
 	}
 }

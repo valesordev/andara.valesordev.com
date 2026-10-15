@@ -22,15 +22,20 @@ import (
 var dark = []string{"127.0.0.1:1"}
 
 // KafkaSites describes every Kafka client the server and the projector build,
-// from the options their constructors build them with (AW-SRV-053).
-func KafkaSites(cfg config.Config) []kafkaclient.Site {
+// from the options their constructors build them with (AW-SRV-053), on the
+// topics cfg names.
+func KafkaSites(cfg config.Config) ([]kafkaclient.Site, error) {
+	t, err := kafkaclient.TopicsFor(cfg)
+	if err != nil {
+		return nil, err
+	}
 	name := cfg.ServiceName
 	var sites []kafkaclient.Site
-	sites = append(sites, ingress.Sites(ingress.ProducerOptions{Brokers: dark, ClientID: name, Deadline: cfg.IngressProduceDeadline})...)
-	sites = append(sites, tickloop.Sites(dark, name, tickloop.DeliveryTimeout)...)
-	sites = append(sites, tickloop.ReaderSites(dark, recoveryClientID)...)
-	sites = append(sites, tickloop.ReaderSites(dark, projector.ClientID)...)
-	sites = append(sites, content.Sites(dark, content.DefaultClientID, content.Topics{})...)
+	sites = append(sites, ingress.Sites(ingress.ProducerOptions{Brokers: dark, Topic: t.Commands(), ClientID: name, Deadline: cfg.IngressProduceDeadline})...)
+	sites = append(sites, tickloop.Sites(dark, name, tickloop.DeliveryTimeout, t)...)
+	sites = append(sites, tickloop.ReaderSites(dark, recoveryClientID, t)...)
+	sites = append(sites, tickloop.ReaderSites(dark, projector.ClientID, t)...)
+	sites = append(sites, content.Sites(dark, content.DefaultClientID, content.TopicsFrom(t))...)
 	sites = append(sites, projector.Sites(dark)...)
 
 	logs := []struct {
@@ -38,11 +43,11 @@ func KafkaSites(cfg config.Config) []kafkaclient.Site {
 		oneShot             kafkaclient.OneShot
 		maxRecord           int32
 	}{
-		{"accounts", AccountsTopic, name, kafkaclient.AccountsScan, 0},
-		{"audit", AuditTopic, name, kafkaclient.AuditReplay, 0},
-		{"content blobs log", content.TopicBlobs, name + "-content", kafkaclient.ContentBlobsScan, 2 << 20},
-		{"content versions log", content.TopicVersions, name + "-content", kafkaclient.ContentVersionsScan, 0},
-		{"content active log", content.TopicActive, name + "-content", kafkaclient.ContentActiveWatch, 0},
+		{"accounts", t.Accounts(), name, kafkaclient.AccountsScan, 0},
+		{"audit", t.Audit(), name, kafkaclient.AuditReplay, 0},
+		{"content blobs log", t.ContentBlobs(), name + "-content", kafkaclient.ContentBlobsScan, 2 << 20},
+		{"content versions log", t.ContentVersions(), name + "-content", kafkaclient.ContentVersionsScan, 0},
+		{"content active log", t.ContentActive(), name + "-content", kafkaclient.ContentActiveWatch, 0},
 	}
 	for _, l := range logs {
 		sites = append(sites,
@@ -50,7 +55,7 @@ func KafkaSites(cfg config.Config) []kafkaclient.Site {
 			recordlog.ReplaySite(l.name+" replay", dark, l.topic, l.oneShot),
 		)
 	}
-	return sites
+	return sites, nil
 }
 
 // ConfigAssert is `andara-server config-assert` (AW-SRV-053): it reads back

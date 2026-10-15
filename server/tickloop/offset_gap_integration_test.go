@@ -49,7 +49,7 @@ func TestKafkaSource_AnOffsetTheBrokerNoLongerHasIsAGap(t *testing.T) {
 	// The source resumes past the log's end, as after an unclean leader
 	// election that cut the log below the checkpoint: the broker answers
 	// OFFSET_OUT_OF_RANGE to every fetch.
-	src, err := NewKafkaSource(ctx, KafkaSourceOptions{Brokers: bk, Group: "gap", Start: map[int32]int64{part: end + 5}, Topic: commands,
+	src, err := NewKafkaSource(ctx, KafkaSourceOptions{Brokers: bk, Group: "it-gap", Start: map[int32]int64{part: end + 5}, Topic: commands,
 		LagEvery: 200 * time.Millisecond})
 	if err != nil {
 		t.Fatal(err)

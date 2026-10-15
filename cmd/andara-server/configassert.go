@@ -28,7 +28,12 @@ func runConfigAssert(args []string, env config.EnvLookup, stdout, stderr io.Writ
 		_, _ = io.WriteString(stderr, err.Error()+"\n")
 		return boot.ExitFail
 	}
-	return boot.ConfigAssert(boot.KafkaSites(cfg), stdout, stderr)
+	sites, err := boot.KafkaSites(cfg)
+	if err != nil {
+		_, _ = io.WriteString(stderr, err.Error()+"\n")
+		return boot.ExitFail
+	}
+	return boot.ConfigAssert(sites, stdout, stderr)
 }
 
 // validateOnly is args with --validate-only forced on: an explicit

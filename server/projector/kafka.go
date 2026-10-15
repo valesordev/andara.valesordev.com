@@ -21,12 +21,12 @@ import (
 	"github.com/valesordev/andara/server/tickloop"
 )
 
-// StateTopic is the compacted current-state topic this projector alone
-// writes (AC-9).
-const StateTopic = "andara.state.v1"
+// The compacted current-state topic this projector alone writes (AC-9) is
+// kafkaclient.Topics.State; every constructor here takes its topic from the
+// caller and has no default (AW-SRV-058).
 
 // ClientID names the projector's Kafka clients, and is the principal the
-// andara.state.v1 write ACL names once the broker authenticates (AC-9).
+// state topic's write ACL names once the broker authenticates (AC-9).
 const ClientID = "andara-projector-state"
 
 // ErrLogGap: history the replica needs is not on the log (exit 3). It is the
@@ -104,7 +104,7 @@ func Sites(brokers []string) []kafkaclient.Site {
 // NewProducer connects the producer.
 func NewProducer(ctx context.Context, brokers []string, topic string) (*Producer, error) {
 	if topic == "" {
-		topic = StateTopic
+		return nil, errors.New("projector: NewProducer topic is required")
 	}
 	client, err := kgo.NewClient(producerOpts(brokers)...)
 	if err != nil {
@@ -162,7 +162,7 @@ type Committer struct {
 // NewCommitter connects an admin client for group.
 func NewCommitter(brokers []string, group, commandsTopic string) (*Committer, error) {
 	if commandsTopic == "" {
-		commandsTopic = tickloop.CommandsTopic
+		return nil, errors.New("projector: NewCommitter commandsTopic is required")
 	}
 	cl, err := kgo.NewClient(adminOpts(brokers, "-commit")...)
 	if err != nil {
@@ -291,7 +291,7 @@ func (c *Committer) Close() { c.cl.Close() }
 // proportional to live state, which is the point of the topic.
 func TopicKeys(ctx context.Context, brokers []string, topic string) (map[string]int32, error) {
 	if topic == "" {
-		topic = StateTopic
+		return nil, errors.New("projector: TopicKeys topic is required")
 	}
 	cl, err := kgo.NewClient(keysOpts(brokers)...)
 	if err != nil {

@@ -44,6 +44,7 @@ func (rt *Runtime) StartIngress(ctx context.Context) error {
 	case "kafka":
 		kp, err := ingress.NewKafkaProducer(ingress.ProducerOptions{
 			Brokers:      cfg.KafkaBrokers,
+			Topic:        rt.Topics.Commands(),
 			ClientID:     cfg.ServiceName,
 			Deadline:     cfg.IngressProduceDeadline,
 			DegradedHold: cfg.IngressDegradedHold,

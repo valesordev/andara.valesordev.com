@@ -64,19 +64,26 @@ type broker struct {
 
 func newBroker(t *testing.T) *broker {
 	t.Helper()
+	nonce := time.Now().UnixNano()
+	return newBrokerNamed(t,
+		fmt.Sprintf("andara.test.commands.%d", nonce),
+		fmt.Sprintf("andara.test.events.%d", nonce),
+		fmt.Sprintf("andara.test.state.%d", nonce),
+		fmt.Sprintf("it-projector-state-test-%d", nonce))
+}
+
+// newBrokerNamed is newBroker over the topics and group the caller names.
+func newBrokerNamed(t *testing.T, commands, events, state, group string) *broker {
+	t.Helper()
 	bs := brokers(t)
 	cl, err := kgo.NewClient(kgo.SeedBrokers(bs...), kgo.RecordPartitioner(kgo.ManualPartitioner()))
 	if err != nil {
 		t.Fatal(err)
 	}
 	adm := kadm.NewClient(cl)
-	nonce := time.Now().UnixNano()
 	b := &broker{
 		t: t, brokers: bs, cl: cl, adm: adm,
-		commands:    fmt.Sprintf("andara.test.commands.%d", nonce),
-		events:      fmt.Sprintf("andara.test.events.%d", nonce),
-		state:       fmt.Sprintf("andara.test.state.%d", nonce),
-		group:       fmt.Sprintf("andara-projector-state-test-%d", nonce),
+		commands: commands, events: events, state: state, group: group,
 		mirroredLog: map[int32]int{},
 	}
 	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)

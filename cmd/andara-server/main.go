@@ -53,7 +53,11 @@ func run(args []string, env config.EnvLookup, stdout, stderr io.Writer) (exit in
 		return boot.ExitFail
 	}
 
-	rt := boot.New(cfg, tel)
+	rt, err := boot.New(cfg, tel)
+	if err != nil {
+		// New logged it at error, naming kafka.topic_prefix.
+		return boot.ExitFail
+	}
 	// An empty store's no_zones_found, held by LoadContent, is reported if
 	// the process exits 1 before the boot decides, by any path, and dropped
 	// otherwise (AW-SRV-042, #299).

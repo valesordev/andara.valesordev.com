@@ -44,7 +44,7 @@ func recordingRuntime(t *testing.T, path string, strict bool) (*Runtime, *tracet
 	tel.TP = tp
 	tel.Tracer = tp.Tracer("andara-server")
 
-	return New(cfg, tel), rec, &logs
+	return mustNew(t, cfg, tel), rec, &logs
 }
 
 func spanByName(t *testing.T, rec *tracetest.SpanRecorder, name string) sdktrace.ReadOnlySpan {
