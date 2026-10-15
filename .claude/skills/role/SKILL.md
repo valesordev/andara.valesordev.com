@@ -1,7 +1,7 @@
 ---
 name: role
-description: Set this session's role (e.g. pm, product, architecture, sre, implementation, visual-designer, or none) and load its charter, then start an optional task given after the role; or show the current role when run with no argument. The owner runs it at session start. Never invoke it on your own or to change roles mid-task.
-argument-hint: "[role|none] [task]"
+description: Set this session's role (e.g. pm, product, architecture, sre, implementation, visual-designer, or none) and load its charter, then start an optional task given after the role; or show the current role when run with no argument, or the repo's role catalog with `help`. The owner runs it at session start. Never invoke it on your own or to change roles mid-task.
+argument-hint: "[role|none|help] [task]"
 disable-model-invocation: true
 allowed-tools: Bash(.claude/bin/role:*), EnterWorktree
 ---
@@ -13,6 +13,12 @@ Session: `${CLAUDE_SESSION_ID}`
 
 The first word of the request is the role. Anything after it is a **task**
 for this session.
+
+## If the first word is `help`
+
+Run `.claude/bin/role help`, show its output as it is (a markdown table), and
+stop. `help` is never a role: don't run `role set help`, and treat anything after
+it as nothing to start.
 
 ## If no role was given
 

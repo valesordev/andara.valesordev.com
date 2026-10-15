@@ -93,6 +93,11 @@ report names the branch, which the coordinator has put in the owner's checkout, 
 commands to push it. List it under **Needs you**. Pushing it is the owner's, after they read
 the diff (those files run with the repo's secrets): never push it or open its PR yourself.
 `.claude/bin/coordinator handoff` brings over such a branch an earlier run left.
+A lane the agent setup stopped (`blocked: config: …`, or refused something and unfinished)
+gets an issue drafted under **Drafted issues** in the report, for the repo the agents come from.
+List them under **Needs you**. Show one with `.claude/bin/coordinator file-issues <run-id>`
+if the owner asks. Filing it (`--apply`) publishes it, so do that only on the owner's yes,
+after they've read the draft.
 
 End with one next action, e.g. "Review PR #212 and #213; architecture's contract
 review for S7M-VAL-005 is holding two stories."
