@@ -13,3 +13,6 @@
 **Behavior:** The agent shows the current role (`unset` on a fresh session) and the roles this repo defines, then stops.
 
 **Non-trigger:** The agent decides on its own, mid-task, that it should be architecture → it never invokes `/role`. Only the owner does.
+
+**Prompt:** `/role help`
+**Behavior:** The agent runs `.claude/bin/role help` and shows the table as it is: one row per role here (aliases, assist level, summary, skills) and the `none` row. It doesn't run `role set help` and doesn't set a role. It stops there.

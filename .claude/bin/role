@@ -5,7 +5,7 @@ Source of truth: automate.valesordev.com / plugins/valesor-dev/bin/role.
 Vendored into target repos as .claude/bin/role by `make install`. Don't edit it there.
 
 Role definitions live in <repo>/.claude/roles/<role>.md: YAML-ish frontmatter
-(role, aliases, branch_prefix, writes, skills) followed by the role charter.
+(role, aliases, branch_prefix, writes, skills, summary) followed by the role charter.
 `writes` entries are `dir/` prefixes, exact paths, or globs; `!entry` excludes.
 <repo>/.claude/roles/_repo.md holds repo-wide keys (generated).
 
@@ -14,6 +14,7 @@ per session, shared across worktrees, and never committed.
 
 Commands:
   role list
+  role help                    the role catalog as a markdown table (role, aliases, assist level, summary, skills)
   role set <role|none> <session_id>
   role show <session_id>
   role require <role> <session_id>
@@ -415,6 +416,31 @@ def cmd_list(_: list[str]) -> int:
         al = ", ".join(meta.get("aliases", []))
         print(f"{name:16} {meta.get('branch_prefix', ''):8} {('aliases: ' + al) if al else ''}".rstrip())
     print(f"{UNRESTRICTED:16} unrestricted session, no ownership enforcement")
+    return 0
+
+
+ASSIST_LEVEL = re.compile(r"^Assist level: (L[0-3])\b", re.M)
+ASSIST_NAMES = {"L0": "Coach", "L1": "Guide", "L2": "Pair", "L3": "Delegate"}
+
+
+def assist_level(body: str) -> str | None:
+    """The level a charter declares before its first `## ` section (`Assist level: L<n> — why`).
+    An installed charter is already composed, so an `extends` base's line comes first."""
+    m = ASSIST_LEVEL.search(re.split(r"^## ", body, maxsplit=1, flags=re.M)[0])
+    return f"{m.group(1)} {ASSIST_NAMES[m.group(1)]}" if m else None
+
+
+def cmd_help(_: list[str]) -> int:
+    """What each role here is for, without setting one: aliases, assist level, `summary:`, skills."""
+    roles = Roles(_root_or_die())
+    cell = lambda v: (str(v).replace("|", "\\|").strip() or "—") if v else "—"  # noqa: E731
+    print("| Role | Aliases | Assist level | Summary | Skills |")
+    print("|---|---|---|---|---|")
+    for name, (meta, body) in roles.roles.items():
+        print(f"| `{name}` | {cell(', '.join(meta.get('aliases', [])))} | {cell(assist_level(body))} | "
+              f"{cell(meta.get('summary'))} | {cell(', '.join(meta.get('skills', [])))} |")
+    print(f"| `{UNRESTRICTED}` | — | — | Unrestricted session: no path ownership, and gated git and gh "
+          f"commands ask instead of being denied | — |")
     return 0
 
 
@@ -2264,6 +2290,7 @@ def hook_pre_bash(args: list[str]) -> int:
 
 COMMANDS = {
     "list": cmd_list,
+    "help": cmd_help,
     "set": cmd_set,
     "show": cmd_show,
     "require": cmd_require,

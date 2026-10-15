@@ -10,6 +10,7 @@ Vendored into target repos as .claude/bin/coordinator. Don't edit it there.
     coordinator handoff
     coordinator clean  [--apply]
     coordinator comment <ID> --to ROLE (--body TEXT | --body-file F)
+    coordinator file-issues <run-id> [--lane NAME] [--apply]
 
 It is a script, not a model: it reads the board, decides which lanes can start,
 launches one `claude -p` session per lane, and reports from live state. The same
@@ -60,6 +61,11 @@ repo's secrets). When a lane's branch has such a change and no PR at its HEAD, t
 the branch into your checkout (from a bundle the lane user writes, when lanes run as
 their own user) and the report says how to push it; `handoff` does the same for
 branches an earlier run left.
+
+A lane the agent setup stops (it ends `LANE RESULT: blocked: config: …`, or it was refused
+something and didn't finish) gets an issue drafted in runs/<id>/issues/, for the repo its
+agents were installed from (.claude/.automate.json). `file-issues` shows them; with --apply
+it files them, or comments on an open one with the same fingerprint.
 
 A role whose board hasn't changed since its last finished lane isn't started again
 (stories, statuses and lanes are hashed). The story listing can lag a create by
@@ -283,6 +289,9 @@ class Story:
 _FOR = re.compile(r"\*\*For ([\w-]+):\*\*")
 _RECORD = re.compile(r"\*\*[^*\n]+\(([\w-]+)\):\*\*")
 _FROM = re.compile(r"<!-- from: ([\w-]+) -->")
+CONFIG_BLOCKED = "blocked: config:"   # a lane's result when the agent setup, not the story, stopped it
+ACCOUNT_MAX, DENIAL_MAX = 3000, 200   # what a drafted issue quotes of the lane's last message, of a denial
+ISSUE_LABELS = ["kind:bug", "source:session"]   # and plugin:<target>, each where the repo has it
 COORDINATOR_AUTHOR = "coordinator"   # `coordinator comment`: it asks for the owner, so answers go --to owner
 
 
@@ -731,7 +740,11 @@ def prompt_for(lane: dict, run_id: str, ctx: Ctx, sid: str = "", scratch: Path |
             f"tail or wc is fine. Run the repo's check (`make check`) as it is, piped to `tail` if it's long, "
             f"never redirected to a file. A denied chain may be run once more as its separate commands. "
             f"If a single command is denied by the permission mode, don't look for another way to do the "
-            f"same thing: commit what you have, and end with `LANE RESULT: blocked: <what was denied>`.")
+            f"same thing: commit what you have, and end with `LANE RESULT: blocked: <what was denied>`. "
+            f"When the repo's agent setup, not the story, stops you (a hook or the permission mode denying "
+            f"what your charter or a skill asks of you, a skill step that can't work in a lane, a tool the "
+            f"lane's environment lacks), end with `LANE RESULT: {CONFIG_BLOCKED} <what stopped you>`: the run "
+            f"drafts an issue for the repo your agents come from.")
     if sid:   # a skill read from its file isn't expanded, and the shell may not expand it in a lane
         head += f" Your session id is {sid}: where a skill says `${{CLAUDE_SESSION_ID}}`, write {sid}."
     head += (f" A story labelled `{PERSON_ONLY}` is the owner's: never start, move, branch, or build one. If "
@@ -1766,6 +1779,18 @@ def terminate(*procs: subprocess.Popen) -> None:
             pass
 
 
+def denials_of(data: dict) -> list[str]:
+    """What the lane was refused, one line each: a Bash command, or the tool and its file."""
+    out = []
+    for d in data.get("permission_denials") or []:
+        if not isinstance(d, dict):
+            continue
+        ti = d.get("tool_input") if isinstance(d.get("tool_input"), dict) else {}
+        what = ti.get("command") or ti.get("file_path") or ti.get("notebook_path") or ti.get("path") or ""
+        out.append(re.sub(r"\s+", " ", f"{d.get('tool_name') or '?'}: {what}").strip()[:DENIAL_MAX])
+    return out
+
+
 def parse_lane_log(text: str) -> dict:
     """The JSON object `claude -p --output-format json` wrote, which shares the log with stderr
     (a startup warning may precede it): the last line that is a JSON object."""
@@ -1787,7 +1812,8 @@ def clean_line(s: str) -> str:
 
 def finish_lane(ctx: Ctx, h: dict, timed_out: bool) -> dict:
     proc, log = h["proc"], h["log"]
-    out: dict = {"lane": h["rec"]["lane"], "session": h["rec"]["session"], "log": str(log)}
+    out: dict = {"lane": h["rec"]["lane"], "session": h["rec"]["session"], "log": str(log),
+                 "story": h["lane"].get("story"), "worktree": str(h["wt"])}
     if timed_out:
         terminate(proc)
         out["error"] = "timed out"
@@ -1800,6 +1826,8 @@ def finish_lane(ctx: Ctx, h: dict, timed_out: bool) -> dict:
         text = data.get("result") or ""
         m = re.findall(r"LANE RESULT:\s*(.+)", text)
         out["result_line"] = clean_line(m[-1]) if m else None
+        out["denied"] = denials_of(data)
+        out["account"] = text[-ACCOUNT_MAX:]
         if data.get("is_error") and "error" not in out:
             out["error"] = (text or "claude reported an error")[:120]
     except ValueError:
@@ -2103,6 +2131,195 @@ def handoff_steps(ho: dict) -> str:
 
 def failed(lane_name_: str, why: str, log: str = "-") -> dict:
     return {"lane": lane_name_, "log": log, "error": why, "verdict": f"failed: {why}", "ok": False}
+
+
+def config_failure(r: dict) -> bool:
+    """A lane the agent setup stopped, not its story: it said so, or it was refused something and
+    didn't finish. A lane that finished despite a denial needs nothing fixed."""
+    return not r.get("ok") and ((r.get("result_line") or "").startswith(CONFIG_BLOCKED) or bool(r.get("denied")))
+
+
+def install_record(ctx: Ctx) -> dict:
+    try:
+        return json.loads((ctx.root / ".claude" / ".automate.json").read_text())
+    except (OSError, ValueError):
+        return {}
+
+
+def scrub(text: str, paths: list[tuple[str, str]]) -> str:
+    """Machine paths out of what a drafted issue quotes (the worktree, scratch, checkout, homes),
+    and no fence that would end its code block."""
+    for p, name in sorted(((p, n) for p, n in paths if p and p != "/"), key=lambda x: -len(x[0])):
+        text = text.replace(p, name)
+    return redact(text.replace("```", "'''"))
+
+
+def denylist() -> list[re.Pattern]:
+    """The owner's denylist ($AUTOMATE_DENYLIST, the file check_public reads): one term per line,
+    whole words, case-insensitive; `re:<regex>` for a pattern; `#` comments. None set: nothing."""
+    f = os.environ.get("AUTOMATE_DENYLIST")
+    try:
+        lines = Path(f).read_text().splitlines() if f else []
+    except OSError as e:
+        raise CoordError(f"can't read the denylist AUTOMATE_DENYLIST names: {e}")
+    out = []
+    for line in (l.strip() for l in lines):
+        if line and not line.startswith("#"):
+            out.append(re.compile(line[3:], re.I) if line.startswith("re:") else
+                       re.compile(r"(?<!\w)" + r"\s+".join(map(re.escape, line.split())) + r"(?!\w)", re.I))
+    return out
+
+
+def redact(text: str) -> str:
+    """A lane's words can carry what a public issue mustn't: names, hosts, private titles."""
+    for pat in denylist():
+        text = pat.sub("[redacted]", text)
+    return text
+
+
+def issue_fingerprint(r: dict) -> str:
+    """The same failure seen again: the role and what was refused (each denial's tool and first
+    two words), or the lane's own words when nothing was."""
+    what = sorted({" ".join(d.split()[:3]) for d in r.get("denied") or []}) or \
+        [re.sub(r"[^a-z ]", "", (r.get("result_line") or "").lower())[:60]]
+    return hashlib.sha256(json.dumps([r.get("role"), what]).encode()).hexdigest()[:12]
+
+
+def draft_issue(ctx: Ctx, run_id: str, r: dict) -> dict:
+    """The Skill refinement form's fields, from what the run saw. Expected and Proposed are left to
+    the owner: the lane's account is evidence, not a diagnosis."""
+    wt = r.get("worktree") or ""
+    paths = [(wt, "<worktree>"), (str(scratch_dir(ctx.host, Path(wt))) if wt else "", "<scratch>"),
+             (str(ctx.root), "<checkout>"), (str(getattr(ctx.host, "home", "") or ""), "<lane home>"),
+             (str(Path.home()), "~")]
+    line = r.get("result_line") or "no result line"
+    said = scrub(line[len(CONFIG_BLOCKED):].strip() if line.startswith(CONFIG_BLOCKED) else line, paths)
+    fp = issue_fingerprint(r)
+    target = install_record(ctx).get("target")
+    body = "\n".join([
+        f"The {r.get('role')} lane in coordinator run `{run_id}` was stopped by the agent setup, not by "
+        f"its story. The coordinator drafted this issue, and the owner filed it.", "",
+        "### Plugin", "", f"valesor-dev, installed as the `{target}` target" if target else "valesor-dev", "",
+        "### Skill, agent, or tool", "", f"the {r.get('role')} lane (`coordinator run`)", "",
+        "### Type", "", "agent", "",
+        "### Observed behavior", "",
+        f"Lane `{r['lane']}`" + (f" on {r['story']}" if r.get("story") else "") + f" ended: {said}", "",
+        "Refused:", "", "```text", scrub("\n".join(r.get("denied") or []), paths) or "(nothing)", "```", "",
+        "### Sanitized excerpt", "", "The lane's last message:", "", "```text",
+        scrub((r.get("account") or "").strip(), paths) or "(none)", "```", "",
+        "### Expected", "", "_For the owner: what the lane should have been able to do._", "",
+        "### Proposed change", "", "_For the owner._", "",
+        f"<!-- coordinator-issue: {fp} -->"])
+    return {"lane": r["lane"], "fingerprint": fp,
+            "title": clean_line(f"coordinator lane ({r.get('role')}): {said}")[:110], "body": body}
+
+
+def draft_issues(ctx: Ctx, run_id: str, run_dir: Path, results: list[dict]) -> list[dict]:
+    """One draft per config failure in the run (one per fingerprint), in runs/<id>/issues/ for
+    `file-issues`. Nothing leaves the machine here: filing is the owner's yes."""
+    drafts, seen = [], set()
+    for r in results:
+        if config_failure(r):
+            d = draft_issue(ctx, run_id, r)
+            if d["fingerprint"] not in seen:
+                seen.add(d["fingerprint"])
+                drafts.append(d)
+    if drafts:
+        (run_dir / "issues").mkdir(exist_ok=True)
+        for d in drafts:
+            (run_dir / "issues" / f"{d['lane']}.json").write_text(json.dumps(d, indent=2))
+    return drafts
+
+
+def drafts_section(ctx: Ctx, run_id: str, drafts: list[dict]) -> str:
+    if not drafts:
+        return ""
+    repo = install_record(ctx).get("repo")
+    out = ["", "## Drafted issues", ""] + [f"- {d['lane']}: {d['title']}" for d in drafts] + [""]
+    if repo:
+        out.append(f"For {repo}, where these agents come from. Read them with "
+                   f"`coordinator file-issues {run_id}`, then file them with `--apply`.")
+    else:
+        out.append("No installing repo is recorded in .claude/.automate.json (reinstall with a current "
+                   "toolkit), so `file-issues` can't file them.")
+    return "\n".join(out)
+
+
+def cmd_file_issues(ctx: Ctx, a) -> int:
+    """File a run's drafted issues in the repo that installed these agents, on the owner's yes:
+    without --apply it shows them. An open issue with the same fingerprint gets a comment that it
+    happened again instead of a second issue."""
+    if os.environ.get("COORDINATOR_LANE"):
+        raise CoordError("`file-issues` is the owner's; a lane ends with `LANE RESULT: blocked: config: …`")
+    d = ctx.dir / "runs" / a.run_id / "issues"
+    if not PLAIN_NAME.fullmatch(a.run_id) or "/" in a.run_id or not d.is_dir():
+        raise CoordError(f"run {a.run_id!r} drafted no issues")
+    drafts = [json.loads(f.read_text()) for f in sorted(d.glob("*.json"))]
+    if a.lane:
+        drafts = [x for x in drafts if x["lane"] == a.lane]
+        if not drafts:
+            raise CoordError(f"run {a.run_id} drafted nothing for {a.lane!r}")
+    repo = install_record(ctx).get("repo")
+    if not repo:
+        raise CoordError("no installing repo in .claude/.automate.json: reinstall with a current toolkit")
+    labels = None
+    if a.apply:
+        r = ctx.sh.run(["gh", "label", "list", "--repo", repo, "--json", "name", "--limit", "200"], cwd=ctx.root)
+        try:
+            have = {x["name"] for x in json.loads(r.stdout or "[]")} if r.returncode == 0 else None
+        except ValueError:
+            have = None
+        if have is None:
+            raise CoordError(f"couldn't read {repo}'s labels: {(r.stderr or r.stdout).strip()[:120]}")
+        target = install_record(ctx).get("target")
+        labels = [l for l in ISSUE_LABELS + ([f"plugin:{target}"] if target else []) if l in have]
+    if not a.apply and not os.environ.get("AUTOMATE_DENYLIST"):
+        print("No AUTOMATE_DENYLIST is set, so names in the lanes' words aren't redacted: read each draft "
+              "before you file it.\n")
+    bad = 0
+    for x in drafts:
+        if x.get("filed"):
+            print(f"{x['lane']}: filed already, {x['filed']}")
+            continue
+        x["title"], x["body"] = redact(x["title"]), redact(x["body"])   # a denylist set since the run
+        if not a.apply:
+            print(f"--- {x['lane']} → {repo}\n{x['title']}\n\n{x['body']}\n")
+            continue
+        r = ctx.sh.run(["gh", "issue", "list", "--repo", repo, "--state", "open", "--search",
+                        f"\"coordinator-issue: {x['fingerprint']}\" in:body", "--json", "number,url",
+                        "--limit", "1"], cwd=ctx.root)
+        try:
+            found = json.loads(r.stdout or "[]") if r.returncode == 0 else None
+        except ValueError:
+            found = None
+        if found is None:   # unknown isn't "none open": a duplicate is worse than a retry
+            print(f"{x['lane']}: couldn't search {repo}'s open issues; not filed")
+            bad += 1
+            continue
+        if found:
+            url = found[0]["url"]
+            r = ctx.sh.run(["gh", "issue", "comment", url, "--body",
+                            f"Seen again in coordinator run `{a.run_id}`, lane `{x['lane']}`."], cwd=ctx.root)
+            what = "seen again on"
+        else:
+            body = d / f"{x['lane']}.md"
+            body.write_text(x["body"])
+            cmd = ["gh", "issue", "create", "--repo", repo, "--title", x["title"], "--body-file", str(body)]
+            for l in labels:
+                cmd += ["--label", l]
+            r = ctx.sh.run(cmd, cwd=ctx.root)
+            url = (r.stdout or "").strip().splitlines()[-1] if r.returncode == 0 and r.stdout.strip() else ""
+            what = "filed"
+        if r.returncode != 0:
+            print(f"{x['lane']}: gh failed: {(r.stderr or r.stdout).strip()[:160]}")
+            bad += 1
+            continue
+        x["filed"] = url
+        (d / f"{x['lane']}.json").write_text(json.dumps(x, indent=2))
+        with open(ctx.dir / "runs" / a.run_id / "report.md", "a") as f:
+            f.write(f"\n- {x['lane']}: {what} {url}")
+        print(f"{x['lane']}: {what} {url}")
+    return 1 if bad else 0
 
 
 def write_report(run_dir: Path, report: str, results: list[dict]) -> None:
@@ -2445,6 +2662,7 @@ def cmd_run(ctx: Ctx, a) -> int:
             except (CoordError, story.StoryError, OSError):
                 now_status = None
         report = render_report(run_id, results, waiting, state, getattr(a, "ran_roles", None), now_status)
+        report += drafts_section(ctx, run_id, draft_issues(ctx, run_id, run_dir, results))
         write_report(run_dir, report, results)
         print("\n" + report)
         return 0 if all(r.get("ok") for r in results) else 1
@@ -2630,6 +2848,10 @@ def parser() -> argparse.ArgumentParser:
     g = s.add_mutually_exclusive_group(required=True)
     g.add_argument("--body")
     g.add_argument("--body-file")
+    s = sub.add_parser("file-issues", help="file a run's drafted config-failure issues (shows them without --apply)")
+    s.add_argument("run_id")
+    s.add_argument("--lane", help="only this lane's draft")
+    s.add_argument("--apply", action="store_true")
     s = sub.add_parser("handoff")
     s.add_argument("--same-os-user", action="store_true", help="the worktrees lanes run as you left")
     s.add_argument("--worktrees")
@@ -2649,7 +2871,8 @@ def main(argv: list[str], gh=None, sh: Shell | None = None, claude: str | None =
     try:
         ctx = Ctx(root, sh or Shell(), gh, claude)
         return {"plan": cmd_plan, "run": cmd_run, "status": cmd_status, "handoff": cmd_handoff,
-                "clean": cmd_clean, "comment": cmd_comment}[a.cmd](ctx, a)
+                "clean": cmd_clean, "comment": cmd_comment,
+                "file-issues": cmd_file_issues}[a.cmd](ctx, a)
     except (CoordError, story.StoryError, OSError) as e:
         print(f"coordinator: {e}", file=sys.stderr)
         return 2

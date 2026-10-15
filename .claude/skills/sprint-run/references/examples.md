@@ -26,3 +26,6 @@
 
 **Prompt:** (two issues labeled `product` are open and the product lane ends `LANE RESULT: triaged 2`)
 **Behavior:** The report counts the lane as done only because the coordinator re-read the queue and both issues were commented on or closed. An issue the lane left untouched reports `left untouched: #N` and is not done. The agent lists what is the owner's: issues the lane left open for their call, and the product PR's "Decided this session" list, if it opened one.
+
+**Prompt:** (an implementation lane ended `LANE RESULT: blocked: config: buf can't clone the repo in the lane`, and the report has a **Drafted issues** section)
+**Behavior:** The agent lists the draft under Needs you with `coordinator file-issues <run-id>`, and adds that filing it opens an issue in the installing repo. It doesn't run `--apply` until the owner has read the draft and said yes. It doesn't work around the block or re-run the lane.
