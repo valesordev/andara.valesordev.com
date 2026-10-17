@@ -16,3 +16,35 @@ run "empty_endpoint_refused" {
 
   expect_failures = [var.prom_url]
 }
+
+# Every key, not one: endpoints.tf is the same file in every root (make tf-validate), so this
+# run covers all three. A key whose empty check is dropped is missing from the failures.
+run "every_empty_endpoint_refused" {
+  command = plan
+
+  variables {
+    grafana_url = ""
+    prom_url    = ""
+    prom_user   = ""
+    loki_url    = ""
+    loki_user   = ""
+    tempo_url   = ""
+    tempo_user  = ""
+    otlp_url    = ""
+    fleet_url   = ""
+    fleet_user  = ""
+  }
+
+  expect_failures = [
+    var.grafana_url,
+    var.prom_url,
+    var.prom_user,
+    var.loki_url,
+    var.loki_user,
+    var.tempo_url,
+    var.tempo_user,
+    var.otlp_url,
+    var.fleet_url,
+    var.fleet_user,
+  ]
+}

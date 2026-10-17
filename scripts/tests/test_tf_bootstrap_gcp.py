@@ -35,6 +35,9 @@ class FakeCloud:
         self.objects = set()
         self.mutations = []
         self.drop_bucket_bindings = False
+        self.adc = DEVBOX  # whose Application Default Credentials the dev box holds
+        self.write_state = True
+        self.tf_envs = []  # (root, args, env) per terraform call
 
     def mutate(self, what):
         self.mutations.append(what)
@@ -93,6 +96,29 @@ class FakeCloud:
                                            "condition": cond})
             self.mutate("bucket binding")
             return 0, "", ""
+        if a[:3] == ["storage", "buckets", "remove-iam-policy-binding"]:
+            member, role = self.flag(a, "--member"), self.flag(a, "--role")
+            path = self.flag(a, "--condition-from-file")
+            if path:
+                with open(path) as f:
+                    expr = json.load(f)["expression"]
+            else:
+                assert self.flag(a, "--condition") == "None", a
+                expr = None
+            for b in self.bucket_policy:
+                if b["role"] == role and (b.get("condition") or {}).get("expression") == expr:
+                    b["members"] = [m for m in b["members"] if m != member]
+            self.bucket_policy = [b for b in self.bucket_policy if b["members"]]
+            self.mutate("bucket binding removed")
+            return 0, "", ""
+        if a[:3] == ["iam", "service-accounts", "remove-iam-policy-binding"]:
+            member, role = self.flag(a, "--member"), self.flag(a, "--role")
+            for b in self.sas[a[3]]:
+                if b["role"] == role:
+                    b["members"] = [m for m in b["members"] if m != member]
+            self.sas[a[3]] = [b for b in self.sas[a[3]] if b["members"]]
+            self.mutate("wi binding removed")
+            return 0, "", ""
         if a[:3] == ["iam", "service-accounts", "describe"]:
             return j({"email": a[3]}) if a[3] in self.sas else missing
         if a[:3] == ["iam", "service-accounts", "create"]:
@@ -136,7 +162,11 @@ class FakeCloud:
         raise AssertionError("unexpected gh call: %r" % (args,))
 
     def terraform(self, root, args, env):
-        if args[0] == "init":
+        self.tf_envs.append((root, args, dict(env)))
+        owner = env.get("GOOGLE_OAUTH_ACCESS_TOKEN") == "owner-token" or self.adc == self.account
+        if not owner and root != "solo7dev":
+            return 1, "", "Error: storage.objects.list 403 Forbidden: %s does not have storage.objects.list" % self.adc
+        if args[0] == "init" and self.write_state:
             path = "gs://andara-tfstate/grafana/%s/default.tfstate" % root
             if path not in self.objects:
                 self.objects.add(path)
@@ -252,6 +282,50 @@ class ReadbackTest(unittest.TestCase):
         self.assertIn("always", problems[0])
 
 
+class CorrectionTest(unittest.TestCase):
+    """The bootstrap corrects what differs, not only adds what is missing."""
+
+    def test_wider_bucket_grant_is_removed(self):
+        cloud = FakeCloud()
+        run(cloud)
+        sa = "serviceAccount:" + boot.sa_email("tf-solo7-plan", PROJECT)
+        cloud.bucket_policy.append({"role": "roles/storage.objectViewer", "members": [sa],
+                                    "condition": boot.condition(("solo7", "solo7dev"))})
+        cloud.bucket_policy.append({"role": "roles/storage.admin", "members": [sa]})
+        rc, lines, err = run(cloud)
+        self.assertEqual(rc, 0, err)
+        grants = [(b["role"], (b.get("condition") or {}).get("title")) for b in cloud.bucket_policy
+                  if sa in b["members"]]
+        self.assertEqual(grants, [("roles/storage.objectViewer", "tfstate grafana/solo7/")])
+        self.assertEqual(sum("removed" in line for line in lines), 2)
+        self.assertEqual(boot.readback({"bindings": cloud.bucket_policy},
+                                       boot.expected_bucket_bindings(PROJECT, DEVBOX)), [])
+
+    def test_unmanaged_member_is_left_alone(self):
+        cloud = FakeCloud()
+        run(cloud)
+        other = {"role": "roles/storage.admin", "members": ["user:someone@example.com"]}
+        cloud.bucket_policy.append(dict(other))
+        cloud.mutations.clear()
+        rc, _, err = run(cloud)
+        self.assertEqual(rc, 0, err)
+        self.assertIn(other, cloud.bucket_policy)
+        self.assertEqual(cloud.mutations, [])
+
+    def test_stale_impersonation_grant_is_removed(self):
+        cloud = FakeCloud()
+        run(cloud)
+        email = boot.sa_email("tf-solo7-plan", PROJECT)
+        stale = boot.principal_set("123456789", "event_name", "push")
+        cloud.sas[email].append({"role": boot.WI_USER, "members": [stale]})
+        rc, lines, err = run(cloud)
+        self.assertEqual(rc, 0, err)
+        members = {m for b in cloud.sas[email] for m in b["members"]}
+        self.assertNotIn(stale, members)
+        self.assertEqual(len(members), 2)
+        self.assertTrue(any("removed" in line for line in lines))
+
+
 class BootstrapTest(unittest.TestCase):
     def test_first_run_creates_everything_second_changes_nothing(self):
         """AC-2."""
@@ -263,7 +337,14 @@ class BootstrapTest(unittest.TestCase):
                                                  for r in ("solo7", "solo7-irm", "solo7dev")})
         self.assertEqual(set(cloud.variables), set(boot.GH_VARIABLES) | {"GCP_WIF_PROVIDER"})
         self.assertTrue(cloud.bucket["versioning_enabled"])
-        self.assertEqual(cloud.bucket["lifecycle_config"], boot.LIFECYCLE)
+        self.assertEqual(cloud.bucket["lifecycle_config"],
+                         {"rule": [{"action": {"type": "Delete"},
+                                    "condition": {"daysSinceNoncurrentTime": 90, "numNewerVersions": 20}}]})
+        self.assertEqual(cloud.provider["attributeMapping"], {
+            "google.subject": "assertion.sub",
+            "attribute.environment": '"environment" in assertion ? assertion.environment : "none"',
+            "attribute.event_name": "assertion.event_name",
+        })
         self.assertEqual(cloud.provider["attributeCondition"],
                          "assertion.repository == 'valesordev/andara.valesordev.com' && assertion.workflow_ref == "
                          "'valesordev/andara.valesordev.com/.github/workflows/terraform.yaml@refs/heads/main'")
@@ -312,6 +393,43 @@ class BootstrapTest(unittest.TestCase):
         rc, _, err = run(FakeCloud(account=DEVBOX))
         self.assertEqual(rc, 1)
         self.assertIn("non-owner", err)
+
+    def test_states_seeded_as_the_owner_and_checked_as_the_dev_box(self):
+        cloud = FakeCloud()
+        rc, lines, err = run(cloud)
+        self.assertEqual(rc, 0, err)
+        seeds = [e for root, args, e in cloud.tf_envs if "bootstrap" in e.get("TF_DATA_DIR", "")]
+        self.assertEqual(len(seeds), 6)  # init and state list, three roots
+        self.assertTrue(all(e["GOOGLE_OAUTH_ACCESS_TOKEN"] == "owner-token" for e in seeds))
+        devbox = [(root, e) for root, args, e in cloud.tf_envs if "bootstrap" not in e.get("TF_DATA_DIR", "")]
+        self.assertEqual([r for r, _ in devbox], ["solo7dev", "solo7dev", "solo7"])
+        self.assertTrue(all("GOOGLE_OAUTH_ACCESS_TOKEN" not in e for _, e in devbox))
+        self.assertIn("tf-bootstrap-gcp: dev box: solo7's state refused to %s, as decision 3 requires" % DEVBOX,
+                      lines)
+
+    def test_owner_token_in_the_environment_is_not_used_for_the_dev_box(self):
+        env = dict(ENV, GOOGLE_OAUTH_ACCESS_TOKEN="owner-token")
+        cloud = FakeCloud()
+        rc, _, err = run(cloud, env)
+        self.assertEqual(rc, 0, err)
+        devbox = [e for root, args, e in cloud.tf_envs if "bootstrap" not in e.get("TF_DATA_DIR", "")]
+        self.assertTrue(all("GOOGLE_OAUTH_ACCESS_TOKEN" not in e for e in devbox))
+
+    def test_owner_adc_refused(self):
+        """ADC holding the owner's credentials reads solo7's state: the run fails naming the dev box."""
+        cloud = FakeCloud()
+        cloud.adc = cloud.account
+        rc, _, err = run(cloud)
+        self.assertEqual(rc, 1)
+        self.assertIn("can read solo7's state", err)
+        self.assertIn(DEVBOX, err)
+
+    def test_state_missing_after_init_exits_1(self):
+        cloud = FakeCloud()
+        cloud.write_state = False
+        rc, _, err = run(cloud)
+        self.assertEqual(rc, 1)
+        self.assertIn("still missing after terraform init", err)
 
     def test_existing_state_left_untouched(self):
         cloud = FakeCloud()

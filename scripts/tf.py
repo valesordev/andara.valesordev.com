@@ -124,7 +124,7 @@ def check_stack(stack, env):
         raise Exit(2, "STACK must be one of %s (got %r)" % (", ".join(ROOTS), stack or ""))
     if stack != "solo7dev" and env.get("GITHUB_ACTIONS") != "true":
         raise Exit(2, "%s is planned and applied by CI only (ADR-0012 decision 4); "
-                      "read a prod plan with make tf-plan-show" % stack)
+                      "read a prod plan with make tf-plan-show (AW-INF-068)" % stack)
 
 
 def box_env_path(env):

@@ -25,7 +25,12 @@ what does not match, so a second run changes nothing and says so. In order:
      or a managed account has a binding whose condition differs from the expected one;
   8. the state for all three roots, seeded as the owner (terraform init writes an empty
      state under its lock when there is none), then `terraform init` of solo7dev as
-     GCP_DEVBOX_IDENTITY through Application Default Credentials, which must succeed.
+     GCP_DEVBOX_IDENTITY through Application Default Credentials, which must succeed, and of
+     solo7 with the same credentials, which must be refused.
+
+A grant to a managed account that differs from the expected one (another condition, none,
+another role) is removed from the bucket, and a workloadIdentityUser grant on a managed
+account that names no expected claim is removed from it.
 
 The workloadIdentityUser bindings are written from the claim values GitHub is expected to
 send; AW-INF-068's debug step observes the real ones and, if they differ, changes them here.
@@ -320,7 +325,20 @@ class Bootstrap:
         policy = self.gcloud_json("storage", "buckets", "get-iam-policy", url) or {}
         have = {(m, b["role"], (b.get("condition") or {}).get("expression"))
                 for b in policy.get("bindings", []) for m in b.get("members", [])}
-        for member, (role, cond) in sorted(expected_bucket_bindings(self.project, self.devbox).items()):
+        expected = expected_bucket_bindings(self.project, self.devbox)
+        # Any other grant to a managed member (a wider condition, none at all, another role) is removed.
+        for b in policy.get("bindings", []):
+            cond = b.get("condition")
+            for member in b.get("members", []):
+                if member not in expected:
+                    continue
+                role, want = expected[member]
+                if (b["role"], (cond or {}).get("expression")) == (role, want["expression"]):
+                    continue
+                self.remove_bucket_binding(url, member, b["role"], cond)
+                self.changed("bucket binding", "%s %s if %s removed"
+                             % (member, b["role"], (cond or {}).get("expression") or "always"))
+        for member, (role, cond) in sorted(expected.items()):
             if (member, role, cond["expression"]) in have:
                 self.say("bucket binding", "%s %s ok" % (member, role))
                 continue
@@ -332,6 +350,19 @@ class Bootstrap:
             finally:
                 os.unlink(f.name)
             self.changed("bucket binding", "%s %s on %s" % (member, role, cond["title"]))
+
+    def remove_bucket_binding(self, url, member, role, cond):
+        if not cond:
+            self.gcloud("storage", "buckets", "remove-iam-policy-binding", url, "--member=" + member,
+                        "--role=" + role, "--condition=None")
+            return
+        with tempfile.NamedTemporaryFile("w", suffix=".json", delete=False) as f:
+            json.dump(cond, f)
+        try:
+            self.gcloud("storage", "buckets", "remove-iam-policy-binding", url, "--member=" + member,
+                        "--role=" + role, "--condition-from-file=" + f.name)
+        finally:
+            os.unlink(f.name)
 
     def workload_identity(self):
         loc = ["--location=global", "--project=" + self.project]
@@ -359,6 +390,13 @@ class Bootstrap:
             policy = self.gcloud_json("iam", "service-accounts", "get-iam-policy", email,
                                       "--project=" + self.project) or {}
             have = {(b["role"], m) for b in policy.get("bindings", []) for m in b.get("members", [])}
+            want = {principal_set(self.number, attribute, value) for attribute, value in claims}
+            # Only the expected claims may impersonate: a changed claim value replaces the old one.
+            for role, member in sorted(have):
+                if role == WI_USER and member not in want:
+                    self.gcloud("iam", "service-accounts", "remove-iam-policy-binding", email,
+                                "--project=" + self.project, "--role=" + WI_USER, "--member=" + member)
+                    self.changed("impersonation", "%s from %s removed" % (name, member))
             for attribute, value in claims:
                 member = principal_set(self.number, attribute, value)
                 if (WI_USER, member) in have:
@@ -424,6 +462,18 @@ class Bootstrap:
                               "--disable-quota-project as %s:\n%s%s"
                            % (args[0], self.devbox, out, err))
         self.say("dev box", "terraform init of solo7dev as %s ok" % self.devbox)
+        # The same credentials must be refused solo7's prefix; if they are not, ADC is not
+        # GCP_DEVBOX_IDENTITY (the owner's, say) or its grant is wider than decision 3's.
+        env["TF_DATA_DIR"] = os.path.join(tf.root_dir("solo7"), ".terraform", "devbox-probe")
+        rc, out, err = self.tf_run("solo7", ["init", "-input=false", "-lockfile=readonly", "-reconfigure"], env)
+        if rc == 0:
+            raise Exit(1, "Application Default Credentials can read solo7's state; they must be %s's, which "
+                          "reaches grafana/solo7dev/ only (ADR-0012 decision 3): run gcloud auth "
+                          "application-default login --disable-quota-project as %s" % (self.devbox, self.devbox))
+        if not re.search(r"403|[Ff]orbidden|AccessDenied|does not have storage\.", out + err):
+            raise Exit(1, "terraform init of solo7 as %s failed for a reason other than a refusal:\n%s%s"
+                       % (self.devbox, out, err))
+        self.say("dev box", "solo7's state refused to %s, as decision 3 requires" % self.devbox)
 
     def run(self):
         self.require()

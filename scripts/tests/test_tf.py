@@ -261,9 +261,10 @@ class LockTest(NoBoxEnv):
 
     def test_unlock_needs_no_grafana_credential(self):
         fake = FakeTerraform()
-        rc, _, _ = main(["unlock", "--stack", "solo7dev", "--lock-id", "17"], {}, fake)
+        rc, _, _ = main(["unlock", "--stack", "solo7dev", "--lock-id", "17"], {"GRAFANA_AUTH": "x"}, fake)
         self.assertEqual(rc, 0)
         self.assertEqual(fake.calls[-1], ["force-unlock", "-force", "17"])
+        self.assertNotIn("GRAFANA_AUTH", fake.envs[-1])
 
 
 class TestAlertTest(NoBoxEnv):
