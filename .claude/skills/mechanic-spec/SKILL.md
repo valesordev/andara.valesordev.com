@@ -14,8 +14,8 @@ allowed-tools: Bash(.claude/bin/role:*) Bash(gh api:*) Bash(git fetch:*)
 3. Read `references/canon-rules.md`, `references/template.md`, and the existing spec for this mechanic, if any.
 
 ## Inputs
-- A brief at `Status: proposed` or later in Notion, with **every decision marked decided by the owner**. If any decision is open, stop and list it. A spec is not a way to decide for them.
-- The approved canon passage the brief cites.
+- A brief at `Status: proposed` or later on the content repo's `main` (`gh api repos/valesordev/andara.solo7.media/contents/docs/design/briefs/<slug>.md -H "Accept: application/vnd.github.raw"`), with **every decision marked decided by the owner**. If any decision is open, stop and list it. A spec is not a way to decide for them.
+- The approved canon passage the brief cites (`docs/canon/` in the content repo, read the same way).
 - Feasibility sources: CLAUDE.md, ADRs, `docs/specs/`, `docs/roadmap.md`, `docs/builders/reference.md`.
 
 ## Steps
