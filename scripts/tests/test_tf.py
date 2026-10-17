@@ -108,6 +108,25 @@ class StackTest(NoBoxEnv):
         self.assertNotIn("TF_VAR_slack_webhook", fake.envs[-1])
 
 
+class PlanLockTest(NoBoxEnv):
+    """A plan takes no lock: the plan accounts hold objectViewer only (ADR-0012 decision 3)."""
+
+    def test_plan_runs_without_the_lock(self):
+        fake = FakeTerraform()
+        rc, _, _ = main(["plan", "--stack", "solo7dev"], dict(DEV), fake)
+        self.assertEqual(rc, 0)
+        plans = [c for c in fake.calls if c[0] == "plan"]
+        self.assertEqual(len(plans), 1)
+        self.assertIn("-lock=false", plans[0])
+
+    def test_apply_still_locks(self):
+        fake = FakeTerraform([(["show"], 0, plan_json(["create"]))])
+        rc, _, _ = main(["apply", "--stack", "solo7dev"], dict(DEV), fake)
+        self.assertEqual(rc, 0)
+        self.assertTrue(fake.calls)
+        self.assertFalse(any("-lock=false" in c for c in fake.calls))
+
+
 class CredentialTest(NoBoxEnv):
     """AC-1: a missing credential exits 3 naming it, before any terraform call."""
 

@@ -259,7 +259,8 @@ def cmd_plan(stack, env):
     tenv = child_env(env, token, webhook)
     init(stack, tenv)
     say("plan %s" % stack)
-    rc, out = run(["plan", "-input=false", "-lock-timeout=0s"], root_dir(stack), tenv)
+    # No lock: a plan writes nothing, and the plan accounts hold objectViewer only (ADR-0012 decision 3).
+    rc, out = run(["plan", "-input=false", "-lock=false"], root_dir(stack), tenv)
     checked("plan", rc, out)
     return 0
 

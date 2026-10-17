@@ -93,6 +93,7 @@ make tf-plan  STACK=solo7dev          # prints the plan
 make tf-apply STACK=solo7dev          # plan, apply that plan, then a second plan that must be empty
 ```
 
+`tf-plan` takes no state lock (`-lock=false`): it writes nothing, and CI's plan accounts can only read.
 `tf-apply` prints `tf: plan: N to add, N to change, N to destroy`. With nothing to change it prints
 `0 to add, 0 to change, 0 to destroy` and applies nothing.
 
