@@ -211,6 +211,7 @@ class Bootstrap:
         return self._run([exe] + args)
 
     def _run_terraform(self, root, args, env):
+        os.makedirs(tf.PLUGIN_CACHE, exist_ok=True)  # child_env names it; tf.run is bypassed here
         return self._run([tf.terraform(), "-chdir=" + tf.root_dir(root)] + args, env=env)
 
     def say(self, step, what):

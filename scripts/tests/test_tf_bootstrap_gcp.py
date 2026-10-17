@@ -5,7 +5,9 @@
 import json
 import os
 import sys
+import tempfile
 import unittest
+from unittest import mock
 
 REPO = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 sys.path.insert(0, os.path.join(REPO, "scripts"))
@@ -285,6 +287,19 @@ class ReadbackTest(unittest.TestCase):
         self.assertEqual(len(problems), 1)
         self.assertIn("user:" + DEVBOX, problems[0])
         self.assertIn("always", problems[0])
+
+
+class TerraformRunnerTest(unittest.TestCase):
+    """The bootstrap calls Terraform directly, so it creates the plugin cache child_env names."""
+
+    def test_plugin_cache_created_before_terraform_runs(self):
+        with tempfile.TemporaryDirectory() as d:
+            cache = os.path.join(d, "terraform-plugins")
+            with mock.patch.object(boot.tf, "PLUGIN_CACHE", cache), \
+                    mock.patch.object(boot.tf, "terraform", lambda: "true"):
+                rc, _, _ = boot.Bootstrap(dict(ENV))._run_terraform("solo7dev", ["version"], {})
+            self.assertEqual(rc, 0)
+            self.assertTrue(os.path.isdir(cache))
 
 
 class CorrectionTest(unittest.TestCase):
