@@ -37,6 +37,7 @@ class FakeCloud:
         self.drop_bucket_bindings = False
         self.adc = DEVBOX  # whose Application Default Credentials the dev box holds
         self.write_state = True
+        self.probe_error = None  # stderr of the solo7 probe failing for a reason other than a refusal
         self.tf_envs = []  # (root, args, env) per terraform call
 
     def mutate(self, what):
@@ -101,12 +102,14 @@ class FakeCloud:
             path = self.flag(a, "--condition-from-file")
             if path:
                 with open(path) as f:
-                    expr = json.load(f)["expression"]
+                    cond = json.load(f)
+                if not cond.get("title"):
+                    return 1, "", "ERROR: condition must have a title"
             else:
                 assert self.flag(a, "--condition") == "None", a
-                expr = None
+                cond = None
             for b in self.bucket_policy:
-                if b["role"] == role and (b.get("condition") or {}).get("expression") == expr:
+                if b["role"] == role and b.get("condition") == cond:
                     b["members"] = [m for m in b["members"] if m != member]
             self.bucket_policy = [b for b in self.bucket_policy if b["members"]]
             self.mutate("bucket binding removed")
@@ -164,6 +167,8 @@ class FakeCloud:
     def terraform(self, root, args, env):
         self.tf_envs.append((root, args, dict(env)))
         owner = env.get("GOOGLE_OAUTH_ACCESS_TOKEN") == "owner-token" or self.adc == self.account
+        if root == "solo7" and self.probe_error and "GOOGLE_OAUTH_ACCESS_TOKEN" not in env:
+            return 1, "", self.probe_error
         if not owner and root != "solo7dev":
             return 1, "", "Error: storage.objects.list 403 Forbidden: %s does not have storage.objects.list" % self.adc
         if args[0] == "init" and self.write_state:
@@ -403,6 +408,7 @@ class BootstrapTest(unittest.TestCase):
         self.assertTrue(all(e["GOOGLE_OAUTH_ACCESS_TOKEN"] == "owner-token" for e in seeds))
         devbox = [(root, e) for root, args, e in cloud.tf_envs if "bootstrap" not in e.get("TF_DATA_DIR", "")]
         self.assertEqual([r for r, _ in devbox], ["solo7dev", "solo7dev", "solo7"])
+        self.assertTrue(devbox[-1][1]["TF_DATA_DIR"].endswith(os.path.join("solo7", ".terraform", "devbox-probe")))
         self.assertTrue(all("GOOGLE_OAUTH_ACCESS_TOKEN" not in e for _, e in devbox))
         self.assertIn("tf-bootstrap-gcp: dev box: solo7's state refused to %s, as decision 3 requires" % DEVBOX,
                       lines)
@@ -423,6 +429,15 @@ class BootstrapTest(unittest.TestCase):
         self.assertEqual(rc, 1)
         self.assertIn("can read solo7's state", err)
         self.assertIn(DEVBOX, err)
+
+    def test_probe_failing_for_another_reason_exits_1(self):
+        cloud = FakeCloud()
+        cloud.probe_error = "Error: dial tcp: i/o timeout"
+        rc, lines, err = run(cloud)
+        self.assertEqual(rc, 1)
+        self.assertIn("other than a refusal", err)
+        self.assertIn("i/o timeout", err)
+        self.assertFalse(any("as decision 3 requires" in line for line in lines))
 
     def test_state_missing_after_init_exits_1(self):
         cloud = FakeCloud()

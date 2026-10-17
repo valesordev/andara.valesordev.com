@@ -468,8 +468,11 @@ class Bootstrap:
         rc, out, err = self.tf_run("solo7", ["init", "-input=false", "-lockfile=readonly", "-reconfigure"], env)
         if rc == 0:
             raise Exit(1, "Application Default Credentials can read solo7's state; they must be %s's, which "
-                          "reaches grafana/solo7dev/ only (ADR-0012 decision 3): run gcloud auth "
-                          "application-default login --disable-quota-project as %s" % (self.devbox, self.devbox))
+                          "reaches grafana/solo7dev/ only (ADR-0012 decision 3). Either ADC is another "
+                          "account's (run gcloud auth application-default login --disable-quota-project as %s), "
+                          "or %s holds a project-level role that reaches the bucket (find it with gcloud "
+                          "projects get-iam-policy %s --flatten=bindings --filter=bindings.members:%s and "
+                          "remove it)" % (self.devbox, self.devbox, self.devbox, self.project, member_of(self.devbox)))
         if not re.search(r"403|[Ff]orbidden|AccessDenied|does not have storage\.", out + err):
             raise Exit(1, "terraform init of solo7 as %s failed for a reason other than a refusal:\n%s%s"
                        % (self.devbox, out, err))

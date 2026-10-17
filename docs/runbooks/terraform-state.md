@@ -72,8 +72,12 @@ differs from the expected one (a wider condition, none, another role), or an imp
 claim it no longer expects, is removed. A second run prints `tf-bootstrap-gcp: no changes; everything already matched`. Run it again
 whenever the bindings should be checked; it is safe at any time.
 
-If `terraform init` as the dev box fails at the end, sign in again as that identity:
-`gcloud auth application-default login --disable-quota-project`, then re-run `make tf-bootstrap-gcp`. A new
+If `terraform init` of `solo7dev` as the dev box fails at the end, sign in again as that identity:
+`gcloud auth application-default login --disable-quota-project`, then re-run `make tf-bootstrap-gcp`. If
+instead it exits 1 because those credentials **can** read `solo7`'s state, either ADC is another account's
+(sign in again, as above) or the dev box identity holds a project-level role that reaches the bucket (Editor,
+a Storage role): the message prints the `gcloud projects get-iam-policy` command that finds it; remove that
+grant in the console (IAM & Admin → IAM) and re-run. A new
 project allows only a few service accounts created per minute; the bootstrap waits out that quota
 (`quota reached; retrying in 65s`) and carries on.
 
