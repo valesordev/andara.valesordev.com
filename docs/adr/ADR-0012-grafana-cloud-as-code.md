@@ -1087,6 +1087,38 @@ one root the build added, and the `[verify in 046]` outcomes. None of it changes
     constants in `tf_policy.py` are AW-INF-068's.
   - `gcx` (decision 2): every item goes to AW-INF-075.
 
+**2026-10-17, from the contract review of AW-INF-047, 049, 051, 068, 069, 075 and 076.** Most of these are
+precisions; none reverses a decision. Two settle points the text left open (`warn_days`, and the per-file
+`gcx-only-check` exceptions).
+
+- **Owners after the split of AW-INF-046 and AW-INF-047.** Where the text names `AW-INF-046` for these, read
+  the sibling:
+  - `scripts/gcx.py`, `make gcx-config`, `make gcx-only-check`, `scripts/grafana_stack.py` and keep-list mode:
+    AW-INF-075;
+  - `scripts/tf_policy.py`, the workflow, `make tf-plan-show` and `make tf-drift`: AW-INF-068;
+  - `docs/runbooks/grafana-credentials.md`, `credentials.yaml` and `make tf-credentials-check`: AW-INF-076;
+  - `make alerts-delete` (decision 7 step 4(ii)): AW-INF-070, not AW-INF-047;
+  - removing the ruler path (step 6): AW-INF-077;
+  - `env_recover.py` and `observe_unavailable.py` on `gcx`: AW-INF-069.
+- **Keep-list mode is `make observe-check ENV=<env> KEEP_LIST=1`** (decisions 7, 9, 13). `make` reads a bare
+  `--keep-list` as one of its own options, so the target passes the variable to the script as `--keep-list`.
+- **`gcx-only-check`'s exceptions are per file, each naming the story that removes it** (decision 2). The
+  "one exception" was written before the split; today the direct callers are:
+  - `alerts_sync.py`: AW-INF-077;
+  - `env_recover.py` and `observe_unavailable.py`: AW-INF-069;
+  - the compose-side `stack_*.sh` drills: AW-INF-064.
+  `observe_check.py` moves to `gcx` in AW-INF-075. A line naming a deleted file fails the check. A bearer
+  header counts only when its token comes from a `GRAFANA_*` variable.
+- **Drills choose the rule backend by decision 7's invariant, never by a flag** (decision 2). The scripts read
+  the rule in the `ENV`'s stack. If it is live there, they use it. If it is defined and paused, they read the
+  legacy ruler in `solo7` until AW-INF-077 deletes that branch. A rule live in both, or in neither, is an
+  inconclusive run. This keeps the M2 gate working on both sides of step 4(ii-b).
+- **Expiry windows are per credential** (decision 4, Rotation). `credentials.yaml` entries take an optional
+  `warn_days` (default 14), and the telemetry tokens carry 30: a lapsed telemetry token blinds every SLO at
+  once. Credentials with no expiry (the Slack webhooks, `TF_PLAN_KEY_PROD`) have no entry.
+- **Drift issues are labelled `drift:<root>`** (decision 5), and a failed run of a drift job opens or updates
+  the same issue, because a failed scheduled run notifies only whoever last edited the workflow.
+
 ## Revisit when
 
 - A Grafana-managed rule's firing differs from its PromQL's on a drill (decision 1's equivalence test fails
