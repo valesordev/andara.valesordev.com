@@ -1040,32 +1040,51 @@ service and a blast radius: a bad pipeline can blind a stack until the next appl
 
 ## Amendments
 
-**2026-10-17, from AW-INF-046's §8 review (PR #581).** Two places where the build could not follow the text,
-and the `[verify in 046]` outcomes. Neither changes a decision.
+**2026-10-17, from AW-INF-046's §8 review (PR #581).** This records where the build could not follow the text,
+one root the build added, and the `[verify in 046]` outcomes. None of it changes a decision.
 
 - **Decision 10, `blackhole`:** provider 4.47.0, and Grafana's provisioning API under it, reject a contact point
   with no integration. `blackhole` holds one `webhook` to `https://blackhole.invalid/` (RFC 6761 reserves the
-  name: it never resolves), and the `environment = local` route to it carries `mute_timings = ["always"]`
-  (00:00–24:00 every day), so the webhook is never attempted. What the decision guarantees still holds: `local`
+  name, so it never resolves). The `environment = local` route to it carries `mute_timings = ["always"]`
+  (00:00–24:00 every day), so the webhook is never attempted. The decision's guarantee still holds: `local`
   reaches `blackhole` only, and nothing is sent. Observed live on `solo7dev` (AW-INF-046 AC-7: no send attempt).
 - **Decision 12, test layout:** `terraform test -test-directory` must be inside the configuration directory,
-  so a shared `tests/` cannot hold the test files. They are `stacks/<root>/tests/*.tftest.hcl`, each run against
-  its root's committed `terraform.tfvars`; `tests/route/` keeps the shared part, a module that walks a policy
-  tree. `scripts/tf_policy.py` (AW-INF-068) allow-lists `stacks/*/tests/` and `tests/route/`.
+  so a shared `tests/` cannot hold the test files. They are `stacks/<root>/tests/*.tftest.hcl`, and each runs
+  against its root's committed `terraform.tfvars`. `tests/route/` keeps the shared part, a module that walks a
+  policy tree.
+- **Decision 12, a throwaway root:** `test-alert/` is **not a stack root**. It has its own provider block and
+  lock file, and a `local` backend whose state is under `.local/tf-test-alert/`, never in the bucket.
+  `make tf-test-alert` and `tf-test-alert-clean` (`STACK=solo7dev ENV=<env>`) create and destroy one
+  always-firing rule there, with that stack's apply token, to check the policy tree end to end
+  (`terraform-state.md`). Decision 3's "three roots, three states" counts the stack roots. It stays true.
+- **Decision 5's allow-list, extended for AW-INF-068** (decision 5 named AW-INF-046 for `scripts/tf_policy.py`;
+  the split moved it to AW-INF-068). Under `deploy/terraform/**`, `tf_policy.py` must also accept:
+  - in `stacks/*/tests/*.tftest.hcl`: `mock_provider "grafana"`, `variables`, and `run` blocks (holding
+    `command`, `variables`, `assert`, `expect_failures`, and `module` whose `source` is `../../tests/route`);
+  - `tests/route/` as a module with no provider and no resources;
+  - `test-alert/` with the `local` backend. The plan jobs never plan it: they plan the stack roots only.
+  Anything else in those paths is refused, as elsewhere.
 - **`[verify in 046]` outcomes:**
-  - Provider: `~> 4.47.0`, locked for linux and darwin on amd64 and arm64; it has `keep_firing_for` and every
-    `grafana_oncall_*` resource (decision 12; the resource-names item in Context). Auth variable `GRAFANA_AUTH`.
+  - Provider (decision 12; the resource-names item in Context): `~> 4.47.0`, locked for linux and darwin on
+    amd64 and arm64. It has `keep_firing_for` and every `grafana_oncall_*` resource. The auth variable is
+    `GRAFANA_AUTH`.
   - `gcs` locking and seeding (Context, decision 3): a second writer failed on the lock object, and the
     bootstrap seeded all three roots' `default.tfstate`.
-  - List clause (decision 3): observed for the dev-box identity only (`init` on `solo7dev` succeeds; `solo7`
-    and `solo7-irm` answer 403). For the six service accounts, it goes to AW-INF-068.
-  - Claims (decision 3): a missing `environment` claim is mapped behind a presence guard. The claim values,
-    `workflow_ref` pinning, role names and the read-only first `plan-prod` go to AW-INF-068's debug step.
-  - Viewer read (decision 4): the provider's read of contact points and the policy was observed on `solo7dev`.
-    Rule groups go to AW-INF-047, dashboards to AW-INF-049, the `gcx` commands to AW-INF-075, `irm oncall` and
-    the Fleet provider's auth variable to AW-INF-051.
+  - List clause (decision 3): with the clause in place, the dev-box identity's `init` on `solo7dev` succeeds,
+    and `solo7` and `solo7-irm` answer 403. **Not tested:** whether the clause is *needed* (no run without it),
+    and the object and list conditions for the six service accounts. Both go to AW-INF-068.
+  - Claims (decision 3): a missing `environment` claim is mapped behind a presence guard. AW-INF-068's debug
+    step takes the claim values, `workflow_ref` pinning for every job, the role names, and Google's length
+    limit on a mapped attribute value.
+  - Seeding for the read-only plan (decision 3): the states exist. AW-INF-068's first `plan-prod` confirms that
+    the plan account can plan against them.
+  - Read token (decision 4): `GRAFANA_SOLO7DEV_READ_TOKEN` read the contact points and the policy through the
+    provider (`make tf-plan`). There is no record that this token's account holds **Viewer** and no more. Recording
+    each account's role goes to AW-INF-076 (the credentials runbook). Rule groups go to AW-INF-047, dashboards to AW-INF-049, the
+    `gcx` commands to AW-INF-075, and `irm oncall` to AW-INF-051.
+  - Fleet provider auth variable (decision 4): AW-INF-051's.
   - Endpoints (decision 5): each stack's values are committed from its Details record. The per-kind path
-    constants in `scripts/tf_policy.py` are AW-INF-068's.
+    constants in `tf_policy.py` are AW-INF-068's.
   - `gcx` (decision 2): every item goes to AW-INF-075.
 
 ## Revisit when
