@@ -66,7 +66,10 @@ pool `github` and provider `github-actions`, each account's `workloadIdentityUse
 repository variables `TFSTATE_*_SA` and `GCP_WIF_PROVIDER`. It then reads the bucket's IAM policy back
 and exits 1 naming any account whose binding is missing or whose condition differs; seeds an empty state
 for each root as the owner; and runs `terraform init` of `solo7dev` as the dev box identity, which must
-succeed. A second run prints `tf-bootstrap-gcp: no changes; everything already matched`. Run it again
+succeed, then of `solo7` with the same credentials, which must be refused (if it is not, Application
+Default Credentials are not the dev box identity's, and it exits 1). A grant to one of its accounts that
+differs from the expected one (a wider condition, none, another role), or an impersonation grant naming a
+claim it no longer expects, is removed. A second run prints `tf-bootstrap-gcp: no changes; everything already matched`. Run it again
 whenever the bindings should be checked; it is safe at any time.
 
 If `terraform init` as the dev box fails at the end, sign in again as that identity:
