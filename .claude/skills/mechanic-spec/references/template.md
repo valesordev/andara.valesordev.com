@@ -2,7 +2,7 @@
 
 **Status:** proposed — awaiting the owner's approval (quote their confirmation when approved)
 **Canon source:** <page, section, version>
-**Brief:** <Notion URL>
+**Brief:** <content repo path, e.g. docs/design/briefs/<slug>.md, and the commit read>
 **Design intent:** <one line>
 
 ## State

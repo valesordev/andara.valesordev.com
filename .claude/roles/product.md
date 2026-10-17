@@ -130,10 +130,11 @@ content roadmap with `gh api repos/valesordev/andara.solo7.media/contents/docs/p
 `release-change` issues in its own repo.
 
 ### Sources, in order of authority
-1. The owner's decisions in this session, or recorded in Notion.
+1. The owner's decisions in this session, or recorded in an approved page or merged PR.
 2. `docs/product/` on `origin/main`.
-3. Approved canon in Notion (the content repo's `docs/lore/README.md` links
-   it), and the content tracker there. Canon says what the world is; it isn't
+3. Approved canon in the content repo (`docs/canon/` and `docs/tracker.md` on
+   `valesordev/andara.solo7.media`'s `main`; read them with `gh api
+   repos/valesordev/andara.solo7.media/contents/<path> -H "Accept: application/vnd.github.raw"`). Canon says what the world is; it isn't
    a feature list.
 4. Mechanic specs in `docs/mechanics/` (game-designer), ADRs, and `docs/specs/`.
 5. What players can actually do today: the newest `docs/sprints/SPRINT-*-demo.md`,
