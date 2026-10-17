@@ -847,8 +847,8 @@ registered collectors. Here the whole collection pipeline (scrape, `environment`
 Fleet's, deployed through Terraform per stack; a series nothing stamped carries `environment="unknown"`
 (ADR-0012 §15).
 
-**Contact point** — Where Grafana sends a notification: a Slack channel, an IRM integration, or the empty
-`blackhole` that notifies no one. **Notification policy** — The tree that matches an alert's labels
+**Contact point** — Where Grafana sends a notification: a Slack channel, an IRM integration, or
+`blackhole`, which notifies no one (its one webhook never resolves, and its route is always muted). **Notification policy** — The tree that matches an alert's labels
 (`severity`) to contact points. One tree per stack, owned wholly by Terraform.
 
 **Keep-list** — The metric series a stack's ingest must not drop because a rule or the dashboard reads them

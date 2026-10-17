@@ -658,11 +658,13 @@ so replacing the tree does not silence them. `solo7dev` is new: nothing to impor
 
 | Stack | Policy tree | Contact points | Notes |
 |---|---|---|---|
-| `solo7dev` | root receiver `slack-dev`; one child matching `environment = local` → `blackhole` (no `continue`) | `slack-dev` (Slack `#andaras-world-dev`, webhook `SLACK_WEBHOOK_DEV`), `blackhole` (no integrations) | `local` notifies no one; `dev` and `staging` post to Slack. `severity = page` does **not** page here: a non-prod outage is information, not an emergency. An alert with no `environment` falls to the root and posts to Slack, so a rule that loses the label is loud, not silent. |
+| `solo7dev` | root receiver `slack-dev`; one child matching `environment = local` → `blackhole` (no `continue`) | `slack-dev` (Slack `#andaras-world-dev`, webhook `SLACK_WEBHOOK_DEV`), `blackhole` (one webhook to `https://blackhole.invalid/`, its route muted by the `always` mute timing; see Amendments) | `local` notifies no one; `dev` and `staging` post to Slack. `severity = page` does **not** page here: a non-prod outage is information, not an emergency. An alert with no `environment` falls to the root and posts to Slack, so a rule that loses the label is loud, not silent. |
 | `solo7` | root receiver `slack-prod`; two children both matching `environment = prod` **and** `severity = page`: the first → `irm-prod` with `continue = true`, the second → `slack-prod` | `slack-prod` (webhook `SLACK_WEBHOOK_PROD`; in the `solo7` root), `irm-prod` (Grafana IRM integration; in the `solo7-irm` root, which applies first) | One page = one IRM alert group and one Slack post. Non-page severities, and any alert whose `environment` is not `prod` (including `unknown` and none), fall to the root: Slack only, never IRM. |
 
 - **Why a separate `blackhole` and not "no policy":** with no default contact point, Grafana falls back to its
-  built-in email receiver. An explicit empty receiver is the only way to guarantee nothing is sent.
+  built-in email receiver. An explicit receiver that sends nothing is the only way to guarantee nothing is sent.
+  Grafana cannot hold a contact point with no integration, so `blackhole`'s one integration is a webhook to a
+  reserved name that never resolves, and the route to it is muted around the clock, so it is never attempted.
 - **`local` still evaluates and is observable:** its rules fire and `gcx alert instances list` shows them
   (decision 2); `stack-recover-mismatch` needs `RecoveryStateMismatch` to fire for `environment="local"`. The
   route only decides who is told.
@@ -717,7 +719,8 @@ deploy/terraform/grafana/
   stacks/solo7/             # no IRM resources, no IRM token; refers to the contact point irm-prod by name
   stacks/solo7-irm/         # Grafana and IRM providers: integration, schedule, chain, contact point irm-prod
   modules/irm/
-  tests/                    # terraform test files, mock provider
+  stacks/<root>/tests/      # terraform test files, mock provider, against the root's own terraform.tfvars
+  tests/route/              # shared helper module: walks a policy tree as Alertmanager does
   .terraform-version
 ```
 
@@ -725,8 +728,8 @@ deploy/terraform/grafana/
 `required_environments = []` (`["dev"]` after decision 7 step 4(v); `solo7`: `environments = ["prod"]`,
 `required_environments = []` until step 5), `slack = true`, `page_contact_point = null` (`"irm-prod"` for `solo7`:
 the name the policy tree routes `severity = page` to, as a string), and the endpoints of decision 9. The
-provider is `grafana/grafana`, pinned `~> 4.7` (**[verify in 046]** the latest minor that has `keep_firing_for`
-and the IRM resources), with `.terraform.lock.hcl` committed.
+provider is `grafana/grafana`, pinned `~> 4.47.0` (verified in 046: the newest release at least two weeks old, with `keep_firing_for`
+and every `grafana_oncall_*` resource), with `.terraform.lock.hcl` committed.
 
 **Rendering a rule set that names environments.** The source file is also read unrendered (decision 1), so the
 lines that must exist per environment are marked **in the file**, as PromQL comments, which Prometheus ignores:
@@ -1034,6 +1037,36 @@ service and a blast radius: a bad pipeline can blind a stack until the next appl
   make down` line no longer says "via compose" (ADR-0013 names the target). `docs/specs/testing/live-assertions.md`
   is architecture's and is amended in this ADR's follow-up (rule 1's examples name `ALERTS` and a local
   Prometheus).
+
+## Amendments
+
+**2026-10-17, from AW-INF-046's §8 review (PR #581).** Two places where the build could not follow the text,
+and the `[verify in 046]` outcomes. Neither changes a decision.
+
+- **Decision 10, `blackhole`:** provider 4.47.0, and Grafana's provisioning API under it, reject a contact point
+  with no integration. `blackhole` holds one `webhook` to `https://blackhole.invalid/` (RFC 6761 reserves the
+  name: it never resolves), and the `environment = local` route to it carries `mute_timings = ["always"]`
+  (00:00–24:00 every day), so the webhook is never attempted. What the decision guarantees still holds: `local`
+  reaches `blackhole` only, and nothing is sent. Observed live on `solo7dev` (AW-INF-046 AC-7: no send attempt).
+- **Decision 12, test layout:** `terraform test -test-directory` must be inside the configuration directory,
+  so a shared `tests/` cannot hold the test files. They are `stacks/<root>/tests/*.tftest.hcl`, each run against
+  its root's committed `terraform.tfvars`; `tests/route/` keeps the shared part, a module that walks a policy
+  tree. `scripts/tf_policy.py` (AW-INF-068) allow-lists `stacks/*/tests/` and `tests/route/`.
+- **`[verify in 046]` outcomes:**
+  - Provider: `~> 4.47.0`, locked for linux and darwin on amd64 and arm64; it has `keep_firing_for` and every
+    `grafana_oncall_*` resource (decision 12; the resource-names item in Context). Auth variable `GRAFANA_AUTH`.
+  - `gcs` locking and seeding (Context, decision 3): a second writer failed on the lock object, and the
+    bootstrap seeded all three roots' `default.tfstate`.
+  - List clause (decision 3): observed for the dev-box identity only (`init` on `solo7dev` succeeds; `solo7`
+    and `solo7-irm` answer 403). For the six service accounts, it goes to AW-INF-068.
+  - Claims (decision 3): a missing `environment` claim is mapped behind a presence guard. The claim values,
+    `workflow_ref` pinning, role names and the read-only first `plan-prod` go to AW-INF-068's debug step.
+  - Viewer read (decision 4): the provider's read of contact points and the policy was observed on `solo7dev`.
+    Rule groups go to AW-INF-047, dashboards to AW-INF-049, the `gcx` commands to AW-INF-075, `irm oncall` and
+    the Fleet provider's auth variable to AW-INF-051.
+  - Endpoints (decision 5): each stack's values are committed from its Details record. The per-kind path
+    constants in `scripts/tf_policy.py` are AW-INF-068's.
+  - `gcx` (decision 2): every item goes to AW-INF-075.
 
 ## Revisit when
 
