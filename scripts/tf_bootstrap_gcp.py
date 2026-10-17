@@ -420,7 +420,8 @@ class Bootstrap:
             rc, out, err = self.tf_run("solo7dev", args, env)
             if rc:
                 raise Exit(1, "terraform %s of solo7dev as GCP_DEVBOX_IDENTITY (Application Default "
-                              "Credentials) failed; run gcloud auth application-default login as %s:\n%s%s"
+                              "Credentials) failed; run gcloud auth application-default login "
+                              "--disable-quota-project as %s:\n%s%s"
                            % (args[0], self.devbox, out, err))
         self.say("dev box", "terraform init of solo7dev as %s ok" % self.devbox)
 

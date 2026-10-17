@@ -43,7 +43,10 @@ worktree (`.claude/worktrees/<name>`) with no `.local/box.env` of its own reads 
 The tokens are made by hand (`ADR-0012` decision 4; the click paths are `AW-INF-076`'s
 `grafana-credentials.md`). A missing one exits 3 and names it, before any network call. The token reaches
 Terraform only as `GRAFANA_AUTH`. State is reached with Application Default Credentials: on the dev box,
-`gcloud auth application-default login` signed in as `GCP_DEVBOX_IDENTITY`, never as the owner.
+`gcloud auth application-default login --disable-quota-project` signed in as `GCP_DEVBOX_IDENTITY`, never
+as the owner. Without `--disable-quota-project` the login records gcloud's current project as the quota
+project, on which `GCP_DEVBOX_IDENTITY` has no role, and every state request is refused (403,
+`serviceusage.services.use`).
 
 ## Bootstrap (once, by Brian as the GCP project owner)
 
@@ -67,7 +70,9 @@ succeed. A second run prints `tf-bootstrap-gcp: no changes; everything already m
 whenever the bindings should be checked; it is safe at any time.
 
 If `terraform init` as the dev box fails at the end, sign in again as that identity:
-`gcloud auth application-default login`, then re-run `make tf-bootstrap-gcp`.
+`gcloud auth application-default login --disable-quota-project`, then re-run `make tf-bootstrap-gcp`. A new
+project allows only a few service accounts created per minute; the bootstrap waits out that quota
+(`quota reached; retrying in 65s`) and carries on.
 
 The impersonation bindings are written from the claims GitHub is *expected* to send (`event_name` of
 `pull_request_target` or `schedule`; `environment` of `andara-main`, `andara-prod-plan`,
