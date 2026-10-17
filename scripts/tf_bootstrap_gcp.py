@@ -41,6 +41,7 @@ import shutil
 import subprocess
 import sys
 import tempfile
+import time
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 import tf  # noqa: E402
@@ -173,8 +174,13 @@ def principal_set(project_number, attribute, value):
 
 
 class Bootstrap:
-    def __init__(self, env, gcloud=None, gh=None, terraform=None, out=print):
+    # A new project allows only a few service accounts created per minute; a 429 is waited out.
+    QUOTA_RETRIES = 5
+    QUOTA_WAIT = 65
+
+    def __init__(self, env, gcloud=None, gh=None, terraform=None, out=print, sleep=time.sleep):
         self.env = env
+        self.sleep = sleep
         self.changes = 0
         self.gcloud_run = gcloud or self._run_gcloud
         self.gh_run = gh or self._run_gh
@@ -211,6 +217,13 @@ class Bootstrap:
 
     def gcloud(self, *args, ok_missing=False):
         rc, out, err = self.gcloud_run(list(args))
+        for _ in range(self.QUOTA_RETRIES):
+            if rc == 0 or "RESOURCE_EXHAUSTED" not in err:
+                break
+            self.out("tf-bootstrap-gcp: gcloud %s: quota reached; retrying in %ds"
+                     % (" ".join(args[:4]), self.QUOTA_WAIT))
+            self.sleep(self.QUOTA_WAIT)
+            rc, out, err = self.gcloud_run(list(args))
         if rc != 0:
             if ok_missing and re.search(r"NOT_FOUND|not found|does not exist|404", err):
                 return None

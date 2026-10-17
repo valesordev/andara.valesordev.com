@@ -144,14 +144,45 @@ class FakeCloud:
         return 0, "", ""
 
 
-def run(cloud, env=None):
+def run(cloud, env=None, sleep=lambda s: None):
     lines = []
     b = boot.Bootstrap(dict(ENV if env is None else env), gcloud=cloud.gcloud, gh=cloud.gh,
-                       terraform=cloud.terraform, out=lines.append)
+                       terraform=cloud.terraform, out=lines.append, sleep=sleep)
     try:
         return b.run(), lines, None
     except boot.Exit as e:
         return e.code, lines, e.msg
+
+
+class QuotaTest(unittest.TestCase):
+    """A 429 from a new project's per-minute service-account quota is waited out, not fatal."""
+
+    def throttled(self, cloud, times):
+        real = cloud.gcloud
+        left = [times]
+
+        def gcloud(args):
+            if args[:3] == ["iam", "service-accounts", "create"] and left[0]:
+                left[0] -= 1
+                return 1, "", "ERROR: 429 RESOURCE_EXHAUSTED: Service accounts created per minute per project."
+            return real(args)
+        cloud.gcloud = gcloud
+
+    def test_retried_until_it_succeeds(self):
+        cloud = FakeCloud()
+        self.throttled(cloud, 2)
+        waits = []
+        rc, lines, msg = run(cloud, sleep=waits.append)
+        self.assertEqual(rc, 0, msg)
+        self.assertEqual(waits, [boot.Bootstrap.QUOTA_WAIT] * 2)
+        self.assertTrue(any("quota reached" in line for line in lines))
+
+    def test_gives_up_after_the_retries(self):
+        cloud = FakeCloud()
+        self.throttled(cloud, boot.Bootstrap.QUOTA_RETRIES + 1)
+        rc, _, msg = run(cloud)
+        self.assertEqual(rc, 1)
+        self.assertIn("RESOURCE_EXHAUSTED", msg)
 
 
 class ConditionTest(unittest.TestCase):
