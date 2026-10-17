@@ -1,0 +1,2 @@
+# terraform init state, per root (TF_DATA_DIR .terraform/check for the offline checks)
+.terraform/

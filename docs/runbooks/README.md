@@ -32,6 +32,7 @@ says "connect to the database" is a gap in the CLI (`CLAUDE.md` §10).
 | `content-load-failing.md` | `AW-SRV-012` (written by architecture) | `ContentLoadFailing` |
 | `recovery-state-mismatch.md` | `AW-SRV-007` (merged) | `RecoveryStateMismatch` |
 | `alert-routing.md` | `AW-INF-009` | — (how alerts reach a person: access policy, secrets, notification policy) |
+| `terraform-state.md` | `AW-INF-046` | — (Grafana Cloud Terraform state: bootstrap, credentials, a held lock, a failed apply, the test alert) |
 
 ## Planned
 

@@ -88,6 +88,14 @@ jobs:
         run: make content-conformance
       - name: scripts unit tests
         run: make scripts-test
+      # AW-INF-046: the Grafana Cloud Terraform roots, offline (mock provider, no backend,
+      # no credential). init downloads the pinned provider against the committed lock file.
+      - name: terraform fmt
+        run: make tf-fmt-check
+      - name: terraform validate
+        run: make tf-validate
+      - name: terraform test
+        run: make tf-test
       # AW-INF-029. On a pull request the merge base with origin/main comes from
       # fetch-depth: 0 above. On a push to main it compares with the commit main was at before
       # the push, so a multi-commit push is checked whole; main's runs are never cancelled (the

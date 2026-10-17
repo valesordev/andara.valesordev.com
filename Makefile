@@ -62,7 +62,8 @@ HAS_GO := $(shell find . -name '*.go' -not -path './.git/*' -not -path './bin/*'
         argocd-install argocd-status argocd-ui argocd-recover argocd-uninstall world-reset content-seed env-destroy env-recover \
         objectstore-install projector-stop projector-start projector-rebuild server-stop server-start core-versions-check \
         builder-reference builder-reference-check guide-check \
-        stack-boundary-lost cli-offline-check stack-projector-check recovery-timing recovery-timing-previous recovery-timing-summary startup-budget-check alerts-sync alerts-diff update-agents
+        stack-boundary-lost cli-offline-check stack-projector-check recovery-timing recovery-timing-previous recovery-timing-summary startup-budget-check alerts-sync alerts-diff update-agents \
+        tf-plan tf-apply tf-unlock tf-test-alert tf-test-alert-clean tf-fmt-check tf-validate tf-test tf-lock tf-bootstrap-gcp
 
 ## help: print this target list
 help:
@@ -131,7 +132,8 @@ schemas-check:
 CHECK_TARGETS := fmt-check vet lint test proto-check schemas-check \
                  values-schema-check k8s-dry helm-test \
                  license-check content-grammar-check content-conformance scripts-test \
-                 core-versions-check builder-reference-check guide-check
+                 core-versions-check builder-reference-check guide-check \
+                 tf-fmt-check tf-validate tf-test
 
 ## check: fmt, vet, lint, test, proto, manifests — what CI runs
 check: $(CHECK_TARGETS)
@@ -455,6 +457,46 @@ alerts-sync:
 ## alerts-diff: show how the ruler differs from files/alerts.yaml; exits 1 on drift, 3 without the key, address or tenant; ALERTS_FILE=<path> diffs another rule file (AW-INF-009)
 alerts-diff:
 	@$(PY) $(SCRIPTS)/alerts_sync.py diff
+
+## tf-plan: plan a Grafana Cloud Terraform root — STACK=solo7dev (solo7 and solo7-irm are CI's); GRAFANA_<STACK>_READ_TOKEN and SLACK_WEBHOOK_<DEV|PROD> from the environment or .local/box.env, exit 3 without them (AW-INF-046)
+tf-plan:
+	@$(PY) $(SCRIPTS)/tf.py plan --stack "$(STACK)"
+
+## tf-apply: plan, apply that plan, then require an empty second plan — STACK=solo7dev; GRAFANA_<STACK>_APPLY_TOKEN and the webhook, exit 3 without them; a held state lock exits 1 naming it (AW-INF-046)
+tf-apply:
+	@$(PY) $(SCRIPTS)/tf.py apply --stack "$(STACK)"
+
+## tf-unlock: release a stale state lock — STACK=solo7dev LOCK_ID=<id> (the id tf-apply printed); see docs/runbooks/terraform-state.md
+tf-unlock:
+	@$(PY) $(SCRIPTS)/tf.py unlock --stack "$(STACK)" --lock-id "$(LOCK_ID)"
+
+## tf-test-alert: create one always-firing alert labelled environment=ENV in STACK, to check its notification policy end to end (AC-7) — STACK=solo7dev ENV=<local|dev|staging>; GRAFANA_<STACK>_APPLY_TOKEN, exit 3 without it
+tf-test-alert:
+	@$(PY) $(SCRIPTS)/tf.py test-alert --stack "$(STACK)" --env "$(if $(filter command line,$(origin ENV)),$(ENV))"
+
+## tf-test-alert-clean: remove the alert tf-test-alert created — STACK=solo7dev ENV=<local|dev|staging>
+tf-test-alert-clean:
+	@$(PY) $(SCRIPTS)/tf.py test-alert-clean --stack "$(STACK)" --env "$(if $(filter command line,$(origin ENV)),$(ENV))"
+
+## tf-fmt-check: fail if terraform fmt would change anything under deploy/terraform
+tf-fmt-check:
+	@$(PY) $(SCRIPTS)/tf.py fmt-check
+
+## tf-validate: terraform validate every Grafana Cloud root, no backend and no credential
+tf-validate:
+	@$(PY) $(SCRIPTS)/tf.py validate
+
+## tf-test: terraform test every root against its committed terraform.tfvars, mock provider: policy routes, endpoints (AW-INF-046 AC-6, AC-10, AC-11)
+tf-test:
+	@$(PY) $(SCRIPTS)/tf.py test
+
+## tf-lock: re-pin the grafana provider hashes in every root's .terraform.lock.hcl, for linux and darwin on amd64 and arm64
+tf-lock:
+	@$(PY) $(SCRIPTS)/tf.py lock
+
+## tf-bootstrap-gcp: create or verify the andara-tfstate bucket, service accounts, IAM conditions and workload identity, seed the three states; idempotent, run once by the GCP project owner (GCP_STATE_PROJECT, GCP_DEVBOX_IDENTITY; docs/runbooks/terraform-state.md)
+tf-bootstrap-gcp:
+	@$(PY) $(SCRIPTS)/tf_bootstrap_gcp.py
 
 ## observe-check: ask Grafana Cloud whether andara-<env>'s metrics, logs, and traces arrived (GRAFANA_CLOUD_* from the environment; exits 3 without them) — ENV=<env>
 observe-check:

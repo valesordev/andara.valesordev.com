@@ -26,6 +26,10 @@ PROMETHEUS_VERSION="3.1.0"
 # mimirtool syncs files/alerts.yaml to the Grafana Cloud ruler (AW-INF-009). Also a release
 # binary: Mimir's tags aren't Go module versions, so `go install` can't pin it.
 MIMIRTOOL_VERSION="3.2.2"
+# Terraform plans and applies the Grafana Cloud roots (AW-INF-046, ADR-0012). The version is
+# deploy/terraform/grafana/.terraform-version; the checksums below are that release's
+# SHA256SUMS, so a version bump changes both or bootstrap fails.
+TERRAFORM_VERSION="1.16.4"
 
 fail() { echo "make: bootstrap: $*" >&2; exit 1; }
 ok()   { printf '  %-22s %s\n' "$1" "$2"; }
@@ -243,6 +247,50 @@ install_mimirtool() {
   ok mimirtool "$want (installed)"
 }
 install_mimirtool
+
+# terraform backs `make tf-*` (AW-INF-046): fmt, validate and test in `make check`, plan and
+# apply of solo7dev from the dev box. HashiCorp's release zip, verified against a checksum pinned
+# here from the release's SHA256SUMS.
+install_terraform() {
+  local want="$TERRAFORM_VERSION" have="" os arch sum pinned
+  pinned="$(tr -d '[:space:]' < deploy/terraform/grafana/.terraform-version)"
+  [[ "$pinned" == "$want" ]] \
+    || fail "deploy/terraform/grafana/.terraform-version says $pinned but bootstrap pins terraform $want; change both together"
+  [[ -x "$BIN/terraform" ]] && have="$("$BIN/terraform" version -json 2>/dev/null | ${PY:-python3} -c 'import json,sys; print(json.load(sys.stdin)["terraform_version"])' 2>/dev/null || true)"
+  if [[ "$have" == "$want" ]]; then
+    ok terraform "$have (pinned)"
+    return 0
+  fi
+  os="$(uname -s | tr '[:upper:]' '[:lower:]')"
+  case "$(uname -m)" in
+    x86_64|amd64) arch=amd64 ;;
+    aarch64|arm64) arch=arm64 ;;
+    *) fail "no pinned terraform for $(uname -m)" ;;
+  esac
+  case "$os-$arch" in
+    linux-amd64)  sum=dc94af0eef1147718ad7c8daea792ed199e3e0492eec180d0adafa2a65a879df ;;
+    linux-arm64)  sum=8263f301cb1a24489a4adeed147bf28504053f77237b3ea97a0ef2972659de30 ;;
+    darwin-amd64) sum=2ee4b62064086e4b24b0d6cf2e61718fbaf0556feba990f708a5e32557554b3b ;;
+    darwin-arm64) sum=42cfdf97ad722f79085fe2279b06d4b8680172de3534b22eeddd9a0fbbe7b8f1 ;;
+    *) fail "no pinned terraform for $os-$arch" ;;
+  esac
+  local name="terraform_${want}_${os}_${arch}.zip" tmp
+  tmp="$(mktemp -d)"
+  echo "  installing terraform $want ..."
+  curl -fsSL -o "$tmp/$name" "https://releases.hashicorp.com/terraform/$want/$name" \
+    || { rm -rf "$tmp"; fail "could not download terraform $want; check network access to releases.hashicorp.com"; }
+  if command -v sha256sum >/dev/null 2>&1; then
+    echo "$sum  $tmp/$name" | sha256sum -c --quiet - >/dev/null
+  else
+    echo "$sum  $tmp/$name" | shasum -a 256 -c --quiet - >/dev/null
+  fi || { rm -rf "$tmp"; fail "terraform $want zip does not match its pinned checksum"; }
+  ${PY:-python3} -c 'import sys, zipfile; zipfile.ZipFile(sys.argv[1]).extract("terraform", sys.argv[2])' "$tmp/$name" "$tmp" \
+    || { rm -rf "$tmp"; fail "could not unpack terraform $want"; }
+  install -m 0755 "$tmp/terraform" "$BIN/terraform"
+  rm -rf "$tmp"
+  ok terraform "$want (installed)"
+}
+install_terraform
 
 # kind and kubectl are needed by `make helm-install ENV=local`, not by `make check`.
 command -v kind >/dev/null 2>&1 \
