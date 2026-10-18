@@ -1101,7 +1101,7 @@ backend, and freezing the ruler during the conversion.
   - `docs/runbooks/grafana-credentials.md`, `credentials.yaml` and `make tf-credentials-check`: AW-INF-076;
   - `make alerts-delete` (decision 7 step 4(ii)): AW-INF-070, not AW-INF-047;
   - removing the ruler path (step 6): AW-INF-077, which also deletes `scripts/ruler_read.py` and the drills'
-    legacy branch, and removes their exception lines. Step 6's "the `gcx-only-check` exception" means those
+    legacy branch, and removes `ruler_read.py`'s exception line. Step 6's "the `gcx-only-check` exception" means those
     lines and `alerts_sync.py`'s; the `stack_*.sh` lines are AW-INF-064's. The `alerts` workflow is no longer in
     step 6: AW-INF-047 deletes it (below);
   - `env_recover.py` and `observe_unavailable.py` on `gcx`: AW-INF-069;
@@ -1112,7 +1112,7 @@ backend, and freezing the ruler during the conversion.
   of its own options, so the target passes the variable to the script as `--keep-list`.
 - **`gcx-only-check`, as built** (decision 2):
   - **Patterns:** it also matches `/prometheus/config/v1/rules`, the ruler config API.
-  - **Excluded:** `scripts/tests/**` and its fixtures.
+  - **Excluded:** `scripts/tests/**` (fixtures included).
   - **Bearer headers:** they count only when the token comes from a `GRAFANA_*` variable.
   - **Exceptions are per file**, each naming the story that removes it. The "one exception" was written before
     the split. Today the list is:
@@ -1121,7 +1121,7 @@ backend, and freezing the ruler during the conversion.
       and for `observe_unavailable.py`: AW-INF-069;
     - `ruler_read.py`, which AW-INF-069 adds: AW-INF-077;
     - `stack_smoke.sh`, `stack_recover.sh` and `stack_recover_mismatch.sh`: AW-INF-064.
-  - **Self-checking:** a line naming a deleted file fails the check. `observe_check.py` moves to `gcx` in
+  - **Self-checking:** a line naming a deleted file, or a file in which no pattern matches, fails the check. `observe_unavailable.py` therefore has no line: it reaches the API only through `grafana_http.py`. `observe_check.py` moves to `gcx` in
     AW-INF-075.
 - **`env-recover` and `observe-unavailable` choose the rule backend by decision 7's invariant, never by a
   flag** (decision 2). Other drills, such as `stack-recover-mismatch`, read only the `ENV`'s stack. Each run of
@@ -1129,7 +1129,9 @@ backend, and freezing the ruler during the conversion.
   - the Grafana-managed rule in the `ENV`'s stack;
   - the legacy ruler's rule config in `solo7`, through the ruler config API (`scripts/ruler_read.py`, on the
     exception list until AW-INF-077).
-  The one where the rule is live is the backend. Live in both, or in neither, is an inconclusive run.
+  The one where the rule is live is the backend. Live in both, or in neither, is an inconclusive run. A 404 for
+  the ruler namespace `andara` (deleted at step 4(ii)) means "not live in the ruler". Any other error from the
+  ruler read makes the run inconclusive.
   On the legacy backend, series reads **and instance-state filters** use `namespace` only, because `dev`'s
   series and the ruler's alerts in `solo7` carry no `environment`. A filter on `environment` there would match
   nothing, and "no firing sample" would pass vacuously.
