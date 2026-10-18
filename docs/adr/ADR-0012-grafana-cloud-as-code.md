@@ -1101,8 +1101,8 @@ backend, and freezing the ruler during the conversion.
   - `docs/runbooks/grafana-credentials.md`, `credentials.yaml` and `make tf-credentials-check`: AW-INF-076;
   - `make alerts-delete` (decision 7 step 4(ii)): AW-INF-070, not AW-INF-047;
   - removing the ruler path (step 6): AW-INF-077, which also deletes `scripts/ruler_read.py` and the drills'
-    legacy branch, and removes `ruler_read.py`'s exception line. Step 6's "the `gcx-only-check` exception" means those
-    lines and `alerts_sync.py`'s; the `stack_*.sh` lines are AW-INF-064's. The `alerts` workflow is no longer in
+    legacy branch, and removes `ruler_read.py`'s exception line. Step 6's "the `gcx-only-check` exception" means that
+    line and `alerts_sync.py`'s; the `stack_*.sh` lines are AW-INF-064's. The `alerts` workflow is no longer in
     step 6: AW-INF-047 deletes it (below);
   - `env_recover.py` and `observe_unavailable.py` on `gcx`: AW-INF-069;
   - decision 15's "[verify in 051]" on whether the pinned chart installs bare collectors: AW-INF-065, which
@@ -1112,7 +1112,8 @@ backend, and freezing the ruler during the conversion.
   of its own options, so the target passes the variable to the script as `--keep-list`.
 - **`gcx-only-check`, as built** (decision 2):
   - **Patterns:** it also matches `/prometheus/config/v1/rules`, the ruler config API.
-  - **Excluded:** `scripts/tests/**` (fixtures included).
+  - **Excluded:** `scripts/tests/**` (fixtures included), and permanently `scripts/tf_policy.py` (AW-INF-068). It
+    names Grafana hosts and sender paths such as `/api/prom/push` in order to police them, and calls no API.
   - **Bearer headers:** they count only when the token comes from a `GRAFANA_*` variable.
   - **Exceptions are per file**, each naming the story that removes it. The "one exception" was written before
     the split. Today the list is:
