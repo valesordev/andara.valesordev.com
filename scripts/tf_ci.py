@@ -12,6 +12,8 @@
     scripts/tf_ci.py drift      --stack <root> [--issue]
     scripts/tf_ci.py drift-issue --stack <root> --reason <text>
     scripts/tf_ci.py plan-show  --run <id> --stack <solo7|solo7-irm>
+    scripts/tf_ci.py environments [--apply]                   what the workflow needs on GitHub, by name
+    scripts/tf_ci.py plan-key [--rotate]                      make TF_PLAN_KEY_PROD: both prod environments and box.env
 
 The workflow never calls `terraform` or `openssl` itself: every sink (the Actions log, the job summary,
 an artifact, a drift issue) is written here, so the rules below are tested in one place.
@@ -442,10 +444,114 @@ def cmd_plan_show(run, root, env):
     return 0
 
 
+# What the terraform workflow needs, where (ADR-0012 decision 4's table). Names only; values are pasted by
+# Brian with `gh secret set` and never pass through this script. A test keeps this in step with the workflow.
+REPO_SECRETS = ("GRAFANA_SOLO7DEV_READ_TOKEN", "GRAFANA_SOLO7_READ_TOKEN", "GRAFANA_SOLO7DEV_FLEET_READ_TOKEN",
+                "GRAFANA_SOLO7_FLEET_READ_TOKEN", "SLACK_WEBHOOK_DEV", "SLACK_WEBHOOK_PROD")
+REPO_VARS = ("GCP_WIF_PROVIDER", "TFSTATE_SOLO7DEV_PLAN_SA", "TFSTATE_SOLO7_PLAN_SA", "TFSTATE_SOLO7DEV_APPLY_SA",
+             "TFSTATE_SOLO7_APPLY_SA", "TFSTATE_SOLO7_IRM_APPLY_SA", "TFSTATE_PRODPLAN_SA")
+ENVIRONMENTS = {
+    "andara-main": {"reviewer": False,
+                    "secrets": ("GRAFANA_SOLO7DEV_APPLY_TOKEN", "GRAFANA_SOLO7DEV_FLEET_APPLY_TOKEN")},
+    "andara-prod-plan": {"reviewer": False, "secrets": ("GRAFANA_SOLO7_IRM_TOKEN", "TF_PLAN_KEY_PROD")},
+    "andara-prod-apply": {"reviewer": True,
+                          "secrets": ("GRAFANA_SOLO7_APPLY_TOKEN", "GRAFANA_SOLO7_FLEET_APPLY_TOKEN",
+                                      "GRAFANA_SOLO7_IRM_TOKEN", "TF_PLAN_KEY_PROD")},
+}
+
+
+def gh_json(*args):
+    p = subprocess.run(["gh", "api", *args], capture_output=True, text=True)
+    if p.returncode:
+        return None
+    return json.loads(p.stdout or "null")
+
+
+def cmd_environments(apply, env):
+    """Report (and with apply, create) the three environments; report every missing secret and variable."""
+    repo = env.get("GITHUB_REPOSITORY") or gh_json("repos/{owner}/{repo}", "--jq", "{full_name}")["full_name"]
+    missing = []
+    me = gh_json("user") if apply else None
+    for name, want in ENVIRONMENTS.items():
+        current = gh_json("repos/%s/environments/%s" % (repo, name))
+        if apply:
+            body = {"deployment_branch_policy": {"protected_branches": False, "custom_branch_policies": True}}
+            if want["reviewer"]:
+                body["reviewers"] = [{"type": "User", "id": me["id"]}]
+            p = subprocess.run(["gh", "api", "-X", "PUT", "repos/%s/environments/%s" % (repo, name), "--input", "-"],
+                               input=json.dumps(body), capture_output=True, text=True)
+            if p.returncode:
+                raise tf.Exit(1, "creating environment %s failed: %s" % (name, p.stderr.strip()))
+            policies = gh_json("repos/%s/environments/%s/deployment-branch-policies" % (repo, name)) or {}
+            if not any(b.get("name") == "main" for b in policies.get("branch_policies", [])):
+                gh_json("-X", "POST", "repos/%s/environments/%s/deployment-branch-policies" % (repo, name),
+                        "-f", "name=main", "-f", "type=branch")
+            tf.say("environment %s: deployable from main only%s" % (name, ", reviewer %s" % me["login"]
+                                                                     if want["reviewer"] else ""))
+            current = gh_json("repos/%s/environments/%s" % (repo, name))
+        if not current:
+            missing.append("environment %s (make tf-ci-environments APPLY=1)" % name)
+            continue
+        rules = [r.get("type") for r in current.get("protection_rules", [])]
+        if want["reviewer"] and "required_reviewers" not in rules:
+            missing.append("environment %s: a required reviewer (make tf-ci-environments APPLY=1)" % name)
+        policies = gh_json("repos/%s/environments/%s/deployment-branch-policies" % (repo, name)) or {}
+        if [b.get("name") for b in policies.get("branch_policies", [])] != ["main"]:
+            missing.append("environment %s: deployable from main only (make tf-ci-environments APPLY=1)" % name)
+        have = {s["name"] for s in (gh_json("repos/%s/environments/%s/secrets?per_page=100" % (repo, name)) or {}).get("secrets", [])}
+        for s in want["secrets"]:
+            if s not in have:
+                missing.append("secret %s in %s: gh secret set %s --env %s" % (s, name, s, name))
+    have = {s["name"] for s in (gh_json("repos/%s/actions/secrets?per_page=100" % repo) or {}).get("secrets", [])}
+    missing += ["repository secret %s: gh secret set %s" % (s, s) for s in REPO_SECRETS if s not in have]
+    have = {v["name"] for v in (gh_json("repos/%s/actions/variables?per_page=100" % repo) or {}).get("variables", [])}
+    missing += ["repository variable %s (make tf-bootstrap-gcp sets it)" % v for v in REPO_VARS if v not in have]
+    box = tf.load_box_env({})
+    if not box.get("TF_PLAN_KEY_PROD"):
+        missing.append("TF_PLAN_KEY_PROD in .local/box.env (the same value as the environments'; tf-plan-show reads it)")
+    for m in missing:
+        tf.say("missing: " + m)
+    if missing:
+        raise tf.Exit(1, "%d item(s) missing for the terraform workflow" % len(missing))
+    tf.say("the terraform workflow's environments, secrets and variables are all present")
+    return 0
+
+
+def cmd_plan_key(rotate, env):
+    """Make TF_PLAN_KEY_PROD: one random key, set in both prod environments and .local/box.env (mode 0600).
+    Refuses to replace an existing box.env key unless rotate. The key reaches gh on stdin, never argv."""
+    path = tf.box_env_path(env) or tf.BOX_ENV
+    existing = tf.load_box_env({}, path) if os.path.exists(path) else {}
+    if existing.get("TF_PLAN_KEY_PROD") and not rotate:
+        raise tf.Exit(1, "%s already holds TF_PLAN_KEY_PROD; ROTATE=1 replaces it (and invalidates any plan "
+                         "artifact not yet applied)" % path)
+    key = base64.b64encode(os.urandom(32)).decode()
+    for name in ("andara-prod-plan", "andara-prod-apply"):
+        p = subprocess.run(["gh", "secret", "set", "TF_PLAN_KEY_PROD", "--env", name], input=key,
+                           capture_output=True, text=True)
+        if p.returncode:
+            raise tf.Exit(1, "gh secret set TF_PLAN_KEY_PROD --env %s failed: %s (make tf-ci-environments APPLY=1 "
+                             "creates the environments)" % (name, p.stderr.strip()))
+        tf.say("TF_PLAN_KEY_PROD set in %s" % name)
+    lines = []
+    if os.path.exists(path):
+        with open(path) as f:
+            lines = [ln for ln in f.read().splitlines() if not ln.strip().removeprefix("export ").lstrip().startswith("TF_PLAN_KEY_PROD=")]
+    lines.append("TF_PLAN_KEY_PROD=" + key)
+    os.makedirs(os.path.dirname(path), exist_ok=True)
+    fd = os.open(path + ".tmp", os.O_WRONLY | os.O_CREAT | os.O_TRUNC, 0o600)
+    with os.fdopen(fd, "w") as f:
+        f.write("\n".join(lines) + "\n")
+    os.replace(path + ".tmp", path)
+    os.chmod(path, 0o600)
+    tf.say("TF_PLAN_KEY_PROD written to %s (mode 0600); the same key is in both prod environments" % path)
+    return 0
+
+
 def main(argv, environ=None):
     p = argparse.ArgumentParser(prog="tf_ci.py")
     p.add_argument("cmd", choices=("claims", "pr-plan", "apply", "plan-prod", "apply-prod", "drift",
-                                   "drift-issue", "plan-show"))
+                                   "drift-issue", "plan-show", "environments", "plan-key"))
     p.add_argument("--stack", default="")
     p.add_argument("--root", default="")
     p.add_argument("--tf-dir", default="")
@@ -456,6 +562,8 @@ def main(argv, environ=None):
     p.add_argument("--run", default="")
     p.add_argument("--reason", default="")
     p.add_argument("--issue", action="store_true")
+    p.add_argument("--apply", action="store_true")
+    p.add_argument("--rotate", action="store_true")
     try:
         a = p.parse_args(argv)
     except SystemExit as e:
@@ -476,6 +584,10 @@ def main(argv, environ=None):
             return cmd_drift(a.stack, a.issue, env)
         if a.cmd == "drift-issue":
             return cmd_drift_issue(a.stack, a.reason, env)
+        if a.cmd == "environments":
+            return cmd_environments(a.apply, env)
+        if a.cmd == "plan-key":
+            return cmd_plan_key(a.rotate, env)
         return cmd_plan_show(a.run, a.stack, env)
     except tf.Exit as e:
         if e.msg:

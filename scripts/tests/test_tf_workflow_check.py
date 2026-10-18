@@ -146,6 +146,29 @@ class Workflow(unittest.TestCase):
         self.w["jobs"]["drift-prod-irm"]["concurrency"]["cancel-in-progress"] = True
         self.broken("drift-prod-irm", "concurrency")
 
+    def test_every_credential_the_workflow_reads_is_in_tf_ci_environments_table(self):
+        """make tf-ci-environments checks the names in tf_ci.py; they must be the ones the jobs read."""
+        import tf_ci
+        keys = [m["key"] for m in self.w["jobs"]["plan"]["strategy"]["matrix"]["include"]]
+        hooks = [m["webhook"] for m in self.w["jobs"]["plan"]["strategy"]["matrix"]["include"]]
+        for name, job in self.w["jobs"].items():
+            env = wc.environment(job)
+            allowed = set(tf_ci.REPO_SECRETS) | set(tf_ci.ENVIRONMENTS.get(env, {}).get("secrets", ()))
+            for kind, ref in wc.refs(job):
+                if ref.startswith("format("):
+                    names = [ref.split("'")[1].replace("{0}", k) for k in keys]
+                elif ref == "matrix.webhook":
+                    names = hooks
+                else:
+                    names = [ref]
+                for n in names:
+                    with self.subTest(job=name, ref=n):
+                        if kind == "vars":
+                            self.assertIn(n, tf_ci.REPO_VARS)
+                        else:
+                            self.assertIn(n, allowed, "%s reads %s, which tf-ci-environments does not "
+                                                      "expect in %s" % (name, n, env or "the repository"))
+
     def test_main_reports_job_and_rule(self):
         w = copy.deepcopy(self.w)
         w["jobs"]["plan"]["environment"] = "andara-main"

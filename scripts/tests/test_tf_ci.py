@@ -326,6 +326,54 @@ class PlanShow(Base):
         self.assertEqual(plaintext, [], "no plaintext file written")
 
 
+class PlanKey(Base):
+
+    def setUp(self):
+        super().setUp()
+        self.box = os.path.join(self.dir, "box.env")
+        with open(self.box, "w") as f:
+            f.write("GRAFANA_SOLO7DEV_READ_TOKEN=keep\n")
+        os.chmod(self.box, 0o600)
+        p = mock.patch.object(tf, "box_env_path", lambda env: self.box)
+        p.start()
+        self.addCleanup(p.stop)
+        self.set = []
+
+        def run(args, input=None, **kw):
+            self.set.append((tuple(args), input))
+            return types.SimpleNamespace(returncode=0, stdout="", stderr="")
+
+        r = mock.patch.object(tf_ci.subprocess, "run", run)
+        r.start()
+        self.addCleanup(r.stop)
+
+    def test_one_key_in_both_environments_and_box_env(self):
+        self.sinks(lambda: tf_ci.cmd_plan_key(False, {}))
+        envs = [a[a.index("--env") + 1] for a, _ in self.set]
+        self.assertEqual(envs, ["andara-prod-plan", "andara-prod-apply"])
+        keys = {inp for _, inp in self.set}
+        self.assertEqual(len(keys), 1)
+        key = keys.pop()
+        self.assertTrue(all(key not in " ".join(a) for a, _ in self.set), "the key is never an argument")
+        with open(self.box) as f:
+            text = f.read()
+        self.assertIn("GRAFANA_SOLO7DEV_READ_TOKEN=keep\n", text)
+        self.assertIn("TF_PLAN_KEY_PROD=" + key, text)
+        self.assertEqual(os.stat(self.box).st_mode & 0o777, 0o600)
+
+    def test_an_existing_key_is_kept_unless_rotate(self):
+        with open(self.box, "a") as f:
+            f.write("export TF_PLAN_KEY_PROD=old\n")
+        result, _ = self.sinks(lambda: tf_ci.cmd_plan_key(False, {}))
+        self.assertIsInstance(result, tf.Exit)
+        self.assertEqual(self.set, [])
+        self.sinks(lambda: tf_ci.cmd_plan_key(True, {}))
+        with open(self.box) as f:
+            text = f.read()
+        self.assertNotIn("TF_PLAN_KEY_PROD=old", text)
+        self.assertEqual(text.count("TF_PLAN_KEY_PROD="), 1)
+
+
 class Misc(Base):
 
     def test_pr_plan_refuses_the_irm_root(self):

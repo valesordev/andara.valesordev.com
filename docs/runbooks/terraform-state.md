@@ -97,6 +97,52 @@ make tf-apply STACK=solo7dev          # plan, apply that plan, then a second pla
 `tf-apply` prints `tf: plan: N to add, N to change, N to destroy`. With nothing to change it prints
 `0 to add, 0 to change, 0 to destroy` and applies nothing.
 
+## CI: the `terraform` workflow
+
+`.github/workflows/terraform.yaml` (`AW-INF-068`, `ADR-0012` decision 5) is the only path for `solo7` and
+`solo7-irm`, and runs `solo7dev` on every merge:
+
+| Job | When | Environment | What it does |
+|---|---|---|---|
+| `plan` | pull request touching the roots, `alerts.yaml` or the dashboards | none | runs the base branch's `scripts/tf_policy.py` over the pull request's files, then plans `solo7dev` and `solo7` with read credentials; the plans are in the job summary |
+| `apply` | merge to `main` | `andara-main` | applies `solo7dev`, then a second plan that must be empty |
+| `plan-prod` | after `apply` | `andara-prod-plan` | plans `solo7-irm` then `solo7`, uploads both encrypted with `TF_PLAN_KEY_PROD` (one-day artifact), prints each plan's sha256 |
+| `apply-prod` | after `plan-prod`, only when it found changes | `andara-prod-apply` (Brian approves) | refuses a plan whose commit is not `main`'s head, applies exactly the approved plans, checks that a second plan is empty, deletes the artifact |
+| `drift`, `drift-prod-irm` | daily, 06:23 UTC | none / `andara-prod-plan` | opens or updates the issue labelled `drift:<root>` on drift or on any failure of the job |
+
+The `solo7-irm` root's summaries, logs and drift issue carry resource addresses and actions only, because
+the provider prints the IRM integration URL in clear.
+
+**Setting it up (once, by Brian).** Run these after `make tf-bootstrap-gcp`, which sets the repository variables:
+
+```
+make tf-ci-environments APPLY=1   # andara-main, andara-prod-plan, andara-prod-apply: main only; Brian reviews prod-apply
+make tf-plan-key                  # TF_PLAN_KEY_PROD in both prod environments and .local/box.env
+make tf-ci-environments           # lists every secret still missing, with the gh secret set line for each
+```
+
+Paste each token the report names with the `gh secret set` line it prints. `gh` prompts for the value, so
+it never reaches your shell history. Where each token comes from is `grafana-credentials.md` (`AW-INF-076`). The
+report exits 0 once nothing is missing. `make tf-plan-key ROTATE=1` replaces the key; an artifact
+encrypted with the old key can then no longer be applied, so re-run `plan-prod`.
+
+**Approving a prod change.** `plan-prod`'s summary gives the counts, the `solo7` plan, the `solo7-irm`
+addresses and actions, and each plan's sha256. Read the full plans before approving:
+
+```
+make tf-plan-show RUN=<run id> STACK=solo7-irm
+make tf-plan-show RUN=<run id> STACK=solo7
+```
+
+It decrypts in memory (no plaintext file) and prints the same sha256. Approve `apply-prod` only when the
+sha256s match. A later merge to `main` makes the plan **superseded**: `apply-prod` refuses it, applies
+nothing, and deletes the artifact. The next `plan-prod`, from the newer merge, is the one to read and
+approve.
+
+**Drift.** An issue labelled `drift:<root>` means a managed resource was changed outside Terraform, or
+the drift job failed. The issue says which. Revert the hand edit in the UI, or make it in code and merge.
+For `solo7dev`, `make tf-drift STACK=solo7dev` re-checks from the dev box (exit 1 while it drifts).
+
 ## A held lock
 
 A run that finds the state locked fails at once (exit 1) and changes nothing:
@@ -119,9 +165,12 @@ tf: lock held: id=1760412345678901 who=brian@devbox
    resources from state.
 3. Re-run what failed.
 
-A `solo7` or `solo7-irm` lock is held by CI only; its jobs share one concurrency group, so a stale one
-means a cancelled job. The dev box cannot release it (`make tf-unlock` refuses those roots outside GitHub
-Actions, and the dev box identity cannot write their prefixes); releasing it is `AW-INF-068`'s workflow.
+A `solo7` or `solo7-irm` lock is held by CI only, and only by `apply-prod`: `plan-prod` and
+`drift-prod-irm` take no lock. The prod jobs share one concurrency group, so a stale lock means a cancelled
+`apply-prod`. The dev box cannot release it (`make tf-unlock` refuses those roots outside GitHub Actions,
+and the dev box identity cannot write their prefixes). A workflow job to release it is not built yet
+(issue #587); until it is, the owner releases it as the GCP project owner in the console, by deleting
+`grafana/<root>/default.tflock` from the `andara-tfstate` bucket, once no run is going.
 
 ## A failed apply
 
