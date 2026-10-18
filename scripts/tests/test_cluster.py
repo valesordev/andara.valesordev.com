@@ -88,9 +88,12 @@ class Kind:
     """bin/kind and bin/kubectl as cluster.run sees them: which clusters exist, the user's kubeconfig
     (its current-context and entries), and every call."""
 
-    def __init__(self, clusters=("solo7",), current="kind-solo7", fail_create=False):
+    def __init__(self, clusters=("solo7",), current="kind-solo7", fail_create=False, context=None):
         self.clusters, self.current, self.calls = list(clusters), current, []
         self.entries, self.fail_create = {}, fail_create
+        # Whether the user's kubeconfig has kind-andara: by default, exactly when the cluster exists.
+        if context if context is not None else "andara" in self.clusters:
+            self.entries["contexts.kind-andara.cluster"] = "kind-andara"
 
     def run(self, *cmd, check=True):
         tool, args = os.path.basename(cmd[0]), cmd[1:]
@@ -109,6 +112,11 @@ class Kind:
             self.clusters.append(args[args.index("--name") + 1])
         elif tool == "kind" and args[:2] == ("delete", "cluster"):
             self.clusters.remove(args[args.index("--name") + 1])
+        elif tool == "kind" and args[:2] == ("get", "kubeconfig"):
+            out = yaml.safe_dump(KUBECONFIG)
+        elif tool == "kubectl" and args[:2] == ("config", "get-contexts"):
+            if "contexts.kind-andara.cluster" not in self.entries:
+                return types.SimpleNamespace(returncode=1, stdout="", stderr='error: context kind-andara not found')
         elif tool == "kubectl" and args[:2] == ("config", "use-context"):
             self.current = args[2]
         elif tool == "kubectl" and args[:2] == ("config", "set"):
@@ -183,7 +191,29 @@ class Up(Base):
         k = self.fake(Kind(clusters=("solo7", "andara")))
         cluster.up(self.run_, self.free_ports())
         self.assertEqual(k.made("create"), [])
+        self.assertEqual(k.made("config", "set"), [])
         self.assertIn("andara exists; nothing to do", self.out)
+
+    def test_a_rerun_adds_a_missing_context_without_moving_current(self):
+        """A first run that created the cluster and then failed left no kind-andara context."""
+        k = self.fake(Kind(clusters=("solo7", "andara"), context=False))
+        cluster.up(self.run_, self.free_ports())
+        self.assertEqual(k.made("create"), [])
+        self.assertEqual(k.entries["users.kind-andara.client-key-data"], "S0VZ")
+        self.assertEqual(k.current, "kind-solo7")
+        self.assertIn("andara exists; context kind-andara was missing, added; current-context unchanged", self.out)
+
+    def test_an_incomplete_kind_kubeconfig_is_refused(self):
+        d = tempfile.mkdtemp()
+        self.addCleanup(shutil.rmtree, d)
+        path = os.path.join(d, "kubeconfig")
+        with open(path, "w") as f:
+            yaml.safe_dump(dict(KUBECONFIG, users=[]), f)
+        k = self.fake(Kind())
+        with self.assertRaises(cluster.Failed) as e:
+            cluster.merge_kubeconfig("bin/kubectl", path)
+        self.assertIn("['users']", str(e.exception))
+        self.assertEqual(k.made("config", "set"), [])
 
     def test_a_port_in_time_wait_is_free(self):
         """After a rebuild's delete, nginx's closed keep-alives to 8080/8443 sit in TIME_WAIT on

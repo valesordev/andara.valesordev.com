@@ -173,7 +173,17 @@ def merge_kubeconfig(kubectl, path):
 def up(r, ports=None):
     kind, kubectl = prerequisites()
     if NAME in clusters(kind):
-        r.say("%s exists; nothing to do" % NAME)
+        if run(kubectl, "config", "get-contexts", CONTEXT, check=False).returncode == 0:
+            r.say("%s exists; nothing to do" % NAME)
+        else:
+            # A first run that created the cluster and failed before the merge. `kind export
+            # kubeconfig` would make the context current; `kind get kubeconfig` only prints it.
+            with tempfile.TemporaryDirectory() as tmp:
+                own = os.path.join(tmp, "kubeconfig")
+                with open(own, "w") as f:
+                    f.write(run(kind, "get", "kubeconfig", "--name", NAME).stdout)
+                merge_kubeconfig(kubectl, own)
+            r.say("%s exists; context %s was missing, added; current-context unchanged" % (NAME, CONTEXT))
         r.say("ready context=%s" % CONTEXT)
         return
     check_ports(ports)
