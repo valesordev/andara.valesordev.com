@@ -34,6 +34,7 @@ import shutil
 import socket
 import subprocess
 import sys
+import tempfile
 import time
 import uuid
 
@@ -117,8 +118,11 @@ def check_confirm(confirm):
 
 
 def port_in_use(port):
-    """True if something holds 127.0.0.1:port: a bind there fails, or a connect succeeds."""
+    """True if something holds 127.0.0.1:port: a bind there fails, or a connect succeeds.
+    SO_REUSEADDR, as docker-proxy binds, so a connection in TIME_WAIT (nginx's keep-alives to the
+    cluster a rebuild just deleted) doesn't count; a listener still does."""
     s = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+    s.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
     try:
         s.bind(("127.0.0.1", port))
     except OSError:
@@ -150,9 +154,20 @@ def node_image():
     return image
 
 
-def current_context(kubectl):
-    p = run(kubectl, "config", "current-context", check=False)
-    return p.stdout.strip() if p.returncode == 0 else ""
+def merge_kubeconfig(kubectl, path):
+    """Copy kind-andara's cluster, user and context from kind's kubeconfig at path into the user's,
+    with `kubectl config set`, which never changes current-context."""
+    with open(path) as f:
+        cfg = yaml.safe_load(f) or {}
+    entry = lambda kind: next((e[kind[:-1]] for e in cfg.get(kind) or [] if e.get("name") == CONTEXT), None)
+    found = {"clusters": entry("clusters"), "users": entry("users"), "contexts": entry("contexts")}
+    if not all(found.values()):
+        raise Failed("kind's kubeconfig has no complete %s entry: %s" % (CONTEXT, sorted(k for k, v in found.items() if not v)))
+    for kind, fields in (("clusters", ("server", "certificate-authority-data")),
+                         ("users", ("client-certificate-data", "client-key-data")),
+                         ("contexts", ("cluster", "user"))):
+        for field in fields:
+            run(kubectl, "config", "set", "%s.%s.%s" % (kind, CONTEXT, field), str(found[kind][field]))
 
 
 def up(r, ports=None):
@@ -163,12 +178,17 @@ def up(r, ports=None):
         return
     check_ports(ports)
     image = node_image()
-    before = current_context(kubectl)
     r.say("create %s image=%s config=%s" % (NAME, image, os.path.relpath(CONFIG, REPO)))
-    run(kind, "create", "cluster", "--name", NAME, "--config", CONFIG, "--image", image, "--wait", WAIT)
-    if before and before != CONTEXT:
-        run(kubectl, "config", "use-context", before)
-        r.say("current-context left at %s" % before)
+    # kind writes its context to a kubeconfig of its own, not the user's: kind would make it current
+    # there for the whole create, and leave current-context empty if the create failed. The entries
+    # are copied over once the cluster exists, and the user's current-context never moves.
+    with tempfile.TemporaryDirectory() as tmp:
+        own = os.path.join(tmp, "kubeconfig")
+        run(kind, "create", "cluster", "--name", NAME, "--config", CONFIG, "--image", image,
+            "--wait", WAIT, "--kubeconfig", own)
+        merge_kubeconfig(kubectl, own)
+    r.say("context %s added; current-context unchanged" % CONTEXT)
+    run(kubectl, "--context", CONTEXT, "wait", "--for=condition=Ready", "nodes", "--all", "--timeout=" + WAIT)
     nodes = run(kubectl, "--context", CONTEXT, "get", "nodes", "--no-headers").stdout
     rows = [line.split() for line in nodes.splitlines() if line.strip()]
     r.say("nodes %d/%d Ready" % (sum(1 for row in rows if len(row) > 1 and row[1] == "Ready"), len(rows)))
@@ -179,7 +199,7 @@ def down(r, confirm):
     check_confirm(confirm)
     kind, _ = prerequisites()
     if NAME not in clusters(kind):
-        r.say("no cluster %s; nothing to delete" % NAME)
+        r.say("no cluster %s; nothing to delete context=%s" % (NAME, CONTEXT))
         return
     r.say("delete %s" % NAME)
     run(kind, "delete", "cluster", "--name", NAME)
@@ -224,11 +244,11 @@ def kind_cluster(name, kind="kind"):
 
 def main(argv):
     cmd, args = (argv[0], argv[1:]) if argv else ("", [])
+    r = Run()
     try:
         if cmd == "kind-cluster" and len(args) <= 2:
             print(kind_cluster(args[0] if args else "", *(args[1:] or ["kind"])))
             return 0
-        r = Run()
         if cmd == "up" and not args:
             up(r)
         elif cmd == "down" and len(args) <= 1:
@@ -238,7 +258,7 @@ def main(argv):
         else:
             raise Usage("usage: scripts/cluster.py up | down CONFIRM | rebuild CONFIRM | kind-cluster [NAME [KIND]]")
     except (Failed, Usage, Missing) as e:
-        print("cluster: " + str(e), file=sys.stderr)
+        print("cluster: %s run=%s" % (e, r.id), file=sys.stderr)
         return e.code
     return 0
 

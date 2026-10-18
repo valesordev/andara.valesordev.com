@@ -51,6 +51,15 @@ class Shape(unittest.TestCase):
     def test_node_image_is_pinned_by_tag_and_digest(self):
         self.assertRegex(cluster.node_image(), r"^kindest/node:v1\.\d+\.\d+@sha256:[0-9a-f]{64}$")
 
+    def test_a_node_image_without_a_digest_is_refused(self):
+        d = tempfile.mkdtemp()
+        self.addCleanup(shutil.rmtree, d)
+        path = os.path.join(d, "versions.yaml")
+        with open(path, "w") as f:
+            f.write("kind:\n  nodeImage: kindest/node:v1.36.4\n")
+        with mock.patch.object(cluster, "VERSIONS", path), self.assertRaises(cluster.Failed):
+            cluster.node_image()
+
     def test_kubectl_is_within_one_minor_of_the_node_image(self):
         with open(os.path.join(REPO, "scripts", "bootstrap.sh")) as f:
             pins = dict(line.split("=", 1) for line in f if line.startswith(("KIND_VERSION=", "KUBECTL_VERSION=")))
@@ -66,11 +75,22 @@ class Shape(unittest.TestCase):
         self.assertEqual([m["hostPort"] for m in c["nodes"][0]["extraPortMappings"]], [80, 443])
 
 
-class Kind:
-    """bin/kind and bin/kubectl as cluster.run sees them: which clusters exist, and every call."""
+KUBECONFIG = {
+    "apiVersion": "v1", "kind": "Config", "current-context": "kind-andara",
+    "clusters": [{"name": "kind-andara", "cluster": {"server": "https://127.0.0.1:41234",
+                                                      "certificate-authority-data": "Q0E="}}],
+    "users": [{"name": "kind-andara", "user": {"client-certificate-data": "Q0VSVA==", "client-key-data": "S0VZ"}}],
+    "contexts": [{"name": "kind-andara", "context": {"cluster": "kind-andara", "user": "kind-andara"}}],
+}
 
-    def __init__(self, clusters=("solo7",), current="kind-solo7"):
+
+class Kind:
+    """bin/kind and bin/kubectl as cluster.run sees them: which clusters exist, the user's kubeconfig
+    (its current-context and entries), and every call."""
+
+    def __init__(self, clusters=("solo7",), current="kind-solo7", fail_create=False):
         self.clusters, self.current, self.calls = list(clusters), current, []
+        self.entries, self.fail_create = {}, fail_create
 
     def run(self, *cmd, check=True):
         tool, args = os.path.basename(cmd[0]), cmd[1:]
@@ -79,14 +99,20 @@ class Kind:
         if tool == "kind" and args[:2] == ("get", "clusters"):
             out = "\n".join(self.clusters) + "\n"
         elif tool == "kind" and args[:2] == ("create", "cluster"):
+            if "--kubeconfig" in args:
+                with open(args[args.index("--kubeconfig") + 1], "w") as f:
+                    yaml.safe_dump(KUBECONFIG, f)
+            else:
+                self.current = "kind-andara"  # what kind does to the default kubeconfig
+            if self.fail_create:
+                raise cluster.Failed("kind create failed: node never became Ready")
             self.clusters.append(args[args.index("--name") + 1])
-            self.current = "kind-andara"
         elif tool == "kind" and args[:2] == ("delete", "cluster"):
             self.clusters.remove(args[args.index("--name") + 1])
-        elif tool == "kubectl" and args[:2] == ("config", "current-context"):
-            out = self.current
         elif tool == "kubectl" and args[:2] == ("config", "use-context"):
             self.current = args[2]
+        elif tool == "kubectl" and args[:2] == ("config", "set"):
+            self.entries[args[2]] = args[3]
         elif tool == "kubectl" and "nodes" in args:
             out = "andara-control-plane Ready control-plane 1m v1.36.4\n" + \
                   "".join("andara-worker%s Ready <none> 1m v1.36.4\n" % s for s in ("", "2", "3"))
@@ -131,15 +157,49 @@ class Up(Base):
         self.assertEqual(create[create.index("--name") + 1], "andara")
         self.assertEqual(create[create.index("--config") + 1], cluster.CONFIG)
         self.assertEqual(create[create.index("--image") + 1], cluster.node_image())
-        self.assertEqual(k.current, "kind-solo7", "kind's switch to kind-andara is undone")
+        self.assertEqual(k.current, "kind-solo7", "the current-context never moves, not even during the create")
+        self.assertEqual(k.made("use-context"), [])
+        self.assertNotEqual(create[create.index("--kubeconfig") + 1], os.path.expanduser("~/.kube/config"))
+        self.assertEqual(k.entries, {
+            "clusters.kind-andara.server": "https://127.0.0.1:41234",
+            "clusters.kind-andara.certificate-authority-data": "Q0E=",
+            "users.kind-andara.client-certificate-data": "Q0VSVA==",
+            "users.kind-andara.client-key-data": "S0VZ",
+            "contexts.kind-andara.cluster": "kind-andara",
+            "contexts.kind-andara.user": "kind-andara",
+        })
+        self.assertTrue(k.made("wait", "--for=condition=Ready", "nodes", "--all"), "every node is waited for")
         self.assertIn("nodes 4/4 Ready", self.out)
         self.assertEqual(self.out[-1], "ready context=kind-andara")
+
+    def test_a_failed_create_leaves_the_kubeconfig_alone(self):
+        k = self.fake(Kind(fail_create=True))
+        with self.assertRaises(cluster.Failed):
+            cluster.up(self.run_, self.free_ports())
+        self.assertEqual(k.current, "kind-solo7")
+        self.assertEqual(k.entries, {})
 
     def test_a_second_run_changes_nothing(self):
         k = self.fake(Kind(clusters=("solo7", "andara")))
         cluster.up(self.run_, self.free_ports())
         self.assertEqual(k.made("create"), [])
         self.assertIn("andara exists; nothing to do", self.out)
+
+    def test_a_port_in_time_wait_is_free(self):
+        """After a rebuild's delete, nginx's closed keep-alives to 8080/8443 sit in TIME_WAIT on
+        docker-proxy's side; that's not in use. docker-proxy is Go, which sets SO_REUSEADDR on its
+        listeners, and Linux lets a bind reuse a TIME_WAIT port only when both sockets set it."""
+        listener = socket.socket()
+        listener.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
+        listener.bind(("127.0.0.1", 0))
+        listener.listen(1)
+        port = listener.getsockname()[1]
+        client = socket.create_connection(("127.0.0.1", port))
+        server, _ = listener.accept()
+        server.close()  # the side that closes first holds TIME_WAIT on the port
+        client.close()
+        listener.close()
+        self.assertFalse(cluster.port_in_use(port))
 
     def test_a_port_in_use_fails_before_kind_naming_the_variable(self):
         k = self.fake(Kind())
@@ -182,7 +242,7 @@ class Down(Base):
         k = self.fake(Kind())
         cluster.down(self.run_, "andara")
         self.assertEqual(k.made("delete"), [])
-        self.assertIn("no cluster andara; nothing to delete", self.out)
+        self.assertIn("no cluster andara; nothing to delete context=kind-andara", self.out)
 
 
 class Rebuild(Base):
@@ -312,8 +372,9 @@ class KindCluster(unittest.TestCase):
         os.chmod(self.kind, 0o755)
 
     def make(self, target, *args):
+        env = {k: v for k, v in os.environ.items() if k != "KIND_CLUSTER"}
         return subprocess.run(["make", "-s", "-C", REPO, target, "KIND=" + self.kind, *args],
-                              capture_output=True, text=True)
+                              capture_output=True, text=True, env=env)
 
     def calls(self):
         if not os.path.exists(self.log):

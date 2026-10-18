@@ -73,7 +73,9 @@ def kubectl(context, *args, stdin=None):
 
 
 def not_found(p):
-    return p.returncode != 0 and ("NotFound" in p.stderr or "not found" in p.stderr)
+    """The API server's NotFound, and nothing else: a missing credential plugin says "not found" too,
+    and counting that as absent would let a rebuild delete a Secret it never exported."""
+    return p.returncode != 0 and "Error from server (NotFound)" in p.stderr
 
 
 def cert_facts(secret):

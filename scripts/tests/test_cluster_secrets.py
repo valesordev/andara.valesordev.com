@@ -163,6 +163,16 @@ class Export(Base):
             self.export()
         self.assertIn("only NotFound counts as absent", str(e.exception))
 
+    def test_a_not_found_that_is_not_the_api_servers_fails(self):
+        """A missing credential plugin says "not found" too; only the API server's NotFound is absent."""
+        c = self.use(Cluster())
+        plugin = types.SimpleNamespace(returncode=1, stdout="", stderr=(
+            "Unable to connect to the server: getting credentials: exec: executable kubelogin not found"))
+        with mock.patch.object(cluster_secrets, "kubectl", lambda *a, **k: plugin), \
+                self.assertRaises(cluster_secrets.Failed):
+            self.export()
+        self.assertEqual(c.calls, [])
+
     def test_the_context_is_kind_andara(self):
         c = self.use(Cluster())
         self.export()
