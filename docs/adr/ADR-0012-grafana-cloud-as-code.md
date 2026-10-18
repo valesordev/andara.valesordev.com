@@ -1000,7 +1000,8 @@ service and a blast radius: a bad pipeline can blind a stack until the next appl
   construct the allow-list wrongly admits, would pass it. Apply tokens and the IRM token are never reachable
   from it. The residual: a leaked webhook posts to a channel; a false page needs the IRM URL, which only the two
   prod environments and Brian can read.
-- **Two stacks, three states, and fourteen secrets** (decision 4, including Fleet Management's four) to rotate at least every 90 days, fewer than
+- **Two stacks, three states, and fourteen secrets** (decision 4, including Fleet Management's four; the eleven
+  that expire are rotated at least every 90 days, see Amendments 2026-10-17), fewer than
   the drafts because `gcx` and Terraform's plan share one read token per stack. `tf-credentials-check` makes
   that a notice and not a surprise, and it is still Brian's chore.
 - **There is no local rule evaluator.** A rule edit is verified by the expression tests and by loading in
@@ -1156,7 +1157,11 @@ backend, and freezing the ruler during the conversion.
   to step 4(v).
 - **Expiry windows are per credential** (decision 4, Rotation). `credentials.yaml` entries take an optional
   `warn_days` (default 14), and the telemetry tokens carry 30: a lapsed telemetry token blinds every SLO at
-  once. Credentials with no expiry (the Slack webhooks, `TF_PLAN_KEY_PROD`) have no entry.
+  once. Of the fourteen secrets in Consequences, the eleven Grafana tokens expire (at most 90 days) and are the
+  entries `tf-credentials-check` watches. The other three have no expiry date, so they have no entry and no
+  scheduled notice: the two Slack webhooks and `TF_PLAN_KEY_PROD`. They are rotated by the runbook's rotation
+  step when a leak is suspected, and `TF_PLAN_KEY_PROD` also when someone who could read it no longer should.
+  Consequences' "fourteen secrets … to rotate at least every 90 days" reads as these eleven.
 - **Drift issues are labelled `drift:<root>`** (decision 5), and a failed run of a drift job opens or updates
   the same issue, because a failed scheduled run notifies only whoever last edited the workflow.
 
