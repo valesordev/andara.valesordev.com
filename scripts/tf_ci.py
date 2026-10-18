@@ -458,7 +458,7 @@ def cmd_drift(root, issue, env):
     except tf.Exit as e:
         if issue and e.code != 2:
             drift_issue(root, "Terraform drift job failed: %s" % root,
-                        "The drift job for `%s` failed before it could compare: %s\n\nRun: %s\n"
+                        "The drift job for `%s` failed before it could report: %s\n\nRun: %s\n"
                         % (root, "credential unset" if e.code == 3 else e.msg, run_url(env)))
         raise
     if moved:

@@ -287,11 +287,14 @@ class Drift(Base):
     def test_an_apply_in_progress_makes_it_inconclusive(self):
         for status in ("queued", "in_progress", "requested", "pending"):
             with self.subTest(status=status):
+                if os.path.exists(self.summary):
+                    os.remove(self.summary)  # each case reads its own summary
                 self.fake(plan_rc=2)
                 calls = self.runs_gh(runs=[self.run_(status=status)])
                 result, text = self.sinks(lambda: tf_ci.cmd_drift("solo7", True, self.env))
                 self.assertEqual(result, 0)
                 self.assertIn("inconclusive", text)
+                self.assertIn("### drift solo7: inconclusive", text, "the job summary says so")
                 self.assertEqual(self.issue_calls(calls), [])
 
     def test_a_clean_check_during_an_apply_does_not_close_the_issue(self):
@@ -309,15 +312,42 @@ class Drift(Base):
         self.assertIn("inconclusive", text)
 
     def test_a_rerun_that_started_during_the_plan(self):
-        """A re-run keeps its old createdAt; its startedAt or updatedAt moves."""
-        for field in ("started", "updated"):
-            with self.subTest(field=field):
+        """A re-run keeps its old createdAt; its startedAt or updatedAt moves. Each on its own."""
+        for started, updated in (("2999-01-01T00:00:00Z", "2000-01-01T00:00:00Z"),
+                                 ("2000-01-01T00:00:00Z", "2999-01-01T00:00:00Z")):
+            with self.subTest(started=started, updated=updated):
                 self.fake(plan_rc=2)
-                run = self.run_(**{field: "2999-01-01T00:00:00Z"})
-                calls = self.runs_gh(runs=[run])
+                calls = self.runs_gh(runs=[self.run_(started=started, updated=updated)])
                 result, text = self.sinks(lambda: tf_ci.cmd_drift("solo7", True, self.env))
                 self.assertIn("inconclusive", text)
                 self.assertEqual(self.issue_calls(calls), [])
+
+    def test_the_time_window(self):
+        """started is taken before the plan; a minute of slack before it counts; the boundary is inclusive."""
+        T = 1800000000
+        for offset, overlaps in ((300, True), (-30, True), (-60, True), (-61, False), (-120, False)):
+            with self.subTest(offset=offset):
+                if os.path.exists(self.summary):
+                    os.remove(self.summary)  # the summary accumulates; each case reads its own
+                clock = [float(T)]
+                t = self.fake(plan_rc=2)
+                real = t.run
+
+                def run(args, cwd, env, capture=False, pass_fds=(), real=real, clock=clock):
+                    if args[0] == "plan":
+                        clock[0] += 600  # the plan takes ten minutes
+                    return real(args, cwd, env, capture, pass_fds)
+
+                p = mock.patch.object(tf, "run", run)
+                p.start()
+                c = mock.patch.object(tf_ci.time, "time", lambda clock=clock: clock[0])
+                c.start()
+                when = tf_ci.iso(T + offset)
+                self.runs_gh(runs=[self.run_(started=when, updated=when)])
+                result, text = self.sinks(lambda: tf_ci.cmd_drift("solo7", True, self.env))
+                c.stop()
+                p.stop()
+                self.assertEqual("inconclusive" in text, overlaps, text)
 
     def test_a_run_awaiting_approval_does_not_block_the_check(self):
         """An apply-prod awaiting Brian changes nothing; drift is still reported (AC-7)."""
@@ -362,7 +392,7 @@ class Drift(Base):
         self.assertEqual(result, 0)
         self.assertIn("closing issue #9 failed", text)
         self.assertFalse(any(c[:2] == ("issue", "comment") for c in calls))
-        self.assertNotIn("failed before it could compare", text)
+        self.assertNotIn("failed before it could report", text)
 
     def test_a_failed_issue_list_on_a_clean_check_is_a_warning(self):
         self.fake(plan_rc=0)

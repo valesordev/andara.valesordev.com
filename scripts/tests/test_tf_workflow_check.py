@@ -170,7 +170,7 @@ class Workflow(unittest.TestCase):
         self.broken("plan-prod", "concurrency")
 
     def test_drift_in_an_apply_group(self):
-        """In an apply's group, a drift leg could replace a pending apply; tf_ci.py waits out applies instead."""
+        """In an apply's group, a drift leg could replace a pending apply; tf_ci.py checks for an overlapping apply instead."""
         self.w["jobs"]["drift"]["concurrency"] = {
             "group": "${{ matrix.stack == 'solo7' && 'terraform-prod' || 'terraform-apply' }}", "cancel-in-progress": False}
         self.broken("drift", "concurrency")
