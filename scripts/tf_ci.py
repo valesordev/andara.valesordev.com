@@ -10,7 +10,6 @@
     scripts/tf_ci.py plan-prod  --out <dir> --commit <sha>
     scripts/tf_ci.py apply-prod --in <dir> --root <solo7-irm|solo7> --main-head <sha>
     scripts/tf_ci.py drift      --stack <root> [--issue]
-    scripts/tf_ci.py drift-issue --stack <root> --reason <text>
     scripts/tf_ci.py plan-show  --run <id> --stack <solo7|solo7-irm>
     scripts/tf_ci.py environments [--apply]                   what the workflow needs on GitHub, by name
     scripts/tf_ci.py plan-key [--rotate]                      make TF_PLAN_KEY_PROD: both prod environments and box.env
@@ -418,13 +417,6 @@ def cmd_drift(root, issue, env):
     raise tf.Exit(1, "drift in %s: %s" % (root, counts_line(pj)))
 
 
-def cmd_drift_issue(root, reason, env):
-    """A drift job that failed before tf_ci.py ran (checkout, bootstrap, auth) still opens the issue."""
-    drift_issue(root, "Terraform drift job failed: %s" % root,
-                "The drift job for `%s` failed: %s\n\nRun: %s\n" % (root, reason, run_url(env)))
-    return 0
-
-
 def cmd_plan_show(run, root, env):
     if not run:
         raise tf.Exit(2, "RUN is required: make tf-plan-show RUN=<run id> STACK=<solo7|solo7-irm>")
@@ -565,7 +557,7 @@ def cmd_plan_key(rotate, env):
 def main(argv, environ=None):
     p = argparse.ArgumentParser(prog="tf_ci.py")
     p.add_argument("cmd", choices=("claims", "pr-plan", "apply", "plan-prod", "apply-prod", "drift",
-                                   "drift-issue", "plan-show", "environments", "plan-key"))
+                                   "plan-show", "environments", "plan-key"))
     p.add_argument("--stack", default="")
     p.add_argument("--root", default="")
     p.add_argument("--tf-dir", default="")
@@ -574,7 +566,6 @@ def main(argv, environ=None):
     p.add_argument("--in", dest="src", default="")
     p.add_argument("--main-head", default="")
     p.add_argument("--run", default="")
-    p.add_argument("--reason", default="")
     p.add_argument("--issue", action="store_true")
     p.add_argument("--apply", action="store_true")
     p.add_argument("--rotate", action="store_true")
@@ -596,8 +587,6 @@ def main(argv, environ=None):
             return cmd_apply_prod(a.src, a.root, a.main_head, env)
         if a.cmd == "drift":
             return cmd_drift(a.stack, a.issue, env)
-        if a.cmd == "drift-issue":
-            return cmd_drift_issue(a.stack, a.reason, env)
         if a.cmd == "environments":
             return cmd_environments(a.apply, env)
         if a.cmd == "plan-key":

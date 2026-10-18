@@ -126,6 +126,12 @@ class Workflow(unittest.TestCase):
         checkout["with"]["ref"] = "${{ github.event.pull_request.head.sha }}"
         self.broken("plan", "pr-plan")
 
+    def test_a_failure_report_that_needs_the_checkout(self):
+        """A step that reports a failure may be reporting a failed checkout: it can't run repository files."""
+        fallback = step(self.w["jobs"]["drift"], "a failed drift job")
+        fallback["run"] = 'python3 scripts/tf_ci.py drift-issue --stack x --reason y'
+        self.broken("drift", "failure-report")
+
     def test_drift_reachable_by_dispatch(self):
         self.w["jobs"]["drift"]["if"] = "github.event_name == 'schedule' || github.event_name == 'workflow_dispatch'"
         self.broken("drift", "drift-auth")

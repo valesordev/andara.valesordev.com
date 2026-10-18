@@ -21,6 +21,7 @@ reads the workflow and fails on any job that breaks one of these rules, naming t
                      shared group; any of them cancelling a run in progress
   secrets-context    the whole secrets context (`toJSON(secrets)`, a bare `secrets`) anywhere
   drift-auth         a drift job that runs on anything but the schedule (the plan accounts trust no dispatch)
+  failure-report     a `failure()` step that runs a repository file: it may be reporting a failed checkout
 
 The credential rules cover the workflow-level and job-level `env` as well as each step's. The pull-request
 job's checkout must be the base branch: no `ref`, no `repository`.
@@ -99,6 +100,9 @@ def check(workflow):
         for i, step in enumerate(job.get("steps") or []):
             label = step.get("name") or step.get("uses") or "step %d" % (i + 1)
             tf_var_tokens(out, name, step.get("env"), label)
+            if "failure()" in str(step.get("if", "")) and re.search(r"scripts/|\bmake\b|\./", step.get("run") or ""):
+                out.append((name, "failure-report", "%s: a failure step may run after a failed checkout, so it "
+                                                    "uses gh --repo only, no repository file" % label))
             script = step.get("run") or ""
             if re.search(r"(^|\s)-var(-file)?[=\s]", script) or "TF_VAR_" in script:
                 out.append((name, "token-as-variable", "%s: -var or TF_VAR_ in a script" % label))

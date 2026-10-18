@@ -316,14 +316,25 @@ jobs:
           TF_CI_WEBHOOK: ${{ secrets[matrix.webhook] }}
         run: python3 scripts/tf_ci.py drift --stack "${{ matrix.stack }}" --issue
       # A failure before the drift step (checkout, bootstrap, auth) still opens the issue; the drift
-      # step opens it itself for anything it hits.
+      # step opens it itself for anything it hits. gh --repo only: after a failed checkout there are
+      # no repository files to run (make tf-workflow-check, failure-report).
       - name: a failed drift job opens the issue
         if: failure() && steps.drift.outcome != 'failure'
         env:
           GH_TOKEN: ${{ github.token }}
-        run: >-
-          python3 scripts/tf_ci.py drift-issue --stack "${{ matrix.stack }}"
-          --reason "a step before the drift check failed"
+          ROOT: ${{ matrix.stack }}
+        run: |
+          label="drift:$ROOT"
+          repo="$GITHUB_REPOSITORY"
+          body="The drift job for \`$ROOT\` failed before the drift check could run (checkout, bootstrap or auth). Run: $GITHUB_SERVER_URL/$repo/actions/runs/$GITHUB_RUN_ID"
+          gh label create "$label" --repo "$repo" --color B60205 --force \
+            --description "Terraform drift or a failed drift job for $ROOT (AW-INF-068)" >/dev/null
+          n="$(gh issue list --repo "$repo" --label "$label" --state open --json number --jq '.[0].number // empty')"
+          if [ -n "$n" ]; then
+            gh issue comment "$n" --repo "$repo" --body "$body"
+          else
+            gh issue create --repo "$repo" --title "Terraform drift job failed: $ROOT" --label "$label" --body "$body"
+          fi
 
   drift-prod-irm:
     if: github.event_name == 'schedule'
@@ -366,4 +377,16 @@ jobs:
         if: failure() && steps.drift.outcome != 'failure'
         env:
           GH_TOKEN: ${{ github.token }}
-        run: python3 scripts/tf_ci.py drift-issue --stack solo7-irm --reason "a step before the drift check failed"
+          ROOT: solo7-irm
+        run: |
+          label="drift:$ROOT"
+          repo="$GITHUB_REPOSITORY"
+          body="The drift job for \`$ROOT\` failed before the drift check could run (checkout, bootstrap or auth). Run: $GITHUB_SERVER_URL/$repo/actions/runs/$GITHUB_RUN_ID"
+          gh label create "$label" --repo "$repo" --color B60205 --force \
+            --description "Terraform drift or a failed drift job for $ROOT (AW-INF-068)" >/dev/null
+          n="$(gh issue list --repo "$repo" --label "$label" --state open --json number --jq '.[0].number // empty')"
+          if [ -n "$n" ]; then
+            gh issue comment "$n" --repo "$repo" --body "$body"
+          else
+            gh issue create --repo "$repo" --title "Terraform drift job failed: $ROOT" --label "$label" --body "$body"
+          fi
