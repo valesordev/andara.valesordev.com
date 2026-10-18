@@ -18,6 +18,36 @@ a gap in your setup.
 `make help` lists every target. Every workflow in this repo is a target — a documented sequence of
 shell commands that is not a target is a defect.
 
+## Cluster
+
+`dev`, and `local` once AW-INF-060 lands, run on one kind cluster that belongs to this repo:
+cluster `andara`, kubeconfig context `kind-andara`, defined by `deploy/kind/cluster.yaml` with the
+node image pinned in `deploy/platform/versions.yaml` (ADR-0013). It has one control plane and three
+workers.
+
+```
+make bootstrap                        # bin/kind and bin/kubectl, pinned and checksum-verified
+make cluster-up                       # create it; a rerun only adds a missing kind-andara context
+make cluster-down CONFIRM=andara      # delete it, and no other cluster
+make cluster-rebuild CONFIRM=andara   # export the certificates, delete, create
+```
+
+The edge is published on loopback only: 80 as `127.0.0.1:8080` and 443 as `127.0.0.1:8443`. The
+workstation's nginx holds :80 and :443. `cluster-up` refuses while anything else holds 8080 or 8443
+(the compose stack's `ANDARA_HTTP_PORT` and `ANDARA_GRPC_PORT`); stop it with `make down` first.
+`cluster-up` leaves your current kubectl context where it was, so pass `--context kind-andara`.
+
+A rebuild deletes everything on the cluster. The two Secrets it keeps, `andara-dev/andara-edge-tls`
+(the dev edge certificate) and `cert-manager/andara-ca-tls` (the private CA root), are exported to
+`.local/tls/` first, mode 0600. That directory is gitignored, and `make clean` keeps it. A Secret
+the cluster doesn't have leaves its earlier export in place. If an export fails, the rebuild stops
+before deleting anything, and `.local/tls/` holds whatever the last good export wrote.
+`scripts/cluster_secrets.py restore` puts them back. Until `platform-up` (AW-INF-054) runs it, a
+rebuild ends by listing the steps it doesn't do yet.
+
+With more than one kind cluster, `make kind-load` and `make kind-platform` need
+`KIND_CLUSTER=<name>`.
+
 ## Where things are
 
 | Path | What |

@@ -1,0 +1,35 @@
+# The cluster `andara` (context kind-andara), this repo's alone (ADR-0013 decision 1). `make
+# cluster-up` creates it, `make cluster-down CONFIRM=andara` deletes it, and `make cluster-rebuild
+# CONFIRM=andara` does both (AW-INF-052).
+#
+# The control plane publishes the edge on loopback only, 80 as 8080 and 443 as 8443, because the
+# workstation nginx holds :80 and :443 on the same host (decision 11). Three workers, so Kafka's
+# required hostname anti-affinity can place three brokers.
+#
+# No `image:` here: the node image is pinned by tag and digest in deploy/platform/versions.yaml,
+# and cluster-up passes it to `kind create cluster --image`.
+#
+# deploy/kind/config.yaml is a different cluster: CI's single node, publishing 80 and 443.
+kind: Cluster
+apiVersion: kind.x-k8s.io/v1alpha4
+name: andara
+nodes:
+  - role: control-plane
+    kubeadmConfigPatches:
+      - |
+        kind: InitConfiguration
+        nodeRegistration:
+          kubeletExtraArgs:
+            node-labels: "ingress-ready=true"
+    extraPortMappings:
+      - containerPort: 80
+        hostPort: 8080
+        listenAddress: "127.0.0.1"
+        protocol: TCP
+      - containerPort: 443
+        hostPort: 8443
+        listenAddress: "127.0.0.1"
+        protocol: TCP
+  - role: worker
+  - role: worker
+  - role: worker

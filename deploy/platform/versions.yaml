@@ -1,0 +1,10 @@
+# Pinned versions of what runs the cluster `andara` (ADR-0013). `make cluster-up` reads the node
+# image; AW-INF-054 adds the platform's charts.
+#
+# The node image is one the pinned kind release (scripts/bootstrap.sh KIND_VERSION) lists as
+# pre-built for itself, by tag and digest: kind's release notes say the digest is what guarantees
+# an image built for that release. kubectl's minor stays within one of this image's Kubernetes
+# minor; bootstrap refuses otherwise.
+kind:
+  # kind v0.33.0 release notes, "Images pre-built for this release".
+  nodeImage: kindest/node:v1.36.4@sha256:099e049362a1526b2db71494e1947aae99bd16290d7c895f2b7ea312e3cbfaed
