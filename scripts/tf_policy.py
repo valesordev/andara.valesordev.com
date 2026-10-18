@@ -371,6 +371,8 @@ def kind_of(relpath):
     name = parts[-1]
     if ".terraform" in parts[:-1] or name == ".terraform":
         return "terraform-dir"
+    if "terraform.d" in parts[:-1] or name == "terraform.d":
+        return "plugin-dir"
     if name.endswith(".tfstate") or ".tfstate." in name:
         return "state"
     if name in (".terraformrc", "terraform.rc"):
@@ -443,6 +445,11 @@ def check_file_call(f, relpath, toks, k, head):
                      "the argument must be a string literal or \"${path.module}/<literal>\" or "
                      "\"${path.root}/<literal>\"; a computed path is refused")
             return
+    if "\\" in lit:
+        # Terraform decodes \uNNNN, \UNNNNNNNN, \n, \\ ...: a path the policy reads one way and Terraform
+        # another. No real call site needs an escape, so none is allowed.
+        f.refuse("file() path", relpath, line, "escape sequences are refused in a file() path: %r" % lit)
+        return
     if lit.startswith("/") or lit.startswith("~"):
         f.refuse("file() path", relpath, line, "absolute path %r" % lit)
         return
@@ -485,6 +492,9 @@ def local_module_source(f, relpath, block, allowed_prefix):
     value = literal(src.toks) if src else None
     if value is None:
         f.refuse("blocks", relpath, block.line, "module source must be a string literal")
+        return
+    if "\\" in value:
+        f.refuse("blocks", relpath, block.line, "escape sequences are refused in a module source: %r" % value)
         return
     if not (value.startswith("./") or value.startswith("../")):
         f.refuse("blocks", relpath, block.line, "module source %r is not a local path" % value)
@@ -722,6 +732,12 @@ def check(base, head):
             for name in dirnames + filenames:
                 if os.path.islink(os.path.join(dirpath, name)):
                     f.refuse("symlinks", rel(os.path.join(dirpath, name), head), 1, "symlinks are refused")
+            for name in dirnames + filenames:
+                # Only deploy/terraform is policed as configuration; a module or plugin anywhere else
+                # would be configuration nothing checked.
+                if name == "terraform.d" or kind_of(TF + "/x/" + name) not in ("data",):
+                    f.refuse("files", rel(os.path.join(dirpath, name), head), 1,
+                             "Terraform files outside deploy/terraform are refused")
     if not os.path.isdir(os.path.join(base, GRAFANA)):
         f.refuse("separate-merge", GRAFANA, 1, "the base branch has no %s to compare to; this change "
                  "merges on its own" % GRAFANA)
@@ -730,10 +746,11 @@ def check(base, head):
     parsed = {}
     for relpath in files:
         kind = kind_of(relpath)
-        if kind in ("terraform-dir", "state", "cli-config", "json-config", "override", "other-tfvars",
+        if kind in ("terraform-dir", "plugin-dir", "state", "cli-config", "json-config", "override", "other-tfvars",
                     "misplaced-test", "other-hcl"):
             f.refuse("files", relpath, 1, {
                 "terraform-dir": "a .terraform directory is refused",
+                "plugin-dir": "a terraform.d directory is refused: Terraform installs providers from it",
                 "state": "state files are refused",
                 "cli-config": "Terraform CLI configuration is refused",
                 "json-config": "JSON configuration is refused",
@@ -777,6 +794,11 @@ def check(base, head):
         check_expressions(f, relpath, items, head)
 
     base_files, _ = tree_files(base)
+    head_set = set(files)
+    for relpath in base_files:
+        if kind_of(relpath) == "lock" and relpath not in head_set:
+            # Without it, `init -lockfile=readonly` has no pins to hold the provider to.
+            f.refuse("files", relpath, 1, "the lock file was deleted; it pins grafana/grafana's hashes")
     base_parsed = {}
     for relpath in base_files:
         if kind_of(relpath) == "tf":

@@ -116,8 +116,28 @@ class Functions(Base):
         self.append(STACK_MODULE + "/main.tf", '\nlocals {\n  h = <<EOT\nline ${fileexists("/proc/self/environ")}\nEOT\n}\n')
         self.assertRefused("functions", STACK_MODULE + "/main.tf", detail="fileexists() is refused")
 
+    def test_escapes_in_a_file_path(self):
+        """Terraform decodes \\u002f and \\u002e; the policy must never see a path it doesn't decode."""
+        for arg in ('"\\u002fproc\\u002fself\\u002fenviron"',
+                    '"..\\u002f..\\u002f..\\u002f..\\u002f..\\u002f..\\u002f..\\u002fproc/self/environ"',
+                    '"${path.module}/\\u002e\\u002e/\\u002e\\u002e/\\u002e\\u002e/\\u002e\\u002e/\\u002e\\u002e/x"',
+                    '"\\U0000002fproc/self/environ"', '"a\\\\b"'):
+            with self.subTest(arg=arg):
+                self.write(STACK_MODULE + "/f.tf", 'locals {\n  x = file(%s)\n}\n' % arg)
+                self.assertRefused("file() path", STACK_MODULE + "/f.tf", 2, "escape")
+
+    def test_a_directive_in_a_heredoc(self):
+        self.append(STACK_MODULE + "/main.tf",
+                    '\nlocals {\n  h = <<EOT\n%{ if fileexists("/x") }yes%{ endif }\nEOT\n}\n')
+        self.assertRefused("functions", STACK_MODULE + "/main.tf", detail="fileexists() is refused")
+
     def test_each_refused_function(self):
-        for fn in sorted(tf_policy.REFUSED_FUNCTIONS):
+        # The list is written out here, not read from the module: dropping one from the script must fail.
+        expected = {"templatefile", "templatestring", "fileexists", "fileset", "filebase64", "filemd5", "filesha1",
+                    "filesha256", "filesha512", "filebase64sha256", "filebase64sha512", "abspath", "pathexpand",
+                    "nonsensitive"}
+        self.assertTrue(expected <= tf_policy.REFUSED_FUNCTIONS)
+        for fn in sorted(expected):
             with self.subTest(fn=fn):
                 path = G + "/modules/stack/%s.tf" % fn
                 self.write(path, 'locals {\n  x = %s("a")\n}\n' % fn)
@@ -174,6 +194,14 @@ class Blocks(Base):
     def test_a_remote_module(self):
         self.write(STACK_MODULE + "/m.tf", 'module "x" {\n  source = "git::https://example.com/x.git"\n}\n')
         self.assertRefused("blocks", STACK_MODULE + "/m.tf", 1, "not a local path")
+
+    def test_an_escaped_module_source(self):
+        self.write(SOLO7DEV + "/m.tf", 'module "e" {\n  source = "../../modules/m/\\u002e\\u002e/\\u002e\\u002e/\\u002e\\u002e/evil"\n}\n')
+        self.assertRefused("blocks", SOLO7DEV + "/m.tf", 1, "escape")
+
+    def test_an_escaped_run_module_source(self):
+        self.replace(TestFiles.TEST, 'source = "../../tests/route"', 'source = "../../tests/route\\u002f..\\u002f..\\u002fevil"')
+        self.assertRefused("test files", TestFiles.TEST, detail="run.module must be exactly")
 
     def test_a_module_outside_modules(self):
         self.write(SOLO7DEV + "/m.tf", 'module "x" {\n  source = "../../test-alert"\n}\n')
@@ -303,6 +331,23 @@ class Files(Base):
             text = f.read()
         self.write(lock, text.replace('version     = "4.47.0"', 'version     = "4.48.0"', 1))
         self.assertRefused("separate-merge", lock, 1, "provider version changed")
+
+    def test_a_deleted_lock_file(self):
+        os.remove(os.path.join(self.head, SOLO7DEV, ".terraform.lock.hcl"))
+        self.assertRefused("files", SOLO7DEV + "/.terraform.lock.hcl", 1, "deleted")
+
+    def test_a_committed_plugin_directory(self):
+        self.write(SOLO7DEV + "/terraform.d/plugins/registry.terraform.io/grafana/grafana/4.0.0/linux_amd64/x", "x\n")
+        self.assertRefused("files", SOLO7DEV + "/terraform.d/plugins/registry.terraform.io/grafana/grafana/4.0.0/linux_amd64/x",
+                           1, "terraform.d")
+
+    def test_terraform_files_outside_deploy_terraform(self):
+        for path in ("deploy/grafana/dashboards/evil/main.tf", "deploy/grafana/dashboards/x.tf.json",
+                     "deploy/grafana/dashboards/x.tfvars", "deploy/grafana/dashboards/x.hcl"):
+            with self.subTest(path=path):
+                self.write(path, 'resource "local_file" "x" {}\n')
+                self.assertRefused("files", path, 1, "outside deploy/terraform")
+                os.remove(os.path.join(self.head, path))
 
     def test_another_provider_in_the_lock_file(self):
         lock = SOLO7DEV + "/.terraform.lock.hcl"

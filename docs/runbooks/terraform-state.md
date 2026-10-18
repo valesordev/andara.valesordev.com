@@ -105,7 +105,7 @@ make tf-apply STACK=solo7dev          # plan, apply that plan, then a second pla
 | Job | When | Environment | What it does |
 |---|---|---|---|
 | `plan` | pull request touching the roots, `alerts.yaml` or the dashboards | none | runs the base branch's `scripts/tf_policy.py` over the pull request's files, then plans `solo7dev` and `solo7` with read credentials; the plans are in the job summary |
-| `apply` | merge to `main` | `andara-main` | applies `solo7dev`, then a second plan that must be empty |
+| `apply` | merge to `main`, or `make tf-replan` | `andara-main` | applies `solo7dev`, then a second plan that must be empty |
 | `plan-prod` | after `apply` | `andara-prod-plan` | plans `solo7-irm` then `solo7`, uploads both encrypted with `TF_PLAN_KEY_PROD` (one-day artifact), prints each plan's sha256 |
 | `apply-prod` | after `plan-prod`, only when it found changes | `andara-prod-apply` (Brian approves) | refuses a plan whose commit is not `main`'s head, applies exactly the approved plans, checks that a second plan is empty, deletes the artifact |
 | `drift`, `drift-prod-irm` | daily, 06:23 UTC | none / `andara-prod-plan` | opens or updates the issue labelled `drift:<root>` on drift or on any failure of the job |
@@ -136,8 +136,16 @@ make tf-plan-show RUN=<run id> STACK=solo7
 
 It decrypts in memory (no plaintext file) and prints the same sha256. Approve `apply-prod` only when the
 sha256s match. A later merge to `main` makes the plan **superseded**: `apply-prod` refuses it, applies
-nothing, and deletes the artifact. The next `plan-prod`, from the newer merge, is the one to read and
-approve.
+nothing, and deletes the artifact. If that merge touched the Terraform paths, its own run brings a new
+`plan-prod` to read and approve. If it didn't (server code, docs), nothing re-plans by itself. Run:
+
+```
+make tf-replan                    # the workflow on main: apply solo7dev, plan-prod and apply-prod for main's head
+```
+
+The same recovers a `plan-prod` that never ran. GitHub keeps one running and one pending job per
+concurrency group, and a third arrival (another merge, the daily `drift-prod-irm`) replaces the pending
+one. A replaced `plan-prod` shows as cancelled in the run list.
 
 **Drift.** An issue labelled `drift:<root>` means a managed resource was changed outside Terraform, or
 the drift job failed. The issue says which. Revert the hand edit in the UI, or make it in code and merge.

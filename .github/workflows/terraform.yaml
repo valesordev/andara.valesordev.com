@@ -9,6 +9,16 @@
 #                  plan, applies exactly the approved plans, then checks that a second plan is empty.
 #   drift          daily, solo7dev and solo7; drift-prod-irm daily, the IRM root, from andara-prod-plan.
 #                  Each opens or updates one issue labelled drift:<root>, on drift and on failure.
+#                  Schedule only: the plan accounts are bound to the `schedule` event, not a dispatch.
+#
+# A run started by hand on main (`make tf-replan`) runs apply, plan-prod and apply-prod for main's head.
+# That is how a superseded prod plan is replaced when the merge that moved main touched none of the
+# paths above.
+#
+# Concurrency: apply has its own group; plan-prod, apply-prod and drift-prod-irm share one, so a prod
+# plan never reads state mid-apply. Neither cancels a run in progress. GitHub keeps one running and one
+# pending job per group, though: a third arrival replaces the pending one. A replaced plan-prod is
+# recovered with `make tf-replan` (docs/runbooks/terraform-state.md).
 #
 # The property kept: a pull-request job never holds a credential that can change Grafana's
 # configuration or routing. Every Terraform call and every sink is in scripts/tf_ci.py; this file
@@ -104,7 +114,7 @@ jobs:
           --tf-dir "$RUNNER_TEMP/pr/deploy/terraform/grafana" --commit "${{ github.event.pull_request.head.sha }}"
 
   apply:
-    if: github.event_name == 'push'
+    if: github.event_name == 'push' || (github.event_name == 'workflow_dispatch' && github.ref == 'refs/heads/main')
     runs-on: ubuntu-latest
     timeout-minutes: 30
     environment: andara-main
@@ -141,7 +151,7 @@ jobs:
 
   plan-prod:
     needs: apply
-    if: github.event_name == 'push'
+    if: github.event_name == 'push' || (github.event_name == 'workflow_dispatch' && github.ref == 'refs/heads/main')
     runs-on: ubuntu-latest
     timeout-minutes: 30
     environment: andara-prod-plan
@@ -191,7 +201,7 @@ jobs:
 
   apply-prod:
     needs: plan-prod
-    if: github.event_name == 'push' && needs.plan-prod.outputs.changes == 'true'
+    if: needs.plan-prod.outputs.changes == 'true'
     runs-on: ubuntu-latest
     timeout-minutes: 30
     environment: andara-prod-apply
@@ -262,7 +272,7 @@ jobs:
           done
 
   drift:
-    if: github.event_name == 'schedule' || github.event_name == 'workflow_dispatch'
+    if: github.event_name == 'schedule'
     runs-on: ubuntu-latest
     timeout-minutes: 30
     permissions:
@@ -316,7 +326,7 @@ jobs:
           --reason "a step before the drift check failed"
 
   drift-prod-irm:
-    if: github.event_name == 'schedule' || github.event_name == 'workflow_dispatch'
+    if: github.event_name == 'schedule'
     runs-on: ubuntu-latest
     timeout-minutes: 30
     environment: andara-prod-plan

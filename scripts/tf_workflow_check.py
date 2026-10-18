@@ -19,6 +19,11 @@ reads the workflow and fails on any job that breaks one of these rules, naming t
                      FLEET_READ tokens, plan service account and webhook, or holding an environment
   concurrency        `apply` outside its own group, or plan-prod, apply-prod and drift-prod-irm outside one
                      shared group; any of them cancelling a run in progress
+  secrets-context    the whole secrets context (`toJSON(secrets)`, a bare `secrets`) anywhere
+  drift-auth         a drift job that runs on anything but the schedule (the plan accounts trust no dispatch)
+
+The credential rules cover the workflow-level and job-level `env` as well as each step's. The pull-request
+job's checkout must be the base branch: no `ref`, no `repository`.
 
 Exit: 0 clean · 1 a rule broken · 2 the workflow is missing or unreadable.
 """
@@ -59,22 +64,41 @@ def environment(job):
     return env.get("name") if isinstance(env, dict) else env
 
 
+BARE_SECRETS = re.compile(r"\bsecrets\b(?![.\[])")
+
+
+def env_rules(out, name, env_name, obj, label):
+    """The credential rules over one object (a job, or the workflow's own env)."""
+    for kind, ref in sorted(refs(obj)):
+        if PROD_ONLY.search(ref) and env_name not in PROD_ENVS:
+            out.append((name, "prod-only", "%s.%s outside %s" % (kind, ref, " and ".join(PROD_ENVS))))
+        if APPLY_ONLY.search(ref) and env_name not in APPLY_ENVS:
+            out.append((name, "apply-only", "%s.%s outside %s" % (kind, ref, " and ".join(APPLY_ENVS))))
+    if BARE_SECRETS.search(yaml.safe_dump(obj, width=10 ** 6)):
+        out.append((name, "secrets-context", "%s: the whole secrets context (e.g. toJSON(secrets)) is refused" % label))
+
+
+def tf_var_tokens(out, name, env, label):
+    for key, value in (env or {}).items():
+        if str(key).startswith("TF_VAR_") and "TOKEN" in str(value):
+            out.append((name, "token-as-variable", "%s: %s passes a token" % (label, key)))
+
+
 def check(workflow):
     """[(job, rule, detail)]."""
     out = []
     jobs = workflow.get("jobs") or {}
+    # A workflow-level env reaches every job, so it is held to the strictest job's rules: none.
+    top = {"env": workflow.get("env") or {}}
+    env_rules(out, "<workflow>", None, top, "env")
+    tf_var_tokens(out, "<workflow>", top["env"], "env")
     for name, job in jobs.items():
         env_name = environment(job)
-        for kind, ref in sorted(refs(job)):
-            if PROD_ONLY.search(ref) and env_name not in PROD_ENVS:
-                out.append((name, "prod-only", "%s.%s outside %s" % (kind, ref, " and ".join(PROD_ENVS))))
-            if APPLY_ONLY.search(ref) and env_name not in APPLY_ENVS:
-                out.append((name, "apply-only", "%s.%s outside %s" % (kind, ref, " and ".join(APPLY_ENVS))))
+        env_rules(out, name, env_name, job, name)
+        tf_var_tokens(out, name, job.get("env"), "job env")
         for i, step in enumerate(job.get("steps") or []):
             label = step.get("name") or step.get("uses") or "step %d" % (i + 1)
-            for key, value in (step.get("env") or {}).items():
-                if str(key).startswith("TF_VAR_") and "TOKEN" in str(value):
-                    out.append((name, "token-as-variable", "%s: %s passes a token" % (label, key)))
+            tf_var_tokens(out, name, step.get("env"), label)
             script = step.get("run") or ""
             if re.search(r"(^|\s)-var(-file)?[=\s]", script) or "TF_VAR_" in script:
                 out.append((name, "token-as-variable", "%s: -var or TF_VAR_ in a script" % label))
@@ -108,6 +132,17 @@ def check(workflow):
         for needle in ("pull_request_target", "head.repo.full_name == github.repository", "base.ref == 'main'"):
             if needle not in cond:
                 out.append(("plan", "pr-plan", "its if must require %s" % needle))
+        for s in plan.get("steps") or []:
+            if str(s.get("uses", "")).startswith("actions/checkout") and \
+                    {"ref", "repository"} & set((s.get("with") or {})):
+                out.append(("plan", "pr-plan", "its checkout must be the base branch: no ref or repository; "
+                                               "the pull request's files are read as data by tf_policy.py extract"))
+
+    # The plan accounts are bound to event_name `schedule` (and `pull_request_target`), never a dispatch.
+    for name in ("drift", "drift-prod-irm"):
+        if str((jobs.get(name) or {}).get("if", "")).strip() != "github.event_name == 'schedule'":
+            out.append((name, "drift-auth", "the drift jobs run on the schedule only "
+                                            "(if: github.event_name == 'schedule')"))
 
     def group(job_name):
         c = (jobs.get(job_name) or {}).get("concurrency") or {}

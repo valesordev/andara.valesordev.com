@@ -66,7 +66,7 @@ HAS_GO := $(shell find . -name '*.go' -not -path './.git/*' -not -path './bin/*'
         objectstore-install projector-stop projector-start projector-rebuild server-stop server-start core-versions-check \
         builder-reference builder-reference-check guide-check \
         stack-boundary-lost cli-offline-check stack-projector-check recovery-timing recovery-timing-previous recovery-timing-summary startup-budget-check alerts-sync alerts-diff update-agents \
-        tf-plan tf-apply tf-unlock tf-test-alert tf-test-alert-clean tf-fmt-check tf-validate tf-test tf-lock tf-bootstrap-gcp tf-drift tf-plan-show tf-workflow-check tf-ci-environments tf-plan-key
+        tf-plan tf-apply tf-unlock tf-test-alert tf-test-alert-clean tf-fmt-check tf-validate tf-test tf-lock tf-bootstrap-gcp tf-drift tf-plan-show tf-workflow-check tf-ci-environments tf-plan-key tf-replan
 
 ## help: print this target list
 help:
@@ -517,6 +517,11 @@ tf-plan-show:
 ## tf-ci-environments: report what the terraform workflow needs on GitHub (environments, reviewer, secret and variable names); APPLY=1 creates the environments, never a secret (AW-INF-068)
 tf-ci-environments:
 	@$(PY) $(SCRIPTS)/tf_ci.py environments $(if $(filter 1,$(APPLY)),--apply)
+
+## tf-replan: start the terraform workflow on main by hand: apply solo7dev, plan-prod and apply-prod for main's head, replacing a superseded or cancelled prod plan; needs gh (AW-INF-068)
+tf-replan:
+	@gh workflow run terraform.yaml --ref main
+	@echo "tf-replan: started the terraform workflow on main; gh run list --workflow terraform.yaml shows it"
 
 ## tf-plan-key: make TF_PLAN_KEY_PROD and set it in andara-prod-plan, andara-prod-apply and .local/box.env; ROTATE=1 replaces an existing one (AW-INF-068)
 tf-plan-key:

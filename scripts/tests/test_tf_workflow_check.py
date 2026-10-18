@@ -109,6 +109,27 @@ class Workflow(unittest.TestCase):
         up["with"]["path"] = "${{ runner.temp }}/prod/solo7.tfplan"
         self.broken("plan-prod", "sinks")
 
+    def test_the_whole_secrets_context(self):
+        step(self.w["jobs"]["plan"], "plan")["env"]["ALL"] = "${{ toJSON(secrets) }}"
+        self.broken("plan", "secrets-context")
+
+    def test_a_prod_secret_in_workflow_env(self):
+        self.w["env"] = {"TF_PLAN_KEY_PROD": "${{ secrets.TF_PLAN_KEY_PROD }}"}
+        self.broken("<workflow>", "prod-only")
+
+    def test_a_token_as_tf_var_in_job_env(self):
+        self.w["jobs"]["apply"]["env"] = {"TF_VAR_auth": "${{ secrets.GRAFANA_SOLO7DEV_APPLY_TOKEN }}"}
+        self.broken("apply", "token-as-variable")
+
+    def test_the_plan_job_checking_out_the_head(self):
+        checkout = next(s for s in self.w["jobs"]["plan"]["steps"] if "checkout" in str(s.get("uses", "")))
+        checkout["with"]["ref"] = "${{ github.event.pull_request.head.sha }}"
+        self.broken("plan", "pr-plan")
+
+    def test_drift_reachable_by_dispatch(self):
+        self.w["jobs"]["drift"]["if"] = "github.event_name == 'schedule' || github.event_name == 'workflow_dispatch'"
+        self.broken("drift", "drift-auth")
+
     # pr-plan (AC-1)
 
     def test_the_plan_job_with_an_apply_token(self):

@@ -42,6 +42,7 @@ import base64
 import hashlib
 import json
 import os
+import re
 import shutil
 import subprocess
 import sys
@@ -125,8 +126,21 @@ def need(env, *names):
         raise tf.Exit(3, "%s unset" % ", ".join(unset))
 
 
+# What Terraform may see of the job's environment. Everything else (the OIDC request token and URL,
+# GITHUB_TOKEN, the runner's own variables) is dropped, so a gap in tf_policy.py that let a plan read
+# /proc/self/environ would find only what the plan already holds.
+ALLOWED_ENV = re.compile(r"^(PATH|HOME|TMPDIR|LANG|LC_[A-Z]+|TZ|SSL_CERT_FILE|SSL_CERT_DIR|TF_[A-Z_]+|GRAFANA_AUTH"
+                         r"|" + IRM_TOKEN_VAR + r"|GOOGLE_APPLICATION_CREDENTIALS|GOOGLE_GHA_CREDS_PATH"
+                         r"|GOOGLE_CLOUD_PROJECT|GCLOUD_PROJECT|CLOUDSDK_[A-Z_]+)$")
+
+
+def minimal(tenv):
+    return {k: v for k, v in tenv.items() if ALLOWED_ENV.match(k)}
+
+
 def root_env(root, env, op):
-    """The child environment for root: GRAFANA_AUTH, the webhook, and for solo7-irm the IRM token."""
+    """The child environment for root: GRAFANA_AUTH, the webhook, and for solo7-irm the IRM token, plus
+    only what Terraform and the gcs backend need to run (ALLOWED_ENV)."""
     token = "GRAFANA_%s_%s_TOKEN" % (tf.TOKEN_STACK[root], "APPLY" if op == "apply" else "READ")
     webhook = tf.WEBHOOK.get(root)
     names = [token] + ([webhook] if webhook else [])
@@ -134,7 +148,7 @@ def root_env(root, env, op):
     tenv = tf.child_env(env, token, webhook)
     if root == IRM and env.get("GRAFANA_SOLO7_IRM_TOKEN"):
         tenv[IRM_TOKEN_VAR] = env["GRAFANA_SOLO7_IRM_TOKEN"]
-    return tenv
+    return minimal(tenv)
 
 
 def init(cwd, root, tenv, quiet=False):

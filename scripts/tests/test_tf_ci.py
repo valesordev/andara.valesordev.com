@@ -314,9 +314,20 @@ class PlanShow(Base):
                 written.append(path)
             return real_open(path, mode, *a, **k)
 
+        memfds = []
+        real_memfd = os.memfd_create
+
+        def spy_memfd(name, *a):
+            fd = real_memfd(name, *a)
+            memfds.append(fd)
+            return fd
+
+        tmp_before = set(os.listdir(tempfile.gettempdir()))
         with mock.patch.object(tf_ci, "gh", gh), mock.patch.object(tf, "box_env_path", lambda env: None), \
-                mock.patch("builtins.open", spy_open):
+                mock.patch("builtins.open", spy_open), mock.patch.object(tf_ci.os, "memfd_create", spy_memfd):
             result, text = self.sinks(lambda: tf_ci.cmd_plan_show("42", "solo7", self.env))
+        self.assertEqual(len(memfds), 1, "the plaintext goes to exactly one memfd")
+        self.assertEqual(set(os.listdir(tempfile.gettempdir())) - tmp_before, set(), "nothing left in TMPDIR")
         self.assertEqual(result, 0)
         show = [c for c in t.calls if c[0][0] == "show"][0]
         self.assertTrue(show[0][1].startswith("/proc/self/fd/"), "the plan reaches terraform through a memfd")
@@ -375,6 +386,30 @@ class PlanKey(Base):
 
 
 class Misc(Base):
+
+    def test_pr_plan_inits_with_a_readonly_lock_file_and_a_minimal_environment(self):
+        """-lockfile=readonly is what holds a pull request to the base branch's provider pins (AC-2)."""
+        t = self.fake()
+        seen = []
+        real = t.run
+
+        def run(args, cwd, env, capture=False, pass_fds=()):
+            seen.append(dict(env))
+            return real(args, cwd, env, capture, pass_fds)
+
+        tf.run = run
+        self.addCleanup(setattr, tf, "run", t.run)
+        env = dict(self.env, ACTIONS_ID_TOKEN_REQUEST_TOKEN="oidc", ACTIONS_ID_TOKEN_REQUEST_URL="https://x",
+                   GITHUB_TOKEN="ghs_x", GRAFANA_SOLO7_APPLY_TOKEN="apply", RUNNER_SECRET="x")
+        result, _ = self.sinks(lambda: tf_ci.cmd_pr_plan("solo7", tf.TF_DIR, "c", env))
+        self.assertEqual(result, 0)
+        init = [c for c in t.calls if c[0][0] == "init"][0][0]
+        self.assertIn("-lockfile=readonly", init)
+        for e in seen:
+            for k in ("ACTIONS_ID_TOKEN_REQUEST_TOKEN", "ACTIONS_ID_TOKEN_REQUEST_URL", "GITHUB_TOKEN",
+                      "GRAFANA_SOLO7_APPLY_TOKEN", "GRAFANA_SOLO7_READ_TOKEN", "RUNNER_SECRET"):
+                self.assertNotIn(k, e)
+            self.assertEqual(e["GRAFANA_AUTH"], "read")
 
     def test_pr_plan_refuses_the_irm_root(self):
         self.assertEqual(tf_ci.main(["pr-plan", "--stack", "solo7-irm", "--commit", "x"], self.env), 2)
