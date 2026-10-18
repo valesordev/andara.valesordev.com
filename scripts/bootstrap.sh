@@ -30,6 +30,13 @@ MIMIRTOOL_VERSION="3.2.2"
 # deploy/terraform/grafana/.terraform-version; the checksums below are that release's
 # SHA256SUMS, so a version bump changes both or bootstrap fails.
 TERRAFORM_VERSION="1.16.4"
+# kind and kubectl back `make cluster-up`, `cluster-down` and `cluster-rebuild` (AW-INF-052), which
+# call bin/kind and bin/kubectl, never whatever is on PATH. Release binaries, verified against
+# checksums pinned below from kind's <binary>.sha256sum and dl.k8s.io's kubectl.sha256. The node
+# image is deploy/platform/versions.yaml's, one kind v0.33.0 lists for itself; kubectl's minor
+# stays within one of it, checked below.
+KIND_VERSION="v0.33.0"
+KUBECTL_VERSION="v1.36.4"
 
 fail() { echo "make: bootstrap: $*" >&2; exit 1; }
 ok()   { printf '  %-22s %s\n' "$1" "$2"; }
@@ -150,7 +157,7 @@ if command -v docker >/dev/null 2>&1; then
     ok "docker compose" "MISSING — \`make up\` needs the compose plugin"
   fi
 else
-  ok docker "not installed (needed by \`make up\`, not by \`make check\`)"
+  ok docker "not installed (needed by \`make up\` and \`make cluster-up\`, not by \`make check\`)"
 fi
 
 # `make tls` provisions the local CA that AW-INF-002 requires the CLI to trust.
@@ -292,13 +299,77 @@ install_terraform() {
 }
 install_terraform
 
-# kind and kubectl are needed by `make helm-install ENV=local`, not by `make check`.
-command -v kind >/dev/null 2>&1 \
-  && ok kind "$(kind version 2>/dev/null | awk '{print $2}')" \
-  || ok kind "not installed (needed by \`make helm-install ENV=local\`, not by \`make check\`)"
-command -v kubectl >/dev/null 2>&1 \
-  && ok kubectl "$(kubectl version --client 2>/dev/null | head -1 | awk '{print $3}')" \
-  || ok kubectl "not installed (needed by \`make helm-install\`, not by \`make check\`)"
+# sha256_ok <sum> <file>: sha256sum on Linux, shasum on macOS.
+sha256_ok() {
+  if command -v sha256sum >/dev/null 2>&1; then
+    echo "$1  $2" | sha256sum -c --quiet - >/dev/null
+  else
+    echo "$1  $2" | shasum -a 256 -c --quiet - >/dev/null
+  fi
+}
+
+# install_binary <name> <version> <have> <url> <sum>: download url to bin/<name> unless have is
+# already the version, verifying the pinned checksum before anything lands in bin/.
+install_binary() {
+  local name="$1" want="$2" have="$3" url="$4" sum="$5" tmp
+  if [[ "$have" == "$want" ]]; then
+    ok "$name" "${have#v} (pinned)"
+    return 0
+  fi
+  tmp="$(mktemp -d)"
+  echo "  installing $name $want ..."
+  curl -fsSL -o "$tmp/$name" "$url" \
+    || { rm -rf "$tmp"; fail "could not download $name $want from $url; check network access"; }
+  sha256_ok "$sum" "$tmp/$name" \
+    || { rm -rf "$tmp"; fail "$name $want does not match its pinned checksum"; }
+  install -m 0755 "$tmp/$name" "$BIN/$name"
+  rm -rf "$tmp"
+  ok "$name" "${want#v} (installed)"
+}
+
+# kind and kubectl back the cluster targets (AW-INF-052) and `make helm-install ENV=local`.
+install_kind_kubectl() {
+  local os arch kind_sum kubectl_sum node_minor kubectl_minor have
+  os="$(uname -s | tr '[:upper:]' '[:lower:]')"
+  case "$(uname -m)" in
+    x86_64|amd64) arch=amd64 ;;
+    aarch64|arm64) arch=arm64 ;;
+    *) fail "no pinned kind or kubectl for $(uname -m)" ;;
+  esac
+  case "$os-$arch" in
+    linux-amd64)  kind_sum=aee6151561422756b764a4ae28e7f44cda5af5a9eead3cc9985112b1de8d8e0d ;;
+    linux-arm64)  kind_sum=20022bee6cfcd5086cb7234d218e3454e6090022f2a8f55d1fa7fcf42c3867a2 ;;
+    darwin-amd64) kind_sum=5a99f26f57246dc9319dd294803313197a0f34d33c525b3ea8b655db5916ece0 ;;
+    darwin-arm64) kind_sum=0c8c7dbe5e23594a198b786c4bc13dacc101fa6196b0cb0b23a1ca44e61f4b4f ;;
+    *) fail "no pinned kind for $os-$arch" ;;
+  esac
+  case "$os-$arch" in
+    linux-amd64)  kubectl_sum=8b8f088da2dab964f853b38464033b1be15ede2839eca751482357c45abdd05a ;;
+    linux-arm64)  kubectl_sum=0ecf44450ee6063bf19dd166a103ee6df4a9034455c2abce626e6eea657d73fb ;;
+    darwin-amd64) kubectl_sum=71a3aa7c2ee2c974d9fbb462cba0c5c04a4df2e8d85eee94714fd819ea3c4e63 ;;
+    darwin-arm64) kubectl_sum=c9e4f713d6fee0043a3d835cca13077cda2bc0973840eb9779360df0b5bdfc69 ;;
+    *) fail "no pinned kubectl for $os-$arch" ;;
+  esac
+
+  # kubectl's minor within one of the node image's (Kubernetes' version skew policy).
+  node_minor="$(sed -nE 's/^ *nodeImage: *kindest\/node:v1\.([0-9]+)\..*/\1/p' deploy/platform/versions.yaml)"
+  kubectl_minor="$(echo "$KUBECTL_VERSION" | sed -nE 's/^v1\.([0-9]+)\..*/\1/p')"
+  [[ -n "$node_minor" && -n "$kubectl_minor" ]] \
+    && (( kubectl_minor - node_minor <= 1 && node_minor - kubectl_minor <= 1 )) \
+    || fail "kubectl $KUBECTL_VERSION is not within one minor of deploy/platform/versions.yaml's node image (v1.${node_minor:-?}); change them together"
+
+  have=""
+  [[ -x "$BIN/kind" ]] && have="$("$BIN/kind" version 2>/dev/null | awk '{print $2}' || true)"
+  install_binary kind "$KIND_VERSION" "$have" \
+    "https://github.com/kubernetes-sigs/kind/releases/download/$KIND_VERSION/kind-$os-$arch" "$kind_sum"
+
+  have=""
+  [[ -x "$BIN/kubectl" ]] && have="$("$BIN/kubectl" version --client -o json 2>/dev/null \
+    | ${PY:-python3} -c 'import json,sys; print(json.load(sys.stdin)["clientVersion"]["gitVersion"])' 2>/dev/null || true)"
+  install_binary kubectl "$KUBECTL_VERSION" "$have" \
+    "https://dl.k8s.io/release/$KUBECTL_VERSION/bin/$os/$arch/kubectl" "$kubectl_sum"
+}
+install_kind_kubectl
 
 # Git hooks: run the cheap checks before a commit lands, not after CI says so.
 #

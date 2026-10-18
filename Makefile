@@ -32,7 +32,10 @@ IMAGE       ?= andara-server
 # Where CI publishes the server image and dev/prod pull it from (AW-INF-013).
 REGISTRY_IMAGE := ghcr.io/valesordev/andara-server
 TAG         ?= dev
-KIND_CLUSTER ?= $(shell kind get clusters 2>/dev/null | head -1)
+# The kind cluster kind-load and kind-platform use. Unset, it's the only cluster there is; with two
+# or more (andara beside solo7) they exit 2 naming them rather than guess (AW-INF-052).
+KIND_CLUSTER ?=
+KIND        ?= kind
 DURATION    ?= 300
 SOAK        ?= 5m
 # `--match 'v*'`: release tags only. The rolling `cli-dev` tag (AW-INF-020) sits on a recent
@@ -58,7 +61,7 @@ HAS_GO := $(shell find . -name '*.go' -not -path './.git/*' -not -path './bin/*'
         proto proto-check adr \
         k8s-dry check-targets clean build build-info goldens \
         values-schema values-schema-check helm-test image image-publish image-check cli-release cli-release-check cli-release-publish kind-load helm-install measure-tick stack-smoke stack-play stack-linkdead stack-recover stack-recover-mismatch \
-        kind-platform stream-soak content-grammar-check observe-check observe-unavailable scripts-test kafka-operator kafka-install kafka-broker-bounce \
+        kind-platform cluster-up cluster-down cluster-rebuild stream-soak content-grammar-check observe-check observe-unavailable scripts-test kafka-operator kafka-install kafka-broker-bounce \
         argocd-install argocd-status argocd-ui argocd-recover argocd-uninstall world-reset content-seed env-destroy env-recover \
         objectstore-install projector-stop projector-start projector-rebuild server-stop server-start core-versions-check \
         builder-reference builder-reference-check guide-check \
@@ -332,11 +335,11 @@ cli-release-check:
 cli-release-publish:
 	@$(SCRIPTS)/cli_release_publish.sh "$(CLI_TAG)"
 
-## kind-load: load the built image into the kind cluster — KIND_CLUSTER=<name>
+## kind-load: load the built image into the kind cluster — KIND_CLUSTER=<name>, required when there is more than one
 kind-load:
-	@if [[ -z "$(KIND_CLUSTER)" ]]; then echo "make: kind-load: no kind cluster found" >&2; exit 1; fi
-	@kind load docker-image $(IMAGE):$(TAG) --name $(KIND_CLUSTER)
-	@echo "kind-load: $(IMAGE):$(TAG) -> kind/$(KIND_CLUSTER)"
+	@cluster="$$($(PY) $(SCRIPTS)/cluster.py kind-cluster "$(KIND_CLUSTER)" "$(KIND)")"
+	$(KIND) load docker-image $(IMAGE):$(TAG) --name "$$cluster"
+	echo "kind-load: $(IMAGE):$(TAG) -> kind/$$cluster"
 
 ## helm-install: idempotent `helm upgrade --install` of the chart into namespace andara-<env> — ENV=<env> [TAG=<tag>]
 # IMAGE/TAG override a registry environment's values only when given explicitly: their
@@ -374,9 +377,22 @@ stack-recover-mismatch: build
 stack-projector-check: build
 	@$(SCRIPTS)/stack_projector_check.sh
 
-## kind-platform: install Traefik and cert-manager into a fresh kind cluster the way the box has them — KIND_CLUSTER=<name>
+## kind-platform: install Traefik and cert-manager into a fresh kind cluster the way the box has them — KIND_CLUSTER=<name>, required when there is more than one
 kind-platform:
-	@$(SCRIPTS)/kind_platform.sh "$(KIND_CLUSTER)"
+	@cluster="$$($(PY) $(SCRIPTS)/cluster.py kind-cluster "$(KIND_CLUSTER)" "$(KIND)")"
+	$(SCRIPTS)/kind_platform.sh "$$cluster"
+
+## cluster-up: create the kind cluster `andara` (context kind-andara) from deploy/kind/cluster.yaml, edge on 127.0.0.1:8080 and :8443; idempotent (AW-INF-052)
+cluster-up:
+	@$(PY) $(SCRIPTS)/cluster.py up
+
+## cluster-down: delete the kind cluster `andara` and no other — CONFIRM=andara
+cluster-down:
+	@$(PY) $(SCRIPTS)/cluster.py down "$(CONFIRM)"
+
+## cluster-rebuild: export the certificate Secrets to .local/tls/, delete `andara`, create it again — CONFIRM=andara
+cluster-rebuild:
+	@$(PY) $(SCRIPTS)/cluster.py rebuild "$(CONFIRM)"
 
 ## kafka-operator: install the Strimzi operator (1.2.0) into namespace strimzi, watching andara-dev and andara-prod — once per cluster (AW-INF-014)
 kafka-operator:
@@ -527,10 +543,11 @@ goldens:
 	@$(GO) test ./admin/cli -count=1 -run '^(TestHelpGoldens|TestRender_Golden)$$' -args -update
 	@echo "goldens: updated admin/cli/testdata/help and admin/cli/testdata/play/transcript.txt"
 
-## clean: remove build artifacts and local state
+## clean: remove build artifacts and local state, keeping .local/tls/ (the certificate exports a cluster rebuild restores)
 clean:
-	@rm -rf bin/ .local/ coverage.out
-	@echo "clean: removed bin/, .local/, coverage.out"
+	@rm -rf bin/ coverage.out
+	if [[ -d .local ]]; then find .local -mindepth 1 -maxdepth 1 ! -name tls -exec rm -rf {} +; fi
+	echo "clean: removed bin/, coverage.out and .local/ except .local/tls/"
 
 ## update-agents: update the vendored agents from a signed tag (make update-agents REF=<tag> [PR=0])
 update-agents:
