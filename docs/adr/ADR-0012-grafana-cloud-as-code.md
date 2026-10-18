@@ -1000,7 +1000,8 @@ service and a blast radius: a bad pipeline can blind a stack until the next appl
   construct the allow-list wrongly admits, would pass it. Apply tokens and the IRM token are never reachable
   from it. The residual: a leaked webhook posts to a channel; a false page needs the IRM URL, which only the two
   prod environments and Brian can read.
-- **Two stacks, three states, and fourteen secrets** (decision 4, including Fleet Management's four) to rotate at least every 90 days, fewer than
+- **Two stacks, three states, and fourteen secrets** (decision 4, including Fleet Management's four; the eleven
+  that expire are rotated at least every 90 days, see Amendments 2026-10-17), fewer than
   the drafts because `gcx` and Terraform's plan share one read token per stack. `tf-credentials-check` makes
   that a notice and not a surprise, and it is still Brian's chore.
 - **There is no local rule evaluator.** A rule edit is verified by the expression tests and by loading in
@@ -1086,6 +1087,83 @@ one root the build added, and the `[verify in 046]` outcomes. None of it changes
   - Endpoints (decision 5): each stack's values are committed from its Details record. The per-kind path
     constants in `tf_policy.py` are AW-INF-068's.
   - `gcx` (decision 2): every item goes to AW-INF-075.
+
+**2026-10-17, from the contract review of AW-INF-047, 049, 051, 068, 069, 075 and 076.** Most of these are
+precisions. Two extend a decision: `ruler_read.py` adds a direct caller to decision 2's exception, and the
+legacy branch below reads `solo7` for `ENV=dev`, a carve-out from decision 12's mapping until AW-INF-077. Four
+settle points the text left open: `warn_days`, the per-file `gcx-only-check` exceptions, how two drills pick a
+backend, and freezing the ruler during the conversion.
+
+- **Owners after the split of AW-INF-046 and AW-INF-047.** Where the text names `AW-INF-046` for these, read
+  the sibling:
+  - `scripts/gcx.py`, `make gcx-config`, `make gcx-only-check`, `scripts/grafana_stack.py` and keep-list mode:
+    AW-INF-075;
+  - `scripts/tf_policy.py`, the workflow, `make tf-plan-show` and `make tf-drift`: AW-INF-068;
+  - `docs/runbooks/grafana-credentials.md`, `credentials.yaml` and `make tf-credentials-check`: AW-INF-076;
+  - `make alerts-delete` (decision 7 step 4(ii)): AW-INF-070, not AW-INF-047;
+  - removing the ruler path (step 6): AW-INF-077, which also deletes `scripts/ruler_read.py` and the drills'
+    legacy branch, and removes `ruler_read.py`'s exception line. Step 6's "the `gcx-only-check` exception" means that
+    line and `alerts_sync.py`'s; the `stack_*.sh` lines are AW-INF-064's. The `alerts` workflow is no longer in
+    step 6: AW-INF-047 deletes it (below);
+  - `env_recover.py` and `observe_unavailable.py` on `gcx`: AW-INF-069;
+  - decision 15's "[verify in 051]" on whether the pinned chart installs bare collectors: AW-INF-065, which
+    installs them.
+- **Keep-list mode is `make observe-check ENV=<env> KEEP_LIST=1`**, wherever this ADR (decisions 7, 9, 13 and
+  15, and Consequences) or ADR-0013 writes `observe-check --keep-list`. `make` reads a bare `--keep-list` as one
+  of its own options, so the target passes the variable to the script as `--keep-list`.
+- **`gcx-only-check`, as built** (decision 2):
+  - **Patterns:** it also matches `/prometheus/config/v1/rules`, the ruler config API.
+  - **Scanned:** tracked files only (`git ls-files scripts Makefile .github/workflows`), so caches such as
+    `__pycache__/` never count.
+  - **Excluded:** `scripts/tests/**` (fixtures included), and permanently two files that hold the patterns and
+    call no API: `scripts/tf_policy.py` (AW-INF-068), which names Grafana hosts and sender paths such as
+    `/api/prom/push` in order to police them, and `scripts/gcx_only_check.py` (AW-INF-075), the check itself,
+    which the `Makefile` target only calls.
+  - **Bearer headers:** they count only when the token comes from a `GRAFANA_*` variable.
+  - **Exceptions are per file**, each naming the story that removes it. The "one exception" was written before
+    the split. Today the list is:
+    - `alerts_sync.py`: AW-INF-077;
+    - `env_recover.py`, and the `grafana_http.py` module that AW-INF-075 splits out of `observe_check.py` for it
+      and for `observe_unavailable.py`: AW-INF-069;
+    - `ruler_read.py`, which AW-INF-069 adds: AW-INF-077;
+    - `stack_smoke.sh`, `stack_recover.sh` and `stack_recover_mismatch.sh`: AW-INF-064.
+  - **Self-checking:** a line naming a deleted file, or a file in which no pattern matches, fails the check.
+    `observe_unavailable.py` therefore has no line: it reaches the API only through `grafana_http.py`. `observe_check.py` moves to `gcx` in
+    AW-INF-075.
+- **`env-recover` and `observe-unavailable` choose the rule backend by decision 7's invariant, never by a
+  flag** (decision 2). Other drills, such as `stack-recover-mismatch`, read only the `ENV`'s stack. Each run of
+  these two reads **both** backends:
+  - the Grafana-managed rule in the `ENV`'s stack;
+  - the legacy ruler's rule config in `solo7`, through the ruler config API (`scripts/ruler_read.py`, on the
+    exception list until AW-INF-077).
+  The one where the rule is live is the backend. Live in both, or in neither, is an inconclusive run. A 404 for
+  the ruler namespace `andara` (deleted at step 4(ii)) means "not live in the ruler". Any other error from the
+  ruler read makes the run inconclusive.
+  On the legacy backend, series reads **and instance-state filters** use `namespace` only, because `dev`'s
+  series and the ruler's alerts in `solo7` carry no `environment`. A filter on `environment` there would match
+  nothing, and "no firing sample" would pass vacuously.
+  - **`env-recover`** (the M2 gate) works before step 4(ii) and after 4(iii). From 4(ii) to 4(ii-b) it is
+    inconclusive. From 4(ii-b) to 4(iii) it fails for want of series. Both are inside the planned outage, and
+    AW-INF-070 reruns it after 4(iv).
+  - **`observe-unavailable`** evaluates the edited expression, so it runs on the Grafana-managed backend only. It
+    refuses (exit 1, before scaling anything) unless the live rule's expression contains the `dev` absence
+    operand, which step 4(v) adds. Its live run is step 4(vi).
+- **The ruler is frozen from AW-INF-047's merge until step 4(ii)** (decision 7). `alerts.yaml`'s edited
+  `absent()` lines carry `environment` matchers. `dev`'s series in `solo7` have none, so a synced copy would
+  fire a page-severity `AndaraServerUnavailable` for `andara-dev` and block step 4(i). AW-INF-047 **deletes the
+  `alerts` workflow** in the same commit as the edit. `alerts_sync.py sync` refuses a file with an `# env:`
+  marker. `diff`, and `alerts-delete` (which deletes the namespace by name), do not read the marker. A ruler fix
+  in that window is made by hand, or waits for the cutover. `observe-unavailable` is unusable from 047's merge
+  to step 4(v).
+- **Expiry windows are per credential** (decision 4, Rotation). `credentials.yaml` entries take an optional
+  `warn_days` (default 14), and the telemetry tokens carry 30: a lapsed telemetry token blinds every SLO at
+  once. Of the fourteen secrets in Consequences, the eleven Grafana tokens expire (at most 90 days) and are the
+  entries `tf-credentials-check` watches. The other three have no expiry date, so they have no entry and no
+  scheduled notice: the two Slack webhooks and `TF_PLAN_KEY_PROD`. They are rotated by the runbook's rotation
+  step when a leak is suspected, and `TF_PLAN_KEY_PROD` also when someone who could read it no longer should.
+  Consequences' "fourteen secrets … to rotate at least every 90 days" reads as these eleven.
+- **Drift issues are labelled `drift:<root>`** (decision 5), and a failed run of a drift job opens or updates
+  the same issue, because a failed scheduled run notifies only whoever last edited the workflow.
 
 ## Revisit when
 
