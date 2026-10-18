@@ -88,9 +88,9 @@ class Kind:
     """bin/kind and bin/kubectl as cluster.run sees them: which clusters exist, the user's kubeconfig
     (its current-context and entries), and every call."""
 
-    def __init__(self, clusters=("solo7",), current="kind-solo7", fail_create=False, context=None):
+    def __init__(self, clusters=("solo7",), current="kind-solo7", fail_create=False, context=None, ready=True):
         self.clusters, self.current, self.calls = list(clusters), current, []
-        self.entries, self.fail_create = {}, fail_create
+        self.entries, self.fail_create, self.ready = {}, fail_create, ready
         # Whether the user's kubeconfig has kind-andara: by default, exactly when the cluster exists.
         if context if context is not None else "andara" in self.clusters:
             self.entries["contexts.kind-andara.cluster"] = "kind-andara"
@@ -121,6 +121,8 @@ class Kind:
             self.current = args[2]
         elif tool == "kubectl" and args[:2] == ("config", "set"):
             self.entries[args[2]] = args[3]
+        elif tool == "kubectl" and "wait" in args and not self.ready:
+            raise cluster.Failed("kubectl --context kind-andara failed: timed out waiting for the condition on nodes/andara-worker2")
         elif tool == "kubectl" and "nodes" in args:
             out = "andara-control-plane Ready control-plane 1m v1.36.4\n" + \
                   "".join("andara-worker%s Ready <none> 1m v1.36.4\n" % s for s in ("", "2", "3"))
@@ -193,6 +195,15 @@ class Up(Base):
         self.assertEqual(k.made("create"), [])
         self.assertEqual(k.made("config", "set"), [])
         self.assertIn("andara exists; nothing to do", self.out)
+        self.assertTrue(k.made("wait", "--for=condition=Ready", "nodes", "--all"), "a rerun still checks the nodes")
+        self.assertIn("nodes 4/4 Ready", self.out)
+
+    def test_a_rerun_with_a_node_not_ready_fails(self):
+        """A first run that failed in the wait, or a cluster whose nodes went NotReady: not `ready`."""
+        self.fake(Kind(clusters=("solo7", "andara"), ready=False))
+        with self.assertRaises(cluster.Failed):
+            cluster.up(self.run_, self.free_ports())
+        self.assertNotIn("ready context=kind-andara", self.out)
 
     def test_a_rerun_adds_a_missing_context_without_moving_current(self):
         """A first run that created the cluster and then failed left no kind-andara context."""

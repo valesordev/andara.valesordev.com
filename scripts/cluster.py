@@ -10,7 +10,8 @@ and bin/kubectl, the versions `make bootstrap` pins, never whatever is on PATH, 
 export from or delete any other cluster.
 
   up       create `andara` if absent; a rerun says it exists and changes nothing, except to add the
-           context kind-andara if a failed first run left it out. Ports 8080 and 8443 must be free
+           context kind-andara if a failed first run left it out. Either way, it ends only once
+           every node is Ready, and fails if one isn't. Ports 8080 and 8443 must be free
            first: the compose stack publishes them as ANDARA_HTTP_PORT and ANDARA_GRPC_PORT until
            AW-INF-060 and AW-INF-064 retire it. kind writes its context to a kubeconfig of its own,
            copied into the user's with `kubectl config set`, so the current-context never moves and
@@ -185,7 +186,9 @@ def up(r, ports=None):
                     f.write(run(kind, "get", "kubeconfig", "--name", NAME).stdout)
                 merge_kubeconfig(kubectl, own)
             r.say("%s exists; context %s was missing, added; current-context unchanged" % (NAME, CONTEXT))
-        r.say("ready context=%s" % CONTEXT)
+        # An existing cluster is ready only if its nodes are: a first run may have failed in the
+        # wait, or a node may have gone NotReady since.
+        wait_ready(r, kubectl)
         return
     check_ports(ports)
     image = node_image()
@@ -199,6 +202,11 @@ def up(r, ports=None):
             "--wait", WAIT, "--kubeconfig", own)
         merge_kubeconfig(kubectl, own)
     r.say("context %s added; current-context unchanged" % CONTEXT)
+    wait_ready(r, kubectl)
+
+
+def wait_ready(r, kubectl):
+    """Wait for every node to be Ready, then report them; a node that isn't is a failure."""
     run(kubectl, "--context", CONTEXT, "wait", "--for=condition=Ready", "nodes", "--all", "--timeout=" + WAIT)
     nodes = run(kubectl, "--context", CONTEXT, "get", "nodes", "--no-headers").stdout
     rows = [line.split() for line in nodes.splitlines() if line.strip()]
