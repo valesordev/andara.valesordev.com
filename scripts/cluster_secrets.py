@@ -52,7 +52,7 @@ class Failed(Exception):
 
 
 class Missing(Exception):
-    """A prerequisite isn't installed."""
+    """A prerequisite is missing: bin/kubectl, or the context in the kubeconfig."""
 
 
 def default_say(msg):
@@ -67,14 +67,18 @@ def kubectl_path():
     return path
 
 
-def kubectl(context, *args, stdin=None):
-    """kubectl against context. A context the kubeconfig doesn't have is a missing prerequisite (exit 3,
-    ADR-0013 decision 1), not a failed read."""
-    p = subprocess.run([kubectl_path(), "--context", context, *args], input=stdin,
-                       capture_output=True, text=True)
-    if p.returncode != 0 and 'context "%s" does not exist' % context in p.stderr:
+def require_context(context):
+    """A context the kubeconfig doesn't have is a missing prerequisite, exit 3 (ADR-0013 decision 1),
+    checked once up front: kubectl words it differently per command, and matching its stderr would
+    either miss one wording or take an unreachable cluster for a missing context."""
+    p = subprocess.run([kubectl_path(), "config", "get-contexts", context], capture_output=True, text=True)
+    if p.returncode != 0:
         raise Missing("kubeconfig context %s is missing; `make cluster-up` creates the cluster and adds it" % context)
-    return p
+
+
+def kubectl(context, *args, stdin=None):
+    return subprocess.run([kubectl_path(), "--context", context, *args], input=stdin,
+                          capture_output=True, text=True)
 
 
 def not_found(p):
@@ -126,9 +130,11 @@ def write_atomic(path, text):
         raise
 
 
-def export(context=CONTEXT, tls_dir=TLS_DIR, say=default_say):
+def export(context=CONTEXT, tls_dir=None, say=default_say):
     """Export every Secret that exists. Returns {"<ns>/<name>": "written" | "absent"}. Raises Failed
     on the first Secret it can't read or write; earlier files are already complete by then."""
+    tls_dir = tls_dir or TLS_DIR
+    require_context(context)
     os.makedirs(tls_dir, mode=0o700, exist_ok=True)
     result = {}
     for ns, name in SECRETS:
@@ -171,8 +177,9 @@ def clean(secret):
     return out
 
 
-def restore(context=CONTEXT, tls_dir=TLS_DIR, say=default_say):
+def restore(context=CONTEXT, tls_dir=None, say=default_say):
     """Reapply every exported Secret. Returns the number restored."""
+    tls_dir = tls_dir or TLS_DIR
     found = []
     for ns, name in SECRETS:
         path = file_for(name, tls_dir)
@@ -182,6 +189,7 @@ def restore(context=CONTEXT, tls_dir=TLS_DIR, say=default_say):
     if not found:
         say("nothing to restore: no export in %s" % os.path.relpath(tls_dir, REPO))
         return 0
+    require_context(context)
     for ns in sorted({ns for ns, _, _ in found}):
         p = kubectl(context, "get", "namespace", ns, "-o", "name")
         if not_found(p):

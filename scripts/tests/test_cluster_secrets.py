@@ -97,9 +97,10 @@ class Base(unittest.TestCase):
         shutil.rmtree(self.dir)
 
     def use(self, cluster):
-        p = mock.patch.object(cluster_secrets, "kubectl", cluster.kubectl)
-        p.start()
-        self.addCleanup(p.stop)
+        for name, fake in (("kubectl", cluster.kubectl), ("require_context", lambda context: None)):
+            p = mock.patch.object(cluster_secrets, name, fake)
+            p.start()
+            self.addCleanup(p.stop)
         return cluster
 
     def export(self):
@@ -217,26 +218,54 @@ class Restore(Base):
         self.assertEqual(c.applied, [])
 
 
+BIN_KUBECTL = os.path.join(REPO, "bin", "kubectl")
+
+
+@unittest.skipUnless(os.access(BIN_KUBECTL, os.X_OK), "bin/kubectl not installed (make bootstrap)")
 class MissingContext(Base):
-    """ADR-0013 decision 1: a script that finds the context missing exits 3 naming it."""
+    """ADR-0013 decision 1: a script that finds the context missing exits 3 naming it. Real bin/kubectl
+    against a throwaway kubeconfig, because kubectl words a missing context differently per command."""
 
-    def no_context(self, *a, **k):
-        return types.SimpleNamespace(returncode=1, stdout="", stderr='error: context "kind-andara" does not exist')
+    def kubeconfig(self, contexts):
+        path = os.path.join(self.dir, "kubeconfig")
+        cfg = {"apiVersion": "v1", "kind": "Config", "clusters": [], "users": [], "contexts": []}
+        for name in contexts:
+            # A server nothing listens on: connection refused, at once.
+            cfg["clusters"].append({"name": name, "cluster": {"server": "https://127.0.0.1:1"}})
+            cfg["users"].append({"name": name, "user": {"token": "t"}})
+            cfg["contexts"].append({"name": name, "context": {"cluster": name, "user": name}})
+        with open(path, "w") as f:
+            yaml.safe_dump(cfg, f)
+        p = mock.patch.dict(os.environ, {"KUBECONFIG": path, "KUBECTL": BIN_KUBECTL})
+        p.start()
+        self.addCleanup(p.stop)
 
-    def test_export_and_restore_say_missing(self):
-        os.makedirs(self.tls)
+    def exported(self):
+        os.makedirs(self.tls, exist_ok=True)
         with open(os.path.join(self.tls, "andara-ca-tls.yaml"), "w") as f:
             yaml.safe_dump(secret("cert-manager", "andara-ca-tls"), f)
-        with mock.patch.object(cluster_secrets.subprocess, "run", self.no_context), \
-                mock.patch.object(cluster_secrets, "kubectl_path", lambda: "bin/kubectl"):
-            for step in (self.export, self.restore):
-                with self.subTest(step=step.__name__), self.assertRaises(cluster_secrets.Missing) as e:
-                    step()
-                self.assertIn("context kind-andara is missing", str(e.exception))
 
-    def test_main_exits_3(self):
-        with mock.patch.object(cluster_secrets, "export", side_effect=cluster_secrets.Missing("context kind-andara is missing")):
+    def test_export_and_restore_exit_3_naming_the_context(self):
+        self.exported()
+        self.kubeconfig(["kind-solo7"])
+        for step in (self.export, self.restore):
+            with self.subTest(step=step.__name__), self.assertRaises(cluster_secrets.Missing) as e:
+                step()
+            self.assertIn("context kind-andara is missing", str(e.exception))
+
+    def test_main_exits_3_through_real_kubectl(self):
+        self.exported()
+        self.kubeconfig([])
+        with mock.patch.object(cluster_secrets, "TLS_DIR", self.tls):
             self.assertEqual(cluster_secrets.main(["export"]), 3)
+            self.assertEqual(cluster_secrets.main(["restore"]), 3)
+
+    def test_an_unreachable_cluster_is_a_failure_not_a_missing_context(self):
+        self.exported()
+        self.kubeconfig(["kind-andara"])
+        for step in (self.export, self.restore):
+            with self.subTest(step=step.__name__), self.assertRaises(cluster_secrets.Failed):
+                step()
 
 
 class Main(unittest.TestCase):
