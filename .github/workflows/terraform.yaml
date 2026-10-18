@@ -21,8 +21,8 @@
 # pending job per group, though: a third arrival replaces the pending one. A replaced plan-prod is
 # recovered with `make tf-replan`, and a replaced drift-prod-irm by the next day's run
 # (docs/runbooks/terraform-state.md). The drift job holds no group, so it can never replace a pending
-# apply. scripts/tf_ci.py waits out the workflow's push and dispatch runs before it plans, and calls its
-# result inconclusive if one began meanwhile.
+# apply. scripts/tf_ci.py calls its result inconclusive when a push or dispatch run overlapped the plan
+# (one awaiting approval doesn't count: it changes nothing).
 #
 # The property kept: a pull-request job never holds a credential that can change Grafana's
 # configuration or routing. Every Terraform call and every sink is in scripts/tf_ci.py; this file
@@ -278,15 +278,15 @@ jobs:
   drift:
     if: github.event_name == 'schedule'
     runs-on: ubuntu-latest
-    timeout-minutes: 45
+    timeout-minutes: 30
     permissions:
       contents: read
       id-token: write
       issues: write
       actions: read
     # No concurrency group: the plan takes no lock, but a scheduled job queued into an apply's group could
-    # replace that group's pending apply. scripts/tf_ci.py waits out the workflow's push and dispatch runs
-    # instead (actions: read), and calls the check inconclusive if one began while it planned.
+    # replace that group's pending apply. Instead scripts/tf_ci.py calls the check inconclusive when one of
+    # the workflow's push or dispatch runs overlapped it (actions: read lists them).
     strategy:
       fail-fast: false
       matrix:
@@ -347,7 +347,7 @@ jobs:
   drift-prod-irm:
     if: github.event_name == 'schedule'
     runs-on: ubuntu-latest
-    timeout-minutes: 45
+    timeout-minutes: 30
     environment: andara-prod-plan
     permissions:
       contents: read

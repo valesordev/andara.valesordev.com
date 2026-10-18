@@ -19,7 +19,7 @@ reads the workflow and fails on any job that breaks one of these rules, naming t
                      FLEET_READ tokens, plan service account and webhook, or holding an environment
   concurrency        `apply` outside its own group, or plan-prod, apply-prod and drift-prod-irm outside one
                      shared group; any of them cancelling a run in progress; `drift` holding any group (it
-                     could replace a pending apply); a drift job without `actions: read` (it waits out applies)
+                     could replace a pending apply); a drift job without `actions: read` (it lists apply runs)
   secrets-context    the whole secrets context (`toJSON(secrets)`, a bare `secrets`) anywhere
   drift-auth         a drift job that runs on anything but the schedule (the plan accounts trust no dispatch)
   failure-report     a `failure()` step that runs a repository file: it may be reporting a failed checkout
@@ -165,13 +165,13 @@ def check(workflow):
         if cancel is not False:
             out.append((n, "concurrency", "cancel-in-progress must be false"))
     # drift plans without a lock. In an apply's group it could replace that group's pending apply, so it
-    # holds no group; tf_ci.py waits out apply runs instead, which needs actions: read on both drift jobs.
+    # holds no group; tf_ci.py checks for an overlapping apply run instead, which needs actions: read.
     if (jobs.get("drift") or {}).get("concurrency"):
         out.append(("drift", "concurrency", "drift holds no concurrency group: queued into an apply's group "
-                                            "it could replace a pending apply; tf_ci.py waits out applies"))
+                                            "it could replace a pending apply; tf_ci.py checks for an overlapping apply"))
     for n in ("drift", "drift-prod-irm"):
         if ((jobs.get(n) or {}).get("permissions") or {}).get("actions") != "read":
-            out.append((n, "concurrency", "%s needs actions: read to wait out apply runs" % n))
+            out.append((n, "concurrency", "%s needs actions: read to list apply runs" % n))
     return out
 
 

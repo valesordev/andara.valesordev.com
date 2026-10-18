@@ -91,16 +91,6 @@ class Base(unittest.TestCase):
         g = mock.patch.object(tf_ci, "gh", no_gh)
         g.start()
         self.addCleanup(g.stop)
-        # A fake clock: sleep advances it, so a wait runs out without real time passing.
-        self.clock = [0.0]
-
-        def sleep(seconds):
-            self.clock[0] += seconds
-
-        for name, fake in (("sleep", sleep), ("monotonic", lambda: self.clock[0])):
-            s = mock.patch.object(tf_ci.time, name, fake)
-            s.start()
-            self.addCleanup(s.stop)
         self.env = {"PATH": os.environ["PATH"], "TF_PLAN_KEY_PROD": KEY, "GITHUB_ACTIONS": "true",
                     "GRAFANA_SOLO7_READ_TOKEN": "read", "GRAFANA_SOLO7_APPLY_TOKEN": "apply",
                     "GRAFANA_SOLO7_IRM_TOKEN": "irm", "SLACK_WEBHOOK_PROD": "https://hooks.slack.invalid/x",
@@ -258,15 +248,20 @@ class Drift(Base):
         self.fake(plan_rc=0)
         self.assertEqual(tf_ci.main(["drift", "--stack", "solo7dev"], self.env), 0)
 
-    def runs_gh(self, *run_lists, issues="[]", close_fails=False):
-        """A gh whose `run list` answers come from run_lists in turn (the last repeats)."""
-        calls, answers = [], list(run_lists)
+    def runs_gh(self, runs=(), issues="[]", close_fails=False, list_fails=False, runs_fail=False):
+        """A gh whose `run list --event <e>` answers with runs of that event."""
+        calls = []
 
         def gh(*args, input_text=None):
             calls.append(args)
             if args[:2] == ("run", "list"):
-                return json.dumps(answers.pop(0) if len(answers) > 1 else answers[0])
+                if runs_fail:
+                    raise tf.Exit(1, "gh run list failed: HTTP 403")
+                event = args[args.index("--event") + 1]
+                return json.dumps([r for r in runs if r["event"] == event])
             if args[:2] == ("issue", "list"):
+                if list_fails:
+                    raise tf.Exit(1, "gh issue list failed: HTTP 502")
                 return issues
             if args[:2] == ("issue", "close") and close_fails:
                 raise tf.Exit(1, "gh issue close failed: HTTP 403")
@@ -277,55 +272,104 @@ class Drift(Base):
         self.addCleanup(p.stop)
         return calls
 
-    def apply_run(self, created="2999-01-01T00:00:00Z", status="in_progress"):
-        return {"databaseId": 77, "event": "push", "status": status, "createdAt": created}
+    def run_(self, event="push", status="completed", started="2000-01-01T00:00:00Z", updated=None, run_id=77):
+        return {"databaseId": run_id, "event": event, "status": status, "createdAt": "2000-01-01T00:00:00Z",
+                "startedAt": started, "updatedAt": updated or started}
+
+    def issue_calls(self, calls):
+        return [c for c in calls if c[0] == "issue" and c[1] != "list"]
 
     def test_without_issue_no_gh_at_all(self):
-        """make tf-drift from the dev box: no run guard, no issue."""
+        """make tf-drift from the dev box: no overlap check, no issue."""
         self.fake(plan_rc=0)
         self.assertEqual(tf_ci.main(["drift", "--stack", "solo7dev"], self.env), 0)
 
-    def test_waits_out_an_apply_in_progress(self):
-        t = self.fake(plan_rc=0)
-        calls = self.runs_gh([self.apply_run()], [self.apply_run()], [])
-        result, text = self.sinks(lambda: tf_ci.cmd_drift("solo7", True, self.env))
-        self.assertEqual(result, 0)
-        self.assertGreaterEqual(len([c for c in calls if c[:2] == ("run", "list")]), 3)
-        self.assertTrue([c for c in t.calls if c[0][0] == "plan"])
+    def test_an_apply_in_progress_makes_it_inconclusive(self):
+        for status in ("queued", "in_progress", "requested", "pending"):
+            with self.subTest(status=status):
+                self.fake(plan_rc=2)
+                calls = self.runs_gh(runs=[self.run_(status=status)])
+                result, text = self.sinks(lambda: tf_ci.cmd_drift("solo7", True, self.env))
+                self.assertEqual(result, 0)
+                self.assertIn("inconclusive", text)
+                self.assertEqual(self.issue_calls(calls), [])
 
-    def test_an_apply_that_never_ends_skips_the_check(self):
-        t = self.fake(plan_rc=2)
-        calls = self.runs_gh([self.apply_run()])
-        result, text = self.sinks(lambda: tf_ci.cmd_drift("solo7", True, self.env))
-        self.assertEqual(result, 0)
-        self.assertIn("skipped", text)
-        self.assertEqual([c for c in t.calls if c[0][0] == "plan"], [])
-        self.assertFalse(any(c[0] == "issue" for c in calls))
-
-    def test_an_apply_started_during_the_plan_makes_it_inconclusive(self):
-        t = self.fake(plan_rc=2)
-        calls = self.runs_gh([], [self.apply_run(created="2999-01-01T00:00:00Z", status="completed")])
+    def test_a_clean_check_during_an_apply_does_not_close_the_issue(self):
+        self.fake(plan_rc=0)
+        calls = self.runs_gh(runs=[self.run_(status="in_progress")], issues='[{"number": 9}]')
         result, text = self.sinks(lambda: tf_ci.cmd_drift("solo7", True, self.env))
         self.assertEqual(result, 0)
         self.assertIn("inconclusive", text)
-        self.assertTrue([c for c in t.calls if c[0][0] == "plan"])
-        self.assertFalse(any(c[0] == "issue" for c in calls), "no drift issue from a half-applied stack")
+        self.assertEqual(self.issue_calls(calls), [])
+
+    def test_a_dispatch_counts_like_a_push(self):
+        self.fake(plan_rc=2)
+        self.runs_gh(runs=[self.run_(event="workflow_dispatch", status="in_progress")])
+        result, text = self.sinks(lambda: tf_ci.cmd_drift("solo7", True, self.env))
+        self.assertIn("inconclusive", text)
+
+    def test_a_rerun_that_started_during_the_plan(self):
+        """A re-run keeps its old createdAt; its startedAt or updatedAt moves."""
+        for field in ("started", "updated"):
+            with self.subTest(field=field):
+                self.fake(plan_rc=2)
+                run = self.run_(**{field: "2999-01-01T00:00:00Z"})
+                calls = self.runs_gh(runs=[run])
+                result, text = self.sinks(lambda: tf_ci.cmd_drift("solo7", True, self.env))
+                self.assertIn("inconclusive", text)
+                self.assertEqual(self.issue_calls(calls), [])
+
+    def test_a_run_awaiting_approval_does_not_block_the_check(self):
+        """An apply-prod awaiting Brian changes nothing; drift is still reported (AC-7)."""
+        self.fake(plan_rc=2)
+        calls = self.runs_gh(runs=[self.run_(status="waiting")])
+        result, text = self.sinks(lambda: tf_ci.cmd_drift("solo7", True, self.env))
+        self.assertEqual(result.code, 1)
+        self.assertNotIn("inconclusive", text)
+        self.assertTrue(any(c[:2] == ("issue", "create") for c in calls))
 
     def test_an_older_finished_run_does_not_count(self):
         self.fake(plan_rc=0)
-        calls = self.runs_gh([self.apply_run(created="2000-01-01T00:00:00Z", status="completed")])
+        calls = self.runs_gh(runs=[self.run_()], issues='[{"number": 9}]')
         result, _ = self.sinks(lambda: tf_ci.cmd_drift("solo7", True, self.env))
         self.assertEqual(result, 0)
-        self.assertTrue(any(c[:2] == ("issue", "list") for c in calls), "a clean check went on to the issue")
+        self.assertTrue(any(c[:3] == ("issue", "close", "9") for c in calls))
+
+    def test_each_event_is_listed_on_its_own(self):
+        """--limit applies per event, so pull_request_target and schedule runs can't push an apply out of view."""
+        self.fake(plan_rc=0)
+        calls = self.runs_gh()
+        self.sinks(lambda: tf_ci.cmd_drift("solo7", True, self.env))
+        events = sorted(c[c.index("--event") + 1] for c in calls if c[:2] == ("run", "list"))
+        self.assertEqual(events, ["push", "workflow_dispatch"])
+
+    def test_a_failed_run_list_opens_the_issue(self):
+        for plan_rc in (0, 2):
+            with self.subTest(plan_rc=plan_rc):
+                self.fake(plan_rc=plan_rc)
+                bodies = []
+                self.runs_gh(runs_fail=True)
+                with mock.patch.object(tf_ci, "drift_issue", lambda root, title, body: bodies.append((title, body))):
+                    result, _ = self.sinks(lambda: tf_ci.cmd_drift("solo7", True, self.env))
+                self.assertIsInstance(result, tf.Exit)
+                self.assertEqual(len(bodies), 1)
+                self.assertIn("gh run list failed", bodies[0][1])
 
     def test_a_failed_close_is_a_warning(self):
         self.fake(plan_rc=0)
-        calls = self.runs_gh([], issues='[{"number": 9}]', close_fails=True)
+        calls = self.runs_gh(issues='[{"number": 9}]', close_fails=True)
         result, text = self.sinks(lambda: tf_ci.cmd_drift("solo7", True, self.env))
         self.assertEqual(result, 0)
         self.assertIn("closing issue #9 failed", text)
         self.assertFalse(any(c[:2] == ("issue", "comment") for c in calls))
         self.assertNotIn("failed before it could compare", text)
+
+    def test_a_failed_issue_list_on_a_clean_check_is_a_warning(self):
+        self.fake(plan_rc=0)
+        self.runs_gh(list_fails=True)
+        result, text = self.sinks(lambda: tf_ci.cmd_drift("solo7", True, self.env))
+        self.assertEqual(result, 0)
+        self.assertIn("listing its drift issue failed", text)
 
     def test_no_drift_closes_the_open_issue(self):
         self.fake(plan_rc=0)

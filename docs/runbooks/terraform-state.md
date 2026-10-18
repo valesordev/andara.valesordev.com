@@ -152,12 +152,12 @@ the drift job failed. The issue says which. Revert the hand edit in the UI, or m
 The next clean daily check closes the issue, with a comment naming its run. For `solo7dev`, `make tf-drift
 STACK=solo7dev` re-checks from the dev box (exit 1 while it drifts).
 
-A drift check never reports a half-applied stack. Before it plans, it waits up to 20 minutes for any
-`apply` or `apply-prod` run (a merge, or `make tf-replan`) to finish. If one is still going, the check
-logs `skipped` and leaves the issue alone. If one began while it planned, it logs `inconclusive` and leaves
-the issue alone. Either way, the next day's check covers it. `drift-prod-irm` shares the prod concurrency
-group, so another prod job can replace it while it is pending (it shows as cancelled), and the next day's
-run covers that too.
+A drift check never reports a half-applied stack. When it has planned, it asks whether an `apply` or
+`apply-prod` run (a merge, or `make tf-replan`) was running or started while it planned. If one was, it logs
+`inconclusive` in its summary and leaves the issue as it was, and the next day's check covers it. A run
+waiting for your approval doesn't count, since it changes nothing. `drift-prod-irm` shares the prod
+concurrency group, so another prod job can replace it while it is pending (it shows as cancelled), and the
+next day's run covers that too.
 
 ## A held lock
 

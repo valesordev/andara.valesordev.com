@@ -176,9 +176,12 @@ class Workflow(unittest.TestCase):
         self.broken("drift", "concurrency")
 
     def test_drift_without_actions_read(self):
-        """The apply guard lists the workflow's runs, which needs actions: read."""
-        self.w["jobs"]["drift"]["permissions"].pop("actions", None)
-        self.broken("drift", "concurrency")
+        """The overlap check lists the workflow's runs, which needs actions: read, in both drift jobs."""
+        for job in ("drift", "drift-prod-irm"):
+            with self.subTest(job=job):
+                self.w = load()
+                self.w["jobs"][job]["permissions"].pop("actions", None)
+                self.broken(job, "concurrency")
 
     def test_drift_prod_irm_cancelling(self):
         self.w["jobs"]["drift-prod-irm"]["concurrency"]["cancel-in-progress"] = True

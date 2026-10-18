@@ -402,42 +402,36 @@ def close_drift_issue(root, url):
     tf.say("closed issue #%s (drift:%s)" % (number, root))
 
 
-# The drift check plans with -lock=false (its accounts can only read), so it must not compare while an
-# apply is changing the stack. A concurrency group would do that, but a scheduled job queued into an apply's
-# group can replace that group's pending apply (GitHub keeps one pending job per group). So the check waits
-# out the workflow's push and dispatch runs instead, and calls its result inconclusive if one began while it
-# planned.
+# The drift check plans with -lock=false (its accounts can only read), so a plan that overlapped an apply could
+# report a half-applied stack as drift. A concurrency group would serialise them, but a scheduled job queued
+# into an apply's group can replace that group's pending apply (GitHub keeps one pending job per group). So
+# after planning, the check asks whether one of the workflow's push or dispatch runs overlapped it, and calls
+# its result inconclusive if so. A run awaiting approval in an environment ("waiting") changes nothing and
+# doesn't count, so a prod approval left pending never stalls drift.
 APPLY_EVENTS = ("push", "workflow_dispatch")
-ACTIVE = ("queued", "in_progress", "waiting", "pending", "requested")
-APPLY_WAIT_SECONDS = 1200
-APPLY_POLL_SECONDS = 30
+APPLYING = ("queued", "in_progress", "pending", "requested")
+CLOCK_SLACK_SECONDS = 60
 
 
-def apply_runs(env):
-    """This workflow's push and dispatch runs, other than this one."""
-    out = gh("run", "list", "--workflow", "terraform.yaml", "--json", "databaseId,event,status,createdAt",
-             "--limit", "30")
-    runs = json.loads(out or "[]")
+def iso(t):
+    return time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime(t))
+
+
+def overlapping_apply(env, started):
+    """A push or dispatch run of this workflow that is applying now, or that started or changed at or after
+    started (a time.time() value, less a minute of clock slack), or None. One query per event, so --limit
+    counts only those runs."""
+    since = iso(started - CLOCK_SLACK_SECONDS)
     me = str(env.get("GITHUB_RUN_ID", ""))
-    return [r for r in runs if r.get("event") in APPLY_EVENTS and str(r.get("databaseId")) != me]
-
-
-def wait_for_applies(env):
-    """True once no apply run is queued or running; False if one still is after APPLY_WAIT_SECONDS."""
-    deadline = time.monotonic() + APPLY_WAIT_SECONDS
-    while True:
-        busy = [r for r in apply_runs(env) if r.get("status") in ACTIVE]
-        if not busy:
-            return True
-        if time.monotonic() >= deadline:
-            return False
-        tf.say("an apply run is %s (run %s); waiting" % (busy[0].get("status"), busy[0].get("databaseId")))
-        time.sleep(APPLY_POLL_SECONDS)
-
-
-def applied_since(env, started):
-    """An apply run created at or after started (an ISO-8601 UTC string), or None."""
-    return next((r for r in apply_runs(env) if str(r.get("createdAt", "")) >= started), None)
+    for event in APPLY_EVENTS:
+        runs = json.loads(gh("run", "list", "--workflow", "terraform.yaml", "--event", event, "--json",
+                             "databaseId,event,status,startedAt,updatedAt", "--limit", "30") or "[]")
+        for r in runs:
+            if str(r.get("databaseId")) == me:
+                continue
+            if r.get("status") in APPLYING or max(str(r.get("startedAt") or ""), str(r.get("updatedAt") or "")) >= since:
+                return r
+    return None
 
 
 def cmd_drift(root, issue, env):
@@ -446,11 +440,8 @@ def cmd_drift(root, issue, env):
     if root != "solo7dev" and env.get("GITHUB_ACTIONS") != "true":
         raise tf.Exit(2, "%s's drift is checked by CI only (ADR-0012 decision 4)" % root)
     env = tf.load_box_env(env)
-    if issue and not wait_for_applies(env):
-        tf.say("drift %s: skipped; an apply run was still going after %d minutes. The next scheduled check "
-               "covers it." % (root, APPLY_WAIT_SECONDS // 60))
-        return 0
-    started = time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime())
+    started = time.time()
+    moved = None
     try:
         tenv = root_env(root, env, "plan")
         cwd = root_in(tf.TF_DIR, root)
@@ -462,18 +453,20 @@ def cmd_drift(root, issue, env):
             text, pj = (plan_report(root, "the live stack", cwd, tenv, plan_file) if rc else (None, None))
         finally:
             shutil.rmtree(tmp, ignore_errors=True)
+        if issue:
+            moved = overlapping_apply(env, started)
     except tf.Exit as e:
         if issue and e.code != 2:
             drift_issue(root, "Terraform drift job failed: %s" % root,
                         "The drift job for `%s` failed before it could compare: %s\n\nRun: %s\n"
                         % (root, "credential unset" if e.code == 3 else e.msg, run_url(env)))
         raise
-    if issue:
-        moved = applied_since(env, started)
-        if moved:
-            tf.say("drift %s: inconclusive; apply run %s began while this check planned, so the issue is left "
-                   "as it was. The next scheduled check covers it." % (root, moved.get("databaseId")))
-            return 0
+    if moved:
+        tf.say("drift %s: inconclusive; run %s (%s) overlapped this check, so the issue is left as it was. The "
+               "next scheduled check covers it." % (root, moved.get("databaseId"), moved.get("status")))
+        summary("### drift %s: inconclusive\n\nRun %s (%s) overlapped the check; nothing was reported."
+                % (root, moved.get("databaseId"), moved.get("status")))
+        return 0
     if rc == 0:
         tf.say("drift %s: none" % root)
         if issue:
