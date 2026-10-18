@@ -149,7 +149,9 @@ one. A replaced `plan-prod` shows as cancelled in the run list.
 
 **Drift.** An issue labelled `drift:<root>` means a managed resource was changed outside Terraform, or
 the drift job failed. The issue says which. Revert the hand edit in the UI, or make it in code and merge.
-For `solo7dev`, `make tf-drift STACK=solo7dev` re-checks from the dev box (exit 1 while it drifts).
+The next clean daily check closes the issue, with a comment naming its run. For `solo7dev`, `make tf-drift
+STACK=solo7dev` re-checks from the dev box (exit 1 while it drifts). Each drift check waits for its root's
+apply to finish, so it never reports a half-applied stack.
 
 ## A held lock
 

@@ -163,6 +163,13 @@ def check(workflow):
     for n, (_, cancel) in prod.items():
         if cancel is not False:
             out.append((n, "concurrency", "cancel-in-progress must be false"))
+    # drift's legs plan without a lock: solo7 waits in the prod group, solo7dev in apply's.
+    prod_group = next(iter(groups)) if len(groups) == 1 else None
+    want = "${{ matrix.stack == 'solo7' && '%s' || '%s' }}" % (prod_group, apply_group)
+    drift_group, drift_cancel = group("drift")
+    if drift_group != want or drift_cancel is not False:
+        out.append(("drift", "concurrency", "drift's legs wait in their root's apply group: group: %s, "
+                                            "cancel-in-progress: false" % want))
     return out
 
 

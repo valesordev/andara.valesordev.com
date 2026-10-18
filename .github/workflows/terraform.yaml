@@ -16,7 +16,8 @@
 # paths above.
 #
 # Concurrency: apply has its own group; plan-prod, apply-prod and drift-prod-irm share one, so a prod
-# plan never reads state mid-apply. Neither cancels a run in progress. GitHub keeps one running and one
+# plan never reads state mid-apply. drift's legs wait in their root's group (solo7dev in apply's,
+# solo7 in the prod one), for the same reason. Neither cancels a run in progress. GitHub keeps one running and one
 # pending job per group, though: a third arrival replaces the pending one. A replaced plan-prod is
 # recovered with `make tf-replan` (docs/runbooks/terraform-state.md).
 #
@@ -279,6 +280,11 @@ jobs:
       contents: read
       id-token: write
       issues: write
+    # The plan takes no lock, so each leg waits in its root's apply group: a drift check that read state
+    # mid-apply would report the half-applied stack as drift.
+    concurrency:
+      group: ${{ matrix.stack == 'solo7' && 'terraform-prod' || 'terraform-apply' }}
+      cancel-in-progress: false
     strategy:
       fail-fast: false
       matrix:

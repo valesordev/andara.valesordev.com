@@ -169,6 +169,15 @@ class Workflow(unittest.TestCase):
         self.w["jobs"]["apply-prod"]["concurrency"]["group"] = "elsewhere"
         self.broken("plan-prod", "concurrency")
 
+    def test_drift_without_its_roots_apply_group(self):
+        """A drift leg plans without a lock, so it waits for its root's apply: solo7 apply-prod's, solo7dev apply's."""
+        self.w["jobs"]["drift"].pop("concurrency", None)
+        self.broken("drift", "concurrency")
+
+    def test_drift_in_the_wrong_group(self):
+        self.w["jobs"]["drift"]["concurrency"] = {"group": "terraform-drift-${{ matrix.stack }}", "cancel-in-progress": False}
+        self.broken("drift", "concurrency")
+
     def test_drift_prod_irm_cancelling(self):
         self.w["jobs"]["drift-prod-irm"]["concurrency"]["cancel-in-progress"] = True
         self.broken("drift-prod-irm", "concurrency")

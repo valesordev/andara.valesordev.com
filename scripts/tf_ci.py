@@ -381,6 +381,16 @@ def drift_issue(root, title, body):
         tf.say("opened an issue labelled %s" % label)
 
 
+def close_drift_issue(root, url):
+    """A clean check closes the open drift:<root> issue: an open one means drift or a failure now."""
+    found = json.loads(gh("issue", "list", "--label", "drift:" + root, "--state", "open", "--json", "number",
+                          "--limit", "1"))
+    if found:
+        gh("issue", "close", str(found[0]["number"]), "--comment",
+           "No drift in `%s` as of %s; closing." % (root, url))
+        tf.say("closed issue #%s (drift:%s)" % (found[0]["number"], root))
+
+
 def cmd_drift(root, issue, env):
     if root not in tf.ROOTS:
         raise tf.Exit(2, "STACK must be one of %s" % ", ".join(tf.ROOTS))
@@ -397,6 +407,8 @@ def cmd_drift(root, issue, env):
             rc = plan_to(cwd, root, tenv, plan_file, lock=False, detailed=True)
             if rc == 0:
                 tf.say("drift %s: none" % root)
+                if issue:
+                    close_drift_issue(root, run_url(env))
                 return 0
             text, pj = plan_report(root, "the live stack", cwd, tenv, plan_file)
         finally:

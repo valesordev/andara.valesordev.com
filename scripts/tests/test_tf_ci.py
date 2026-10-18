@@ -240,6 +240,33 @@ class Drift(Base):
         self.fake(plan_rc=0)
         self.assertEqual(tf_ci.main(["drift", "--stack", "solo7dev"], self.env), 0)
 
+    def test_no_drift_closes_the_open_issue(self):
+        self.fake(plan_rc=0)
+        calls = []
+
+        def gh(*args, input_text=None):
+            calls.append(args)
+            return '[{"number": 9}]' if args[:2] == ("issue", "list") else ""
+
+        with mock.patch.object(tf_ci, "gh", gh):
+            result, _ = self.sinks(lambda: tf_ci.cmd_drift("solo7", True, self.env))
+        self.assertEqual(result, 0)
+        self.assertIn(("issue", "list", "--label", "drift:solo7", "--state", "open", "--json", "number", "--limit", "1"),
+                      calls)
+        self.assertTrue(any(c[:3] == ("issue", "close", "9") for c in calls), calls)
+
+    def test_no_drift_and_no_issue_touches_nothing(self):
+        self.fake(plan_rc=0)
+        calls = []
+
+        def gh(*args, input_text=None):
+            calls.append(args)
+            return "[]"
+
+        with mock.patch.object(tf_ci, "gh", gh):
+            self.sinks(lambda: tf_ci.cmd_drift("solo7", True, self.env))
+        self.assertFalse(any(c[:2] in (("issue", "close"), ("issue", "create"), ("issue", "comment")) for c in calls))
+
     def test_drift_opens_the_issue_and_fails(self):
         self.fake(plan_json={"resource_changes": [{"address": "module.stack.grafana_folder.x",
                                                    "change": {"actions": ["update"]}}]}, plan_rc=2)
