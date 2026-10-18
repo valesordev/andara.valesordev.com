@@ -1112,8 +1112,12 @@ backend, and freezing the ruler during the conversion.
   of its own options, so the target passes the variable to the script as `--keep-list`.
 - **`gcx-only-check`, as built** (decision 2):
   - **Patterns:** it also matches `/prometheus/config/v1/rules`, the ruler config API.
-  - **Excluded:** `scripts/tests/**` (fixtures included), and permanently `scripts/tf_policy.py` (AW-INF-068). It
-    names Grafana hosts and sender paths such as `/api/prom/push` in order to police them, and calls no API.
+  - **Scanned:** tracked files only (`git ls-files scripts Makefile .github/workflows`), so caches such as
+    `__pycache__/` never count.
+  - **Excluded:** `scripts/tests/**` (fixtures included), and permanently two files that hold the patterns and
+    call no API: `scripts/tf_policy.py` (AW-INF-068), which names Grafana hosts and sender paths such as
+    `/api/prom/push` in order to police them, and `scripts/gcx_only_check.py` (AW-INF-075), the check itself,
+    which the `Makefile` target only calls.
   - **Bearer headers:** they count only when the token comes from a `GRAFANA_*` variable.
   - **Exceptions are per file**, each naming the story that removes it. The "one exception" was written before
     the split. Today the list is:
@@ -1122,7 +1126,8 @@ backend, and freezing the ruler during the conversion.
       and for `observe_unavailable.py`: AW-INF-069;
     - `ruler_read.py`, which AW-INF-069 adds: AW-INF-077;
     - `stack_smoke.sh`, `stack_recover.sh` and `stack_recover_mismatch.sh`: AW-INF-064.
-  - **Self-checking:** a line naming a deleted file, or a file in which no pattern matches, fails the check. `observe_unavailable.py` therefore has no line: it reaches the API only through `grafana_http.py`. `observe_check.py` moves to `gcx` in
+  - **Self-checking:** a line naming a deleted file, or a file in which no pattern matches, fails the check.
+    `observe_unavailable.py` therefore has no line: it reaches the API only through `grafana_http.py`. `observe_check.py` moves to `gcx` in
     AW-INF-075.
 - **`env-recover` and `observe-unavailable` choose the rule backend by decision 7's invariant, never by a
   flag** (decision 2). Other drills, such as `stack-recover-mismatch`, read only the `ENV`'s stack. Each run of
