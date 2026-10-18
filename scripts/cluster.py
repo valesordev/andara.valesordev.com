@@ -10,7 +10,7 @@ and bin/kubectl, the versions `make bootstrap` pins, never whatever is on PATH, 
 export from or delete any other cluster.
 
   up       create `andara` if absent; a rerun says it exists and changes nothing, except to add the
-           context kind-andara if a failed first run left it out. Every run, first or not, ends
+           context kind-andara if a failed first run left it out or incomplete. Every run, first or not, ends
            only once every node is Ready, and fails if one isn't. Ports 8080 and 8443 must be free
            first: the compose stack publishes them as ANDARA_HTTP_PORT and ANDARA_GRPC_PORT until
            AW-INF-060 and AW-INF-064 retire it. kind writes its context to a kubeconfig of its own,
@@ -31,6 +31,7 @@ Exit: 0 ok · 1 a runtime failure (a port in use, kind failed, the export failed
 kind-cluster) · 2 usage (a missing or wrong CONFIRM, an ambiguous KIND_CLUSTER) · 3 a prerequisite
 missing (Docker, bin/kind, bin/kubectl, or the context kind-andara when rebuild exports).
 """
+import json
 import os
 import shutil
 import socket
@@ -156,36 +157,60 @@ def node_image():
     return image
 
 
+# What a usable kind-andara needs in a kubeconfig, per section.
+FIELDS = (("clusters", ("server", "certificate-authority-data")),
+          ("users", ("client-certificate-data", "client-key-data")),
+          ("contexts", ("cluster", "user")))
+
+
+def entries(cfg):
+    """kind-andara's cluster, user and context from a parsed kubeconfig, each {} when absent."""
+    return {kind: next((e.get(kind[:-1]) or {} for e in cfg.get(kind) or [] if e.get("name") == CONTEXT), {})
+            for kind, _ in FIELDS}
+
+
+def complete(found):
+    return all(found[kind].get(field) for kind, fields in FIELDS for field in fields)
+
+
 def merge_kubeconfig(kubectl, path):
     """Copy kind-andara's cluster, user and context from kind's kubeconfig at path into the user's,
     with `kubectl config set`, which never changes current-context."""
     with open(path) as f:
-        cfg = yaml.safe_load(f) or {}
-    entry = lambda kind: next((e[kind[:-1]] for e in cfg.get(kind) or [] if e.get("name") == CONTEXT), None)
-    found = {"clusters": entry("clusters"), "users": entry("users"), "contexts": entry("contexts")}
-    if not all(found.values()):
+        found = entries(yaml.safe_load(f) or {})
+    if not complete(found):
         raise Failed("kind's kubeconfig has no complete %s entry: %s" % (CONTEXT, sorted(k for k, v in found.items() if not v)))
-    for kind, fields in (("clusters", ("server", "certificate-authority-data")),
-                         ("users", ("client-certificate-data", "client-key-data")),
-                         ("contexts", ("cluster", "user"))):
+    for kind, fields in FIELDS:
         for field in fields:
             run(kubectl, "config", "set", "%s.%s.%s" % (kind, CONTEXT, field), str(found[kind][field]))
+
+
+def context_complete(kubectl):
+    """Whether the user's kubeconfig holds every field kind-andara needs. A first run that died part
+    way through merge_kubeconfig can leave a context that exists but has no user."""
+    p = run(kubectl, "config", "view", "--raw", "-o", "json", check=False)
+    if p.returncode != 0:
+        return False
+    try:
+        return complete(entries(json.loads(p.stdout or "{}")))
+    except ValueError:
+        return False
 
 
 def up(r, ports=None):
     kind, kubectl = prerequisites()
     if NAME in clusters(kind):
-        if run(kubectl, "config", "get-contexts", CONTEXT, check=False).returncode == 0:
+        if context_complete(kubectl):
             r.say("%s exists; nothing to do" % NAME)
         else:
-            # A first run that created the cluster and failed before the merge. `kind export
+            # A first run that created the cluster and failed before or during the merge. `kind export
             # kubeconfig` would make the context current; `kind get kubeconfig` only prints it.
             with tempfile.TemporaryDirectory() as tmp:
                 own = os.path.join(tmp, "kubeconfig")
                 with open(own, "w") as f:
                     f.write(run(kind, "get", "kubeconfig", "--name", NAME).stdout)
                 merge_kubeconfig(kubectl, own)
-            r.say("%s exists; context %s was missing, added; current-context unchanged" % (NAME, CONTEXT))
+            r.say("%s exists; context %s was missing or incomplete, merged; current-context unchanged" % (NAME, CONTEXT))
         # An existing cluster is ready only if its nodes are: a first run may have failed in the
         # wait, or a node may have gone NotReady since.
         wait_ready(r, kubectl)

@@ -5,6 +5,7 @@
 the CONFIRM guard, export before delete, prerequisites, `make clean` keeping .local/tls/, and
 KIND_CLUSTER refusing to guess. Nothing here creates a cluster; the integration ACs (1, 2, 5) are the
 operator's run on the box."""
+import json
 import os
 import shutil
 import socket
@@ -84,6 +85,16 @@ KUBECONFIG = {
 }
 
 
+COMPLETE = {
+    "clusters.kind-andara.server": "https://127.0.0.1:41234",
+    "clusters.kind-andara.certificate-authority-data": "Q0E=",
+    "users.kind-andara.client-certificate-data": "Q0VSVA==",
+    "users.kind-andara.client-key-data": "S0VZ",
+    "contexts.kind-andara.cluster": "kind-andara",
+    "contexts.kind-andara.user": "kind-andara",
+}
+
+
 class Kind:
     """bin/kind and bin/kubectl as cluster.run sees them: which clusters exist, the user's kubeconfig
     (its current-context and entries), and every call."""
@@ -91,9 +102,12 @@ class Kind:
     def __init__(self, clusters=("solo7",), current="kind-solo7", fail_create=False, context=None, ready=True):
         self.clusters, self.current, self.calls = list(clusters), current, []
         self.entries, self.fail_create, self.ready = {}, fail_create, ready
-        # Whether the user's kubeconfig has kind-andara: by default, exactly when the cluster exists.
-        if context if context is not None else "andara" in self.clusters:
+        # The user's kubeconfig entry for kind-andara: by default complete exactly when the cluster
+        # exists; "partial" is a first run that died after the first `config set` of the context.
+        if context == "partial":
             self.entries["contexts.kind-andara.cluster"] = "kind-andara"
+        elif context if context is not None else "andara" in self.clusters:
+            self.entries.update(COMPLETE)
 
     def run(self, *cmd, check=True):
         tool, args = os.path.basename(cmd[0]), cmd[1:]
@@ -114,9 +128,13 @@ class Kind:
             self.clusters.remove(args[args.index("--name") + 1])
         elif tool == "kind" and args[:2] == ("get", "kubeconfig"):
             out = yaml.safe_dump(KUBECONFIG)
-        elif tool == "kubectl" and args[:2] == ("config", "get-contexts"):
-            if "contexts.kind-andara.cluster" not in self.entries:
-                return types.SimpleNamespace(returncode=1, stdout="", stderr='error: context kind-andara not found')
+        elif tool == "kubectl" and args[:2] == ("config", "view"):
+            cfg = {"clusters": [], "users": [], "contexts": []}
+            for kind in cfg:
+                fields = {k.split(".", 2)[2]: v for k, v in self.entries.items() if k.startswith(kind + ".kind-andara.")}
+                if fields:
+                    cfg[kind].append({"name": "kind-andara", kind[:-1]: fields})
+            out = json.dumps(cfg)
         elif tool == "kubectl" and args[:2] == ("config", "use-context"):
             self.current = args[2]
         elif tool == "kubectl" and args[:2] == ("config", "set"):
@@ -263,7 +281,16 @@ class Up(Base):
         self.assertEqual(k.made("create"), [])
         self.assertEqual(k.entries["users.kind-andara.client-key-data"], "S0VZ")
         self.assertEqual(k.current, "kind-solo7")
-        self.assertIn("andara exists; context kind-andara was missing, added; current-context unchanged", self.out)
+        self.assertIn("andara exists; context kind-andara was missing or incomplete, merged; current-context unchanged",
+                      self.out)
+
+    def test_a_rerun_repairs_a_context_left_without_its_user(self):
+        """A first run that died between `config set contexts.kind-andara.cluster` and `.user`."""
+        k = self.fake(Kind(clusters=("solo7", "andara"), context="partial"))
+        cluster.up(self.run_, self.free_ports())
+        self.assertEqual(k.entries, COMPLETE)
+        self.assertEqual(k.current, "kind-solo7")
+        self.assertEqual(self.out[-1], "ready context=kind-andara")
 
     def test_an_incomplete_kind_kubeconfig_is_refused(self):
         d = tempfile.mkdtemp()
