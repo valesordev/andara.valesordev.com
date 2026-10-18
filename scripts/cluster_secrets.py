@@ -26,7 +26,7 @@ Both print each Secret's file mode and, for a certificate, its serial and notBef
 never the key. AW-INF-066 records them before and after a rebuild.
 
 Exit: 0 ok (including nothing to export or restore) · 1 a kubectl read, a write or an apply failed,
-or a target namespace is missing · 2 usage · 3 kubectl is missing (run `make bootstrap`).
+or a target namespace is missing · 2 usage · 3 kubectl is missing (run `make bootstrap`) or the kubeconfig has no context kind-andara (ADR-0013 decision 1).
 """
 import base64
 import os
@@ -68,8 +68,13 @@ def kubectl_path():
 
 
 def kubectl(context, *args, stdin=None):
-    return subprocess.run([kubectl_path(), "--context", context, *args], input=stdin,
-                          capture_output=True, text=True)
+    """kubectl against context. A context the kubeconfig doesn't have is a missing prerequisite (exit 3,
+    ADR-0013 decision 1), not a failed read."""
+    p = subprocess.run([kubectl_path(), "--context", context, *args], input=stdin,
+                       capture_output=True, text=True)
+    if p.returncode != 0 and 'context "%s" does not exist' % context in p.stderr:
+        raise Missing("kubeconfig context %s is missing; `make cluster-up` creates the cluster and adds it" % context)
+    return p
 
 
 def not_found(p):

@@ -9,11 +9,12 @@ node image pinned in deploy/platform/versions.yaml. Context kind-andara. These t
 and bin/kubectl, the versions `make bootstrap` pins, never whatever is on PATH, and they never read,
 export from or delete any other cluster.
 
-  up       create `andara` if absent; a rerun says it exists and changes nothing. Ports 8080 and
-           8443 must be free first: the compose stack publishes them as ANDARA_HTTP_PORT and
-           ANDARA_GRPC_PORT until AW-INF-060 and AW-INF-064 retire it. kind makes the new context
-           current; up puts the previous current-context back, so nothing that targets the old
-           cluster today is retargeted.
+  up       create `andara` if absent; a rerun says it exists and changes nothing, except to add the
+           context kind-andara if a failed first run left it out. Ports 8080 and 8443 must be free
+           first: the compose stack publishes them as ANDARA_HTTP_PORT and ANDARA_GRPC_PORT until
+           AW-INF-060 and AW-INF-064 retire it. kind writes its context to a kubeconfig of its own,
+           copied into the user's with `kubectl config set`, so the current-context never moves and
+           nothing that targets the old cluster today is retargeted.
   down     CONFIRM=andara, then delete `andara`. No such cluster exits 0.
   rebuild  CONFIRM=andara, checked first; export the two certificate Secrets (scripts/cluster_secrets.py),
            delete, create. It deletes only once the export accounted for every Secret, each one
@@ -27,7 +28,7 @@ Every line is `cluster: <step> run=<id>`; the last names the context.
 
 Exit: 0 ok · 1 a runtime failure (a port in use, kind failed, the export failed, no kind cluster for
 kind-cluster) · 2 usage (a missing or wrong CONFIRM, an ambiguous KIND_CLUSTER) · 3 a prerequisite
-missing (Docker, bin/kind, bin/kubectl).
+missing (Docker, bin/kind, bin/kubectl, or the context kind-andara when rebuild exports).
 """
 import os
 import shutil
@@ -223,7 +224,9 @@ def rebuild(r, confirm, ports=None, export=cluster_secrets.export):
         r.say("export certificate Secrets to %s" % os.path.relpath(cluster_secrets.TLS_DIR, REPO))
         try:
             result = export(context=CONTEXT, say=lambda m: r.say("export " + m))
-        except (cluster_secrets.Failed, cluster_secrets.Missing, OSError) as e:
+        except cluster_secrets.Missing as e:
+            raise Missing("%s; %s was not deleted" % (e, NAME))
+        except (cluster_secrets.Failed, OSError) as e:
             raise Failed("export failed, so %s was not deleted: %s" % (NAME, e))
         want = {"%s/%s" % s for s in cluster_secrets.SECRETS}
         if set(result) != want or not all(v in ("written", "absent") for v in result.values()):

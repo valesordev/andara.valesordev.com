@@ -310,6 +310,17 @@ class Rebuild(Base):
         self.assertEqual(k.made("delete"), [])
         self.assertIn("andara", k.clusters)
 
+    def test_a_missing_context_is_exit_3_and_deletes_nothing(self):
+        k = self.fake(Kind(clusters=("andara",)))
+
+        def export(context, say):
+            raise cluster_secrets.Missing("kubeconfig context kind-andara is missing")
+
+        with self.assertRaises(cluster.Missing) as e:
+            cluster.rebuild(self.run_, "andara", self.free_ports(), export=export)
+        self.assertIn("kind-andara", str(e.exception))
+        self.assertEqual(k.made("delete"), [])
+
     def test_an_export_that_skipped_a_secret_deletes_nothing(self):
         k = self.fake(Kind(clusters=("andara",)))
         with self.assertRaises(cluster.Failed):

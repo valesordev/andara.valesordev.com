@@ -217,6 +217,28 @@ class Restore(Base):
         self.assertEqual(c.applied, [])
 
 
+class MissingContext(Base):
+    """ADR-0013 decision 1: a script that finds the context missing exits 3 naming it."""
+
+    def no_context(self, *a, **k):
+        return types.SimpleNamespace(returncode=1, stdout="", stderr='error: context "kind-andara" does not exist')
+
+    def test_export_and_restore_say_missing(self):
+        os.makedirs(self.tls)
+        with open(os.path.join(self.tls, "andara-ca-tls.yaml"), "w") as f:
+            yaml.safe_dump(secret("cert-manager", "andara-ca-tls"), f)
+        with mock.patch.object(cluster_secrets.subprocess, "run", self.no_context), \
+                mock.patch.object(cluster_secrets, "kubectl_path", lambda: "bin/kubectl"):
+            for step in (self.export, self.restore):
+                with self.subTest(step=step.__name__), self.assertRaises(cluster_secrets.Missing) as e:
+                    step()
+                self.assertIn("context kind-andara is missing", str(e.exception))
+
+    def test_main_exits_3(self):
+        with mock.patch.object(cluster_secrets, "export", side_effect=cluster_secrets.Missing("context kind-andara is missing")):
+            self.assertEqual(cluster_secrets.main(["export"]), 3)
+
+
 class Main(unittest.TestCase):
 
     def test_usage_is_exit_2(self):

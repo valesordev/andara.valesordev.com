@@ -27,7 +27,7 @@ workers.
 
 ```
 make bootstrap                        # bin/kind and bin/kubectl, pinned and checksum-verified
-make cluster-up                       # create it; a rerun changes nothing
+make cluster-up                       # create it; a rerun only adds a missing kind-andara context
 make cluster-down CONFIRM=andara      # delete it, and no other cluster
 make cluster-rebuild CONFIRM=andara   # export the certificates, delete, create
 ```
