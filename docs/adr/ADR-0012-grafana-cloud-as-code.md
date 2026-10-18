@@ -1109,25 +1109,29 @@ precisions; none reverses a decision. Four settle points the text left open: `wa
   - `alerts_sync.py`: AW-INF-077;
   - `observe_unavailable.py`, and the `grafana_http.py` module that AW-INF-075 splits out of `observe_check.py`
     for it and `env_recover.py`: AW-INF-069;
-  - `env_recover.py`: AW-INF-069 for its queries; its ruler-config read stays until AW-INF-077;
+  - `env_recover.py`: AW-INF-069, which moves its ruler-config read into `ruler_read.py` (AW-INF-077's);
   - the compose-side `stack_*.sh` drills: AW-INF-064.
   `observe_check.py` moves to `gcx` in AW-INF-075. A line naming a deleted file fails the check. A bearer
   header counts only when its token comes from a `GRAFANA_*` variable.
 - **Drills choose the rule backend by decision 7's invariant, never by a flag** (decision 2). Each run reads
   **both** backends:
   - the Grafana-managed rule in the `ENV`'s stack;
-  - the legacy ruler's rule config in `solo7`, through the ruler config API as `env_recover.py` reads it today,
-    until AW-INF-077.
+  - the legacy ruler's rule config in `solo7`, through the ruler config API (`scripts/ruler_read.py`, on the
+    `gcx-only-check` exception list until AW-INF-077).
   The one where the rule is live is the backend. Live in both, or in neither, is an inconclusive run.
   Series reads follow the backend: on the legacy one they go to `solo7` with the `namespace` selector only,
-  since `dev`'s series there carry no `environment`. This keeps the M2 gate (`env-recover`) working on both
-  sides of step 4(ii-b). `observe-unavailable`, which evaluates the edited expression, runs on the
-  Grafana-managed backend only (step 4(vi)).
+  since `dev`'s series there carry no `environment`. The M2 gate (`env-recover`) therefore works before
+  step 4(ii) and after 4(iii). In between, it is inconclusive (4(ii) to 4(ii-b)) or fails for want of
+  series (4(ii-b) to 4(iii)). Both are inside the planned outage, and AW-INF-070 reruns it after 4(iv).
+  `observe-unavailable`, which evaluates the edited expression, runs on the Grafana-managed backend only
+  (step 4(vi)).
 - **The ruler is frozen from AW-INF-047's merge until step 4(ii)** (decision 7). `alerts.yaml`'s edited
   `absent()` lines carry `environment` matchers. `dev`'s series in `solo7` have none, so a synced copy would
   fire a page-severity `AndaraServerUnavailable` for `andara-dev` and block step 4(i). AW-INF-047 removes the
-  `alerts` workflow's sync on push, and `alerts_sync.py` refuses a file with an `# env:` marker. A ruler fix in
-  that window is made by hand, or waits for the cutover.
+  `alerts` workflow's triggers and jobs in the same commit as the edit. `alerts_sync.py sync` refuses a file with
+  an `# env:` marker; `diff`, and `alerts-delete` (which deletes the namespace by name), do not read the marker.
+  A ruler fix in that window is made by hand, or waits for the cutover. `observe-unavailable` is unusable from
+  047's merge to step 4(vi).
 - **Expiry windows are per credential** (decision 4, Rotation). `credentials.yaml` entries take an optional
   `warn_days` (default 14), and the telemetry tokens carry 30: a lapsed telemetry token blinds every SLO at
   once. Credentials with no expiry (the Slack webhooks, `TF_PLAN_KEY_PROD`) have no entry.
