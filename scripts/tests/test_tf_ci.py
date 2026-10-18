@@ -248,7 +248,8 @@ class Drift(Base):
         self.fake(plan_rc=0)
         self.assertEqual(tf_ci.main(["drift", "--stack", "solo7dev"], self.env), 0)
 
-    def runs_gh(self, runs=(), issues="[]", close_fails=False, list_fails=False, runs_fail=False):
+    def runs_gh(self, runs=(), issues="[]", close_fails=False, list_fails=False, runs_fail=False,
+                write_fails=False):
         """A gh whose `run list --event <e>` answers with runs of that event."""
         calls = []
 
@@ -263,6 +264,8 @@ class Drift(Base):
                 if list_fails:
                     raise tf.Exit(1, "gh issue list failed: HTTP 502")
                 return issues
+            if args[:2] in (("issue", "create"), ("issue", "comment")) and write_fails:
+                raise tf.Exit(1, "gh issue %s failed: HTTP 502" % args[1])
             if args[:2] == ("issue", "close") and close_fails:
                 raise tf.Exit(1, "gh issue close failed: HTTP 403")
             return ""
@@ -392,6 +395,18 @@ class Drift(Base):
         self.sinks(lambda: tf_ci.cmd_drift("solo7", True, self.env))
         with open(self.outputs) as f:
             self.assertIn("reported=true", f.read())
+
+    def test_a_failed_issue_write_records_nothing(self):
+        """reported is written only after the issue exists: a failed create or comment leaves the fallback to run."""
+        for issues in ("[]", '[{"number": 9}]'):
+            with self.subTest(issues=issues):
+                if os.path.exists(self.outputs):
+                    os.remove(self.outputs)
+                self.fake(plan_rc=2)
+                self.runs_gh(issues=issues, write_fails=True)
+                result, _ = self.sinks(lambda: tf_ci.cmd_drift("solo7", True, self.env))
+                self.assertIsInstance(result, tf.Exit)
+                self.assertFalse(os.path.exists(self.outputs) and "reported" in open(self.outputs).read())
 
     def test_a_clean_check_records_nothing(self):
         self.fake(plan_rc=0)
