@@ -29,6 +29,15 @@
             "command": "python3 \"${CLAUDE_PROJECT_DIR}/.claude/bin/role\" hook-pre-bash --project"
           }
         ]
+      },
+      {
+        "matcher": "WebFetch|mcp__.*navigate",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "python3 \"${CLAUDE_PROJECT_DIR}/.claude/bin/role\" hook-pre-url --project"
+          }
+        ]
       }
     ]
   },

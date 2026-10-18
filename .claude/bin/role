@@ -26,6 +26,13 @@ Commands:
   role hook-session-start      (stdin: SessionStart hook JSON)
   role hook-pre-tool-use       (stdin: PreToolUse hook JSON; file tools)
   role hook-pre-bash           (stdin: PreToolUse hook JSON; Bash)
+  role hook-pre-url            (stdin: PreToolUse hook JSON; WebFetch, browser navigation)
+
+Tools: `tools: [<tool>, ...]` in _repo.md (every role) and in a role's frontmatter name the CLIs
+the role uses, vendored as .claude/tools/<tool>.md (notes) and .json (domain, check, instead_of).
+The charter lists them and warns when a tool's `check` fails. When a Bash command runs one of a
+tool's `instead_of.commands` or matches its `instead_of.bash`, or a WebFetch or browser navigation
+matches its `instead_of.url`, the hooks add a note naming the tool. They advise; they never deny.
 
 Every PR a role opens carries the label `role:<role>`; hook-pre-bash denies a
 `gh pr create` without it.
@@ -359,12 +366,133 @@ def pr_label(role: str) -> str:
     return f"role:{role}"
 
 
+# ---------------------------------------------------------------------- tools
+
+TOOL_CHECK_TIMEOUT = 5   # seconds; a tool's `check` runs at session start and on `role set`
+
+
+def tool_names(roles: Roles, role: str | None) -> list[str]:
+    """The repo's tools (_repo.md `tools:`), then the role's own."""
+    names = list(roles.repo.get("tools", []))
+    if role in roles.roles:
+        names += [n for n in roles.roles[role][0].get("tools", []) if n not in names]
+    return names
+
+
+def load_tools(roles: Roles, role: str | None) -> list[dict]:
+    """The vendored definitions (.claude/tools/<tool>.json) of the session's tools; a missing or
+    unreadable one is skipped (`make check-target` reports it)."""
+    out = []
+    for name in tool_names(roles, role):
+        if not re.fullmatch(r"[a-z0-9][a-z0-9_.-]*", name):
+            continue
+        try:
+            t = json.loads((roles.root / ".claude" / "tools" / f"{name}.json").read_text())
+        except (OSError, ValueError):
+            continue
+        if isinstance(t, dict):
+            out.append(t)
+    return out
+
+
+def tool_check_problem(tool: dict) -> str | None:
+    """Why a tool's `check` command fails here, or None. Run without a shell."""
+    cmd = tool.get("check") or ""
+    if not cmd:
+        return None
+    try:
+        r = subprocess.run(shlex.split(cmd), capture_output=True, text=True, timeout=TOOL_CHECK_TIMEOUT)
+    except FileNotFoundError:
+        return f"`{shlex.split(cmd)[0]}` isn't on PATH"
+    except (OSError, ValueError, subprocess.TimeoutExpired) as e:
+        return f"`{cmd}` failed ({type(e).__name__})"
+    return None if r.returncode == 0 else f"`{cmd}` exited {r.returncode}"
+
+
+def tools_lines(roles: Roles, role: str | None) -> list[str]:
+    tools = load_tools(roles, role)
+    if not tools:
+        return []
+    out = ["Tools (read a tool's notes before its first use; use it, not another way in):"]
+    for t in tools:
+        name = t.get("tool", "?")
+        line = f"- {t.get('domain') or name}: {name} (.claude/tools/{name}.md)"
+        problem = tool_check_problem(t)
+        if problem:
+            line += f". NOT AVAILABLE: {problem}; tell the owner before working without it"
+        out.append(line)
+    return out
+
+
+def _command_words(command: str) -> list[str]:
+    """The program each simple command in `command` runs (substitutions included), past
+    assignments and wrappers, as a basename."""
+    words = []
+    for text in [command, *_substitutions(command)]:
+        for seg in _simple_commands(text):
+            i, wrapped = 0, False
+            while i < len(seg):
+                t = seg[i]
+                if VAR_RE.match(t) or (wrapped and (t.startswith("-") or t.isdigit())):
+                    i += 1
+                    continue
+                base = os.path.basename(t)
+                if base in WRAPPERS:
+                    i, wrapped = i + 1, True
+                    continue
+                words.append(base)
+                break
+    return words
+
+
+def _tool_note(tool: dict, what: str) -> str:
+    name = tool.get("tool", "?")
+    return (f"{tool.get('domain') or name}: this role uses {name} for that, not {what} "
+            f"(see .claude/tools/{name}.md). Use {name} unless it can't do this, and if so, say why.")
+
+
+def bash_tool_advice(roles: Roles, role: str | None, command: str) -> list[str]:
+    notes: list[str] = []
+    words = None
+    for t in load_tools(roles, role):
+        inst = t.get("instead_of") or {}
+        cmds = set(inst.get("commands") or [])
+        if cmds:
+            words = _command_words(command) if words is None else words
+            hit = next((w for w in words if w in cmds), None)
+            if hit:
+                notes.append(_tool_note(t, f"`{hit}`"))
+                continue
+        for pat in inst.get("bash") or []:
+            try:
+                if re.search(pat, command):
+                    notes.append(_tool_note(t, "a direct request"))
+                    break
+            except re.error:
+                continue
+    return notes
+
+
+def url_tool_advice(roles: Roles, role: str | None, url: str) -> list[str]:
+    notes = []
+    for t in load_tools(roles, role):
+        for pat in (t.get("instead_of") or {}).get("url") or []:
+            try:
+                if re.search(pat, url):
+                    notes.append(_tool_note(t, "fetching or browsing it"))
+                    break
+            except re.error:
+                continue
+    return notes
+
+
 def charter(roles: Roles, role: str) -> str:
     if role == UNRESTRICTED:
-        return (
+        return "\n".join([
             "Role: none (unrestricted). No role charter applies; path ownership is "
-            "not enforced. The repo CLAUDE.md still binds."
-        )
+            "not enforced. The repo CLAUDE.md still binds.",
+            *tools_lines(roles, None),
+        ])
     meta, body = roles.roles[role]
     skills = " ".join(f"/{s}" for s in meta.get("skills", [])) or "(none)"
     if not meta.get("writes"):  # a role that works outside the repo (e.g. in Notion)
@@ -374,6 +502,7 @@ def charter(roles: Roles, role: str) -> str:
                 "Writable paths: (none). This role works outside the repo: it doesn't "
                 "commit, push, or open PRs.",
                 f"Role skills: {skills}",
+                *tools_lines(roles, role),
                 *([f"Story moves (.claude/bin/story): {', '.join(meta['transitions'])}"]
                   if meta.get("transitions") else []),
                 "Repo edits are blocked or require the owner's approval.",
@@ -388,6 +517,7 @@ def charter(roles: Roles, role: str) -> str:
             f"PR label: {pr_label(role)} (every PR you open: gh pr create --label {pr_label(role)})",
             f"Writable paths: {', '.join(meta.get('writes', [])) or '(none)'}",
             f"Role skills: {skills}",
+            *tools_lines(roles, role),
             *([f"Story moves (.claude/bin/story): {', '.join(meta['transitions'])}"]
               if meta.get("transitions") else []),
             *([f"On merge (story-merge Action, from the PR's Story: lines): {', '.join(meta['on_merge'])}"]
@@ -597,13 +727,32 @@ def hook_session_start(_: list[str]) -> int:
     return 0
 
 
-def _decision(kind: str, reason: str) -> int:
-    print(json.dumps({"hookSpecificOutput": {
-        "hookEventName": "PreToolUse",
-        "permissionDecision": kind,
-        "permissionDecisionReason": reason,
-    }}))
+def _decision(kind: str, reason: str, context: list[str] | None = None) -> int:
+    out = {"hookEventName": "PreToolUse", "permissionDecision": kind, "permissionDecisionReason": reason}
+    if context:
+        out["additionalContext"] = " ".join(context)
+    print(json.dumps({"hookSpecificOutput": out}))
     return 0
+
+
+def _advise(context: list[str]) -> int:
+    """No decision (the permission rules decide), only a note for the model."""
+    if context:
+        print(json.dumps({"hookSpecificOutput": {"hookEventName": "PreToolUse",
+                                                 "additionalContext": " ".join(context)}}))
+    return 0
+
+
+def _session_tools_advice(data: dict, cwd: Path, advise) -> list[str]:
+    """Tool notes for this call; never raises, since advice must not turn into a failed hook."""
+    try:
+        root = repo_root(cwd)
+        if root is None:
+            return []
+        roles = Roles(root)
+        return advise(roles, hook_role(root, data.get("session_id", "")))
+    except Exception:  # noqa: BLE001
+        return []
 
 
 LANE_READ_TOOLS = {"Read", "NotebookRead", "Glob", "Grep", "LS"}
@@ -2283,9 +2432,22 @@ def hook_pre_bash(args: list[str]) -> int:
         if role != UNRESTRICTED:
             return _decision("deny", reason)
         asks.append(reason)
+    notes = _session_tools_advice(data, cwd, lambda roles, r: bash_tool_advice(roles, r, command))
     if asks:
-        return _decision("ask", " ".join(asks))
-    return 0
+        return _decision("ask", " ".join(asks), notes)
+    return _advise(notes)
+
+
+def hook_pre_url(args: list[str]) -> int:
+    """WebFetch and browser navigation: a note when the URL is one a session's tool covers."""
+    if _vendored_copy_in_lane(args):
+        return 0
+    data = _hook_input()
+    url = (data.get("tool_input") or {}).get("url") or ""
+    if not isinstance(url, str) or not url:
+        return 0
+    cwd = Path(data.get("cwd") or os.getcwd())
+    return _advise(_session_tools_advice(data, cwd, lambda roles, r: url_tool_advice(roles, r, url)))
 
 
 COMMANDS = {
@@ -2301,6 +2463,7 @@ COMMANDS = {
     "hook-session-start": hook_session_start,
     "hook-pre-tool-use": hook_pre_tool_use,
     "hook-pre-bash": hook_pre_bash,
+    "hook-pre-url": hook_pre_url,
 }
 
 
