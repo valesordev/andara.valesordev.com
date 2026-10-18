@@ -380,6 +380,9 @@ def drift_issue(root, title, body):
     else:
         gh("issue", "create", "--title", title, "--label", label, "--body-file", "-", input_text=body)
         tf.say("opened an issue labelled %s" % label)
+    # The workflow's fallback step opens the issue itself unless this says it was done, so a drift step that
+    # failed any other way (an exception that isn't tf.Exit, a failed gh) is still reported.
+    output("reported", "true")
 
 
 def close_drift_issue(root, url):

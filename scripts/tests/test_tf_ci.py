@@ -385,6 +385,20 @@ class Drift(Base):
                 self.assertEqual(len(bodies), 1)
                 self.assertIn("gh run list failed", bodies[0][1])
 
+    def test_an_opened_issue_is_recorded_for_the_fallback(self):
+        """The workflow's fallback runs unless the drift step says it reported (steps.drift.outputs.reported)."""
+        self.fake(plan_rc=2)
+        self.runs_gh()
+        self.sinks(lambda: tf_ci.cmd_drift("solo7", True, self.env))
+        with open(self.outputs) as f:
+            self.assertIn("reported=true", f.read())
+
+    def test_a_clean_check_records_nothing(self):
+        self.fake(plan_rc=0)
+        self.runs_gh()
+        self.sinks(lambda: tf_ci.cmd_drift("solo7", True, self.env))
+        self.assertFalse(os.path.exists(self.outputs) and "reported" in open(self.outputs).read())
+
     def test_a_failed_close_is_a_warning(self):
         self.fake(plan_rc=0)
         calls = self.runs_gh(issues='[{"number": 9}]', close_fails=True)

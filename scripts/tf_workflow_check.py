@@ -170,6 +170,12 @@ def check(workflow):
         out.append(("drift", "concurrency", "drift holds no concurrency group: queued into an apply's group "
                                             "it could replace a pending apply; tf_ci.py checks for an overlapping apply"))
     for n in ("drift", "drift-prod-irm"):
+        # The drift step can fail without reporting (an exception that isn't tf.Exit), so only its own
+        # `reported` output may stop the fallback, never its outcome.
+        fallbacks = [s for s in (jobs.get(n) or {}).get("steps") or [] if "failure()" in str(s.get("if", ""))]
+        if [str(s.get("if")) for s in fallbacks] != ["failure() && steps.drift.outputs.reported != 'true'"]:
+            out.append((n, "failure-report", "%s's fallback runs on failure() unless the drift step reported: "
+                                             "if: failure() && steps.drift.outputs.reported != 'true'" % n))
         if ((jobs.get(n) or {}).get("permissions") or {}).get("actions") != "read":
             out.append((n, "concurrency", "%s needs actions: read to list apply runs" % n))
     return out

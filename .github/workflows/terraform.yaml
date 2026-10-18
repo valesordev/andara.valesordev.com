@@ -323,11 +323,12 @@ jobs:
           TF_CI_FLEET_READ_TOKEN: ${{ secrets[format('GRAFANA_{0}_FLEET_READ_TOKEN', matrix.key)] }}
           TF_CI_WEBHOOK: ${{ secrets[matrix.webhook] }}
         run: python3 scripts/tf_ci.py drift --stack "${{ matrix.stack }}" --issue
-      # A failure before the drift step (checkout, bootstrap, auth) still opens the issue; the drift
-      # step opens it itself for anything it hits. gh --repo only: after a failed checkout there are
-      # no repository files to run (make tf-workflow-check, failure-report).
+      # Any failure the drift step didn't report itself opens the issue: one before it (checkout,
+      # bootstrap, auth), or one inside it that wasn't a reported tf.Exit. The step sets
+      # outputs.reported once it has opened or updated the issue. gh --repo only: after a failed checkout
+      # there are no repository files to run (make tf-workflow-check, failure-report).
       - name: a failed drift job opens the issue
-        if: failure() && steps.drift.outcome != 'failure'
+        if: failure() && steps.drift.outputs.reported != 'true'
         env:
           GH_TOKEN: ${{ github.token }}
           ROOT: ${{ matrix.stack }}
@@ -383,7 +384,7 @@ jobs:
           GRAFANA_SOLO7_IRM_TOKEN: ${{ secrets.GRAFANA_SOLO7_IRM_TOKEN }}
         run: python3 scripts/tf_ci.py drift --stack solo7-irm --issue
       - name: a failed drift job opens the issue
-        if: failure() && steps.drift.outcome != 'failure'
+        if: failure() && steps.drift.outputs.reported != 'true'
         env:
           GH_TOKEN: ${{ github.token }}
           ROOT: solo7-irm

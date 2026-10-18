@@ -132,6 +132,15 @@ class Workflow(unittest.TestCase):
         fallback["run"] = 'python3 scripts/tf_ci.py drift-issue --stack x --reason y'
         self.broken("drift", "failure-report")
 
+    def test_a_fallback_that_trusts_the_step_outcome(self):
+        """A drift step can fail without reporting (an exception that isn't tf.Exit); only its own
+        `reported` output may stop the fallback."""
+        for job in ("drift", "drift-prod-irm"):
+            with self.subTest(job=job):
+                self.w = load()
+                step(self.w["jobs"][job], "a failed drift job")["if"] = "failure() && steps.drift.outcome != 'failure'"
+                self.broken(job, "failure-report")
+
     def test_drift_reachable_by_dispatch(self):
         self.w["jobs"]["drift"]["if"] = "github.event_name == 'schedule' || github.event_name == 'workflow_dispatch'"
         self.broken("drift", "drift-auth")
