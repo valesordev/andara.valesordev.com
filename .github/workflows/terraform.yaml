@@ -1,0 +1,359 @@
+# Grafana Cloud through Terraform (AW-INF-068, ADR-0012 decisions 3 to 5).
+#
+#   plan           pull request: the pull request's Terraform, read as data, planned per stack after
+#                  scripts/tf_policy.py (from the BASE branch) allows it. Read credentials only.
+#   apply          main: solo7dev, then a second plan that must be empty. Environment andara-main.
+#   plan-prod      main, after apply: plans solo7-irm then solo7, uploads both plans encrypted with
+#                  TF_PLAN_KEY_PROD as a one-day artifact. Environment andara-prod-plan.
+#   apply-prod     waits for Brian's approval (environment andara-prod-apply), refuses a superseded
+#                  plan, applies exactly the approved plans, then checks that a second plan is empty.
+#   drift          daily, solo7dev and solo7; drift-prod-irm daily, the IRM root, from andara-prod-plan.
+#                  Each opens or updates one issue labelled drift:<root>, on drift and on failure.
+#
+# The property kept: a pull-request job never holds a credential that can change Grafana's
+# configuration or routing. Every Terraform call and every sink is in scripts/tf_ci.py; this file
+# calls no `terraform` and no `openssl` itself, and `make tf-workflow-check` (in `make check`)
+# refuses a job that breaks the credential and sink rules.
+
+name: terraform
+
+on:
+  pull_request_target:
+    branches: [main]
+    paths:
+      - "deploy/terraform/**"
+      - "deploy/helm/andara/files/alerts.yaml"
+      - "deploy/grafana/dashboards/**"
+  push:
+    branches: [main]
+    paths:
+      - "deploy/terraform/**"
+      - "deploy/helm/andara/files/alerts.yaml"
+      - "deploy/grafana/dashboards/**"
+      - "scripts/tf.py"
+      - "scripts/tf_ci.py"
+      - "scripts/tf_policy.py"
+      - ".github/workflows/terraform.yaml"
+  schedule:
+    - cron: "23 6 * * *"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  plan:
+    if: >-
+      github.event_name == 'pull_request_target'
+      && github.event.pull_request.head.repo.full_name == github.repository
+      && github.event.pull_request.base.ref == 'main'
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    permissions:
+      contents: read
+      id-token: write
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - stack: solo7dev
+            key: SOLO7DEV
+            webhook: SLACK_WEBHOOK_DEV
+          - stack: solo7
+            key: SOLO7
+            webhook: SLACK_WEBHOOK_PROD
+    concurrency:
+      group: terraform-plan-${{ github.event.pull_request.number }}-${{ matrix.stack }}
+      cancel-in-progress: true
+    steps:
+      # The base branch, by default for pull_request_target. Never add `ref:` the head here: the
+      # pull request's files are read as data below, never run.
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 1
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+      - name: OIDC claims (debug, ADR-0012 decision 3)
+        env:
+          GCP_WIF_PROVIDER: ${{ vars.GCP_WIF_PROVIDER }}
+        run: python3 scripts/tf_ci.py claims
+      - name: bootstrap
+        run: make bootstrap
+      - name: the pull request's files, as data
+        run: |
+          git fetch --no-tags --depth=1 origin "${{ github.event.pull_request.head.sha }}"
+          python3 scripts/tf_policy.py extract --repo . --rev "${{ github.event.pull_request.head.sha }}" \
+            --out "$RUNNER_TEMP/pr"
+      - name: tf-policy (the base branch's allow-list)
+        run: python3 scripts/tf_policy.py check --base . --head "$RUNNER_TEMP/pr"
+      - uses: google-github-actions/auth@v2
+        with:
+          workload_identity_provider: ${{ vars.GCP_WIF_PROVIDER }}
+          service_account: ${{ vars[format('TFSTATE_{0}_PLAN_SA', matrix.key)] }}
+      - name: plan
+        env:
+          TF_CI_READ_TOKEN: ${{ secrets[format('GRAFANA_{0}_READ_TOKEN', matrix.key)] }}
+          TF_CI_FLEET_READ_TOKEN: ${{ secrets[format('GRAFANA_{0}_FLEET_READ_TOKEN', matrix.key)] }}
+          TF_CI_WEBHOOK: ${{ secrets[matrix.webhook] }}
+        run: >-
+          python3 scripts/tf_ci.py pr-plan --stack "${{ matrix.stack }}"
+          --tf-dir "$RUNNER_TEMP/pr/deploy/terraform/grafana" --commit "${{ github.event.pull_request.head.sha }}"
+
+  apply:
+    if: github.event_name == 'push'
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    environment: andara-main
+    permissions:
+      contents: read
+      id-token: write
+    concurrency:
+      group: terraform-apply
+      cancel-in-progress: false
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+      - name: OIDC claims (debug, ADR-0012 decision 3)
+        env:
+          GCP_WIF_PROVIDER: ${{ vars.GCP_WIF_PROVIDER }}
+        run: python3 scripts/tf_ci.py claims
+      - name: bootstrap
+        run: make bootstrap
+      - uses: google-github-actions/auth@v2
+        with:
+          workload_identity_provider: ${{ vars.GCP_WIF_PROVIDER }}
+          service_account: ${{ vars.TFSTATE_SOLO7DEV_APPLY_SA }}
+      - name: apply solo7dev, then a second plan that must be empty
+        env:
+          GRAFANA_SOLO7DEV_APPLY_TOKEN: ${{ secrets.GRAFANA_SOLO7DEV_APPLY_TOKEN }}
+          GRAFANA_SOLO7DEV_FLEET_APPLY_TOKEN: ${{ secrets.GRAFANA_SOLO7DEV_FLEET_APPLY_TOKEN }}
+          SLACK_WEBHOOK_DEV: ${{ secrets.SLACK_WEBHOOK_DEV }}
+        run: python3 scripts/tf_ci.py apply --stack solo7dev --commit "${{ github.sha }}"
+
+  plan-prod:
+    needs: apply
+    if: github.event_name == 'push'
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    environment: andara-prod-plan
+    permissions:
+      contents: read
+      id-token: write
+    concurrency:
+      group: terraform-prod
+      cancel-in-progress: false
+    outputs:
+      changes: ${{ steps.plan.outputs.changes }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+      - name: OIDC claims (debug, ADR-0012 decision 3)
+        env:
+          GCP_WIF_PROVIDER: ${{ vars.GCP_WIF_PROVIDER }}
+        run: python3 scripts/tf_ci.py claims
+      - name: bootstrap
+        run: make bootstrap
+      - uses: google-github-actions/auth@v2
+        with:
+          workload_identity_provider: ${{ vars.GCP_WIF_PROVIDER }}
+          service_account: ${{ vars.TFSTATE_PRODPLAN_SA }}
+      - name: plan solo7-irm and solo7, encrypted
+        id: plan
+        env:
+          GRAFANA_SOLO7_READ_TOKEN: ${{ secrets.GRAFANA_SOLO7_READ_TOKEN }}
+          GRAFANA_SOLO7_FLEET_READ_TOKEN: ${{ secrets.GRAFANA_SOLO7_FLEET_READ_TOKEN }}
+          GRAFANA_SOLO7_IRM_TOKEN: ${{ secrets.GRAFANA_SOLO7_IRM_TOKEN }}
+          SLACK_WEBHOOK_PROD: ${{ secrets.SLACK_WEBHOOK_PROD }}
+          TF_PLAN_KEY_PROD: ${{ secrets.TF_PLAN_KEY_PROD }}
+        run: python3 scripts/tf_ci.py plan-prod --out "$RUNNER_TEMP/prod" --commit "${{ github.sha }}"
+      - uses: actions/upload-artifact@v4
+        with:
+          name: tf-plan-prod
+          path: |
+            ${{ runner.temp }}/prod/*.tfplan.enc
+            ${{ runner.temp }}/prod/manifest.json
+          retention-days: 1
+          if-no-files-found: error
+
+  apply-prod:
+    needs: plan-prod
+    if: github.event_name == 'push' && needs.plan-prod.outputs.changes == 'true'
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    environment: andara-prod-apply
+    permissions:
+      contents: read
+      id-token: write
+      actions: write
+    concurrency:
+      group: terraform-prod
+      cancel-in-progress: false
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+      - name: OIDC claims (debug, ADR-0012 decision 3)
+        env:
+          GCP_WIF_PROVIDER: ${{ vars.GCP_WIF_PROVIDER }}
+        run: python3 scripts/tf_ci.py claims
+      - name: bootstrap
+        run: make bootstrap
+      - uses: actions/download-artifact@v4
+        with:
+          name: tf-plan-prod
+          path: ${{ runner.temp }}/prod
+      - name: main's head (a superseded plan is refused)
+        id: head
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: echo "sha=$(gh api "repos/${{ github.repository }}/commits/main" --jq .sha)" >> "$GITHUB_OUTPUT"
+      - uses: google-github-actions/auth@v2
+        with:
+          workload_identity_provider: ${{ vars.GCP_WIF_PROVIDER }}
+          service_account: ${{ vars.TFSTATE_SOLO7_IRM_APPLY_SA }}
+      - name: apply solo7-irm
+        env:
+          GRAFANA_SOLO7_APPLY_TOKEN: ${{ secrets.GRAFANA_SOLO7_APPLY_TOKEN }}
+          GRAFANA_SOLO7_IRM_TOKEN: ${{ secrets.GRAFANA_SOLO7_IRM_TOKEN }}
+          TF_PLAN_KEY_PROD: ${{ secrets.TF_PLAN_KEY_PROD }}
+        run: >-
+          python3 scripts/tf_ci.py apply-prod --in "$RUNNER_TEMP/prod" --root solo7-irm
+          --main-head "${{ steps.head.outputs.sha }}"
+      - uses: google-github-actions/auth@v2
+        with:
+          workload_identity_provider: ${{ vars.GCP_WIF_PROVIDER }}
+          service_account: ${{ vars.TFSTATE_SOLO7_APPLY_SA }}
+      - name: apply solo7
+        env:
+          GRAFANA_SOLO7_APPLY_TOKEN: ${{ secrets.GRAFANA_SOLO7_APPLY_TOKEN }}
+          GRAFANA_SOLO7_FLEET_APPLY_TOKEN: ${{ secrets.GRAFANA_SOLO7_FLEET_APPLY_TOKEN }}
+          SLACK_WEBHOOK_PROD: ${{ secrets.SLACK_WEBHOOK_PROD }}
+          TF_PLAN_KEY_PROD: ${{ secrets.TF_PLAN_KEY_PROD }}
+        run: >-
+          python3 scripts/tf_ci.py apply-prod --in "$RUNNER_TEMP/prod" --root solo7
+          --main-head "${{ steps.head.outputs.sha }}"
+      - name: delete the plan artifact
+        if: always()
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          for id in $(gh api "repos/${{ github.repository }}/actions/runs/${{ github.run_id }}/artifacts" \
+              --jq '.artifacts[] | select(.name == "tf-plan-prod") | .id'); do
+            gh api -X DELETE "repos/${{ github.repository }}/actions/artifacts/$id"
+            echo "deleted artifact $id"
+          done
+
+  drift:
+    if: github.event_name == 'schedule' || github.event_name == 'workflow_dispatch'
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    permissions:
+      contents: read
+      id-token: write
+      issues: write
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - stack: solo7dev
+            key: SOLO7DEV
+            webhook: SLACK_WEBHOOK_DEV
+          - stack: solo7
+            key: SOLO7
+            webhook: SLACK_WEBHOOK_PROD
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+      - name: OIDC claims (debug, ADR-0012 decision 3)
+        env:
+          GCP_WIF_PROVIDER: ${{ vars.GCP_WIF_PROVIDER }}
+        run: python3 scripts/tf_ci.py claims
+      - name: bootstrap
+        run: make bootstrap
+      - uses: google-github-actions/auth@v2
+        with:
+          workload_identity_provider: ${{ vars.GCP_WIF_PROVIDER }}
+          service_account: ${{ vars[format('TFSTATE_{0}_PLAN_SA', matrix.key)] }}
+      - name: drift
+        id: drift
+        env:
+          GH_TOKEN: ${{ github.token }}
+          TF_CI_READ_TOKEN: ${{ secrets[format('GRAFANA_{0}_READ_TOKEN', matrix.key)] }}
+          TF_CI_FLEET_READ_TOKEN: ${{ secrets[format('GRAFANA_{0}_FLEET_READ_TOKEN', matrix.key)] }}
+          TF_CI_WEBHOOK: ${{ secrets[matrix.webhook] }}
+        run: python3 scripts/tf_ci.py drift --stack "${{ matrix.stack }}" --issue
+      # A failure before the drift step (checkout, bootstrap, auth) still opens the issue; the drift
+      # step opens it itself for anything it hits.
+      - name: a failed drift job opens the issue
+        if: failure() && steps.drift.outcome != 'failure'
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: >-
+          python3 scripts/tf_ci.py drift-issue --stack "${{ matrix.stack }}"
+          --reason "a step before the drift check failed"
+
+  drift-prod-irm:
+    if: github.event_name == 'schedule' || github.event_name == 'workflow_dispatch'
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    environment: andara-prod-plan
+    permissions:
+      contents: read
+      id-token: write
+      issues: write
+    concurrency:
+      group: terraform-prod
+      cancel-in-progress: false
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+      - name: OIDC claims (debug, ADR-0012 decision 3)
+        env:
+          GCP_WIF_PROVIDER: ${{ vars.GCP_WIF_PROVIDER }}
+        run: python3 scripts/tf_ci.py claims
+      - name: bootstrap
+        run: make bootstrap
+      - uses: google-github-actions/auth@v2
+        with:
+          workload_identity_provider: ${{ vars.GCP_WIF_PROVIDER }}
+          service_account: ${{ vars.TFSTATE_PRODPLAN_SA }}
+      - name: drift (addresses and actions only)
+        id: drift
+        env:
+          GH_TOKEN: ${{ github.token }}
+          GRAFANA_SOLO7_READ_TOKEN: ${{ secrets.GRAFANA_SOLO7_READ_TOKEN }}
+          GRAFANA_SOLO7_IRM_TOKEN: ${{ secrets.GRAFANA_SOLO7_IRM_TOKEN }}
+        run: python3 scripts/tf_ci.py drift --stack solo7-irm --issue
+      - name: a failed drift job opens the issue
+        if: failure() && steps.drift.outcome != 'failure'
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: python3 scripts/tf_ci.py drift-issue --stack solo7-irm --reason "a step before the drift check failed"
