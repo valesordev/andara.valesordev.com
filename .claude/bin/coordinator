@@ -554,6 +554,11 @@ class Ctx:
             why = check_allow_entry(entry)
             if why:
                 raise CoordError(f"role {name!r}: lane_allow entry {entry!r} refused: {why}")
+        for entry in tool_allow(self, name):
+            why = check_allow_entry(entry)
+            if why:
+                raise CoordError(f"role {name!r}: a rule its tools allow, {entry!r}, is refused for a "
+                                 f"lane: {why}")
         if not cfg["start_skill"]:
             raise CoordError(f"role {name!r} has no start_skill: add `start_skill: <skill>` to its charter")
         if cfg["inbox"] and cfg["sprint_run"] != "story":
@@ -796,6 +801,40 @@ def prompt_for(lane: dict, run_id: str, ctx: Ctx, sid: str = "", scratch: Path |
     return head + body + tail
 
 
+def tool_allow(ctx: Ctx, name: str) -> list[str]:
+    """The `allow` rules of the tools a role uses (_repo.md's and its own `tools:`), from the main
+    checkout's .claude/tools/: the reads. A tool's `ask` rules aren't a lane's, so `dontAsk` denies them."""
+    out: list[str] = []
+    for t in role.load_tools(ctx.roles, ctx.roles.resolve(name)):
+        out += [r for r in t.get("allow") or [] if isinstance(r, str)]
+    return out
+
+
+def tool_problems(ctx: Ctx, host, lanes: list[dict]) -> list[str]:
+    """The lanes' tools whose `check` fails for whoever runs the lanes: warnings, never a refusal
+    (the lane's charter flags the tool as not available, too)."""
+    seen, out = set(), []
+    for lane in lanes:
+        for t in role.load_tools(ctx.roles, ctx.roles.resolve(lane["role"])):
+            name, check = t.get("tool"), t.get("check") or ""
+            if name in seen or not check:
+                continue
+            seen.add(name)
+            if isinstance(host, OsUser):
+                try:
+                    argv = shlex.split(check)
+                except ValueError:
+                    continue
+                r = ctx.sh.run(["sudo", "-n", "-i", "-u", host.user, *argv], cwd=Path("/"))
+                problem = None if r.returncode == 0 else \
+                    f"`{check}` fails for {host.user} (is {argv[0]} installed for it?)"
+            else:
+                problem = role.tool_check_problem(t)
+            if problem:
+                out.append(f"{t.get('domain') or name}: {problem}; lanes that use {name} can't")
+    return out
+
+
 def lane_allow(ctx: Ctx, lane: dict) -> list[str]:
     cfg = ctx.settings(lane["role"])
     allow = list(LANE_ALLOW)
@@ -805,6 +844,7 @@ def lane_allow(ctx: Ctx, lane: dict) -> list[str]:
     if cfg["watch_label"]:
         allow += WATCH_ALLOW
     allow += cfg["lane_allow"]
+    allow += tool_allow(ctx, lane["role"])
     return list(dict.fromkeys(allow))
 
 
@@ -2540,6 +2580,8 @@ def cmd_run(ctx: Ctx, a) -> int:
             return 1
         print(f"lanes run as OS user {host.user}" if apart else f"WARNING: {why}")
         for w in o11y_problems(host, dict(os.environ)) if apart else []:
+            print(f"WARNING: {w}")
+        for w in tool_problems(ctx, host, lanes):
             print(f"WARNING: {w}")
         ctx.lane_token = token
         if token:   # who the app asks to review a lane's PR: you, as your gh knows you
