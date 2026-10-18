@@ -12,6 +12,16 @@ variables {
     dev_page = { environment = "dev", severity = "page" }
     unknown  = { environment = "unknown", severity = "page" }
     none     = { severity = "page" }
+    # The three Synthetic Monitoring rules (TLSTargetCertificateCloseToExpiring,
+    # ProbeFailedExecutionsTooHigh [5m], HTTPRequestDurationTooHighAvg [5m]) carry these labels and no
+    # environment or severity. Brian has not routed them elsewhere, so they reach #andaras-world
+    # (AW-INF-068 AC-13).
+    synthetic_monitoring = {
+      "__grafana_origin" = "plugin/grafana-synthetic-monitoring-app"
+      namespace          = "synthetic_monitoring"
+      alertname          = "ProbeFailedExecutionsTooHigh [5m]"
+      job                = "valesordev.com http"
+    }
   }
 }
 
@@ -66,7 +76,7 @@ run "irm_routes" {
   }
   assert {
     condition = alltrue([
-      for a in ["warning", "dev_page", "unknown", "none"] : jsonencode(output.routes[a]) == jsonencode(["slack-prod"])
+      for a in ["warning", "dev_page", "unknown", "none", "synthetic_monitoring"] : jsonencode(output.routes[a]) == jsonencode(["slack-prod"])
     ])
     error_message = "solo7: every other alert must reach slack-prod only; got ${jsonencode(output.routes)}."
   }
