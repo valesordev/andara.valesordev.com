@@ -10,8 +10,8 @@ and bin/kubectl, the versions `make bootstrap` pins, never whatever is on PATH, 
 export from or delete any other cluster.
 
   up       create `andara` if absent; a rerun says it exists and changes nothing, except to add the
-           context kind-andara if a failed first run left it out. Either way, it ends only once
-           every node is Ready, and fails if one isn't. Ports 8080 and 8443 must be free
+           context kind-andara if a failed first run left it out. Every run, first or not, ends
+           only once every node is Ready, and fails if one isn't. Ports 8080 and 8443 must be free
            first: the compose stack publishes them as ANDARA_HTTP_PORT and ANDARA_GRPC_PORT until
            AW-INF-060 and AW-INF-064 retire it. kind writes its context to a kubeconfig of its own,
            copied into the user's with `kubectl config set`, so the current-context never moves and
@@ -210,7 +210,10 @@ def wait_ready(r, kubectl):
     run(kubectl, "--context", CONTEXT, "wait", "--for=condition=Ready", "nodes", "--all", "--timeout=" + WAIT)
     nodes = run(kubectl, "--context", CONTEXT, "get", "nodes", "--no-headers").stdout
     rows = [line.split() for line in nodes.splitlines() if line.strip()]
-    r.say("nodes %d/%d Ready" % (sum(1 for row in rows if len(row) > 1 and row[1] == "Ready"), len(rows)))
+    ready = sum(1 for row in rows if len(row) > 1 and row[1] == "Ready")
+    if not rows or ready < len(rows):
+        raise Failed("nodes %d/%d Ready after the wait: %s" % (ready, len(rows), nodes.strip() or "no nodes"))
+    r.say("nodes %d/%d Ready" % (ready, len(rows)))
     r.say("ready context=%s" % CONTEXT)
 
 

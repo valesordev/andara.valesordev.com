@@ -122,10 +122,15 @@ class Kind:
         elif tool == "kubectl" and args[:2] == ("config", "set"):
             self.entries[args[2]] = args[3]
         elif tool == "kubectl" and "wait" in args and not self.ready:
-            raise cluster.Failed("kubectl --context kind-andara failed: timed out waiting for the condition on nodes/andara-worker2")
+            # As cluster.run does: raise only when the caller checks, so ignoring the wait's exit shows.
+            err = "timed out waiting for the condition on nodes/andara-worker2"
+            if check:
+                raise cluster.Failed("kubectl --context kind-andara failed: " + err)
+            return types.SimpleNamespace(returncode=1, stdout="", stderr=err)
         elif tool == "kubectl" and "nodes" in args:
             out = "andara-control-plane Ready control-plane 1m v1.36.4\n" + \
-                  "".join("andara-worker%s Ready <none> 1m v1.36.4\n" % s for s in ("", "2", "3"))
+                  "".join("andara-worker%s %s <none> 1m v1.36.4\n" % (s, "Ready" if self.ready or s != "2" else "NotReady")
+                          for s in ("", "2", "3"))
         return types.SimpleNamespace(returncode=0, stdout=out, stderr="")
 
     def made(self, *words):
@@ -203,6 +208,22 @@ class Up(Base):
         self.fake(Kind(clusters=("solo7", "andara"), ready=False))
         with self.assertRaises(cluster.Failed):
             cluster.up(self.run_, self.free_ports())
+        self.assertNotIn("ready context=kind-andara", self.out)
+
+    def test_a_node_not_ready_in_the_count_fails(self):
+        """A node that goes NotReady between the wait and the count still fails the run."""
+        k = self.fake(Kind(clusters=("solo7", "andara")))
+        k_run = k.run
+
+        def run(*cmd, check=True):
+            if "get" in cmd and "nodes" in cmd:
+                k.ready = False
+            return k_run(*cmd, check=check)
+
+        cluster.run = run
+        with self.assertRaises(cluster.Failed) as e:
+            cluster.up(self.run_, self.free_ports())
+        self.assertIn("3/4", str(e.exception))
         self.assertNotIn("ready context=kind-andara", self.out)
 
     def test_a_rerun_adds_a_missing_context_without_moving_current(self):
