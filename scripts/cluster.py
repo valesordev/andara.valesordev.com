@@ -210,7 +210,8 @@ def wait_ready(r, kubectl):
     run(kubectl, "--context", CONTEXT, "wait", "--for=condition=Ready", "nodes", "--all", "--timeout=" + WAIT)
     nodes = run(kubectl, "--context", CONTEXT, "get", "nodes", "--no-headers").stdout
     rows = [line.split() for line in nodes.splitlines() if line.strip()]
-    ready = sum(1 for row in rows if len(row) > 1 and row[1] == "Ready")
+    # STATUS is the Ready condition plus flags: a cordoned node is `Ready,SchedulingDisabled`.
+    ready = sum(1 for row in rows if len(row) > 1 and row[1].split(",")[0] == "Ready")
     if not rows or ready < len(rows):
         raise Failed("nodes %d/%d Ready after the wait: %s" % (ready, len(rows), nodes.strip() or "no nodes"))
     r.say("nodes %d/%d Ready" % (ready, len(rows)))

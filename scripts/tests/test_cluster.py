@@ -210,6 +210,36 @@ class Up(Base):
             cluster.up(self.run_, self.free_ports())
         self.assertNotIn("ready context=kind-andara", self.out)
 
+    def test_a_cordoned_node_is_ready(self):
+        """kubectl shows a cordoned node as `Ready,SchedulingDisabled`; its Ready condition is still True."""
+        k = self.fake(Kind(clusters=("solo7", "andara")))
+        k_run = k.run
+
+        def run(*cmd, check=True):
+            p = k_run(*cmd, check=check)
+            if "get" in cmd and "nodes" in cmd:
+                p.stdout = p.stdout.replace("andara-worker2 Ready", "andara-worker2 Ready,SchedulingDisabled")
+            return p
+
+        cluster.run = run
+        cluster.up(self.run_, self.free_ports())
+        self.assertIn("nodes 4/4 Ready", self.out)
+
+    def test_no_nodes_fails(self):
+        k = self.fake(Kind(clusters=("solo7", "andara")))
+        k_run = k.run
+
+        def run(*cmd, check=True):
+            p = k_run(*cmd, check=check)
+            if "get" in cmd and "nodes" in cmd:
+                p.stdout = ""
+            return p
+
+        cluster.run = run
+        with self.assertRaises(cluster.Failed) as e:
+            cluster.up(self.run_, self.free_ports())
+        self.assertIn("no nodes", str(e.exception))
+
     def test_a_node_not_ready_in_the_count_fails(self):
         """A node that goes NotReady between the wait and the count still fails the run."""
         k = self.fake(Kind(clusters=("solo7", "andara")))
