@@ -108,7 +108,7 @@ make tf-apply STACK=solo7dev          # plan, apply that plan, then a second pla
 | `apply` | merge to `main`, or `make tf-replan` | `andara-main` | applies `solo7dev`, then a second plan that must be empty |
 | `plan-prod` | after `apply` | `andara-prod-plan` | plans `solo7-irm` then `solo7`, uploads both encrypted with `TF_PLAN_KEY_PROD` (one-day artifact), prints each plan's sha256 |
 | `apply-prod` | after `plan-prod`, only when it found changes | `andara-prod-apply` (Brian approves) | refuses a plan whose commit is not `main`'s head, applies exactly the approved plans, checks that a second plan is empty, deletes the artifact |
-| `drift`, `drift-prod-irm` | daily, 06:23 UTC | none / `andara-prod-plan` | opens or updates the issue labelled `drift:<root>` on drift or on any failure of the job |
+| `drift`, `drift-prod-irm` | daily, 06:23 UTC | none / `andara-prod-plan` | opens or updates the issue labelled `drift:<root>` on drift or on any failure of the job, and closes it on a clean check |
 
 The `solo7-irm` root's summaries, logs and drift issue carry resource addresses and actions only, because
 the provider prints the IRM integration URL in clear.
@@ -150,8 +150,14 @@ one. A replaced `plan-prod` shows as cancelled in the run list.
 **Drift.** An issue labelled `drift:<root>` means a managed resource was changed outside Terraform, or
 the drift job failed. The issue says which. Revert the hand edit in the UI, or make it in code and merge.
 The next clean daily check closes the issue, with a comment naming its run. For `solo7dev`, `make tf-drift
-STACK=solo7dev` re-checks from the dev box (exit 1 while it drifts). Each drift check waits for its root's
-apply to finish, so it never reports a half-applied stack.
+STACK=solo7dev` re-checks from the dev box (exit 1 while it drifts).
+
+A drift check never reports a half-applied stack. Before it plans, it waits up to 20 minutes for any
+`apply` or `apply-prod` run (a merge, or `make tf-replan`) to finish. If one is still going, the check
+logs `skipped` and leaves the issue alone. If one began while it planned, it logs `inconclusive` and leaves
+the issue alone. Either way, the next day's check covers it. `drift-prod-irm` shares the prod concurrency
+group, so another prod job can replace it while it is pending (it shows as cancelled), and the next day's
+run covers that too.
 
 ## A held lock
 

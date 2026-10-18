@@ -80,10 +80,27 @@ class Base(unittest.TestCase):
         p = mock.patch.dict(os.environ, {"GITHUB_STEP_SUMMARY": self.summary, "GITHUB_OUTPUT": self.outputs})
         p.start()
         self.addCleanup(p.stop)
-        # Never the box's real credentials.
+        # Never the box's real credentials, and never the real gh: a test that needs gh patches it.
         b = mock.patch.object(tf, "box_env_path", lambda env: None)
         b.start()
         self.addCleanup(b.stop)
+
+        def no_gh(*args, input_text=None):
+            raise AssertionError("a test reached the real gh: gh %s" % " ".join(args))
+
+        g = mock.patch.object(tf_ci, "gh", no_gh)
+        g.start()
+        self.addCleanup(g.stop)
+        # A fake clock: sleep advances it, so a wait runs out without real time passing.
+        self.clock = [0.0]
+
+        def sleep(seconds):
+            self.clock[0] += seconds
+
+        for name, fake in (("sleep", sleep), ("monotonic", lambda: self.clock[0])):
+            s = mock.patch.object(tf_ci.time, name, fake)
+            s.start()
+            self.addCleanup(s.stop)
         self.env = {"PATH": os.environ["PATH"], "TF_PLAN_KEY_PROD": KEY, "GITHUB_ACTIONS": "true",
                     "GRAFANA_SOLO7_READ_TOKEN": "read", "GRAFANA_SOLO7_APPLY_TOKEN": "apply",
                     "GRAFANA_SOLO7_IRM_TOKEN": "irm", "SLACK_WEBHOOK_PROD": "https://hooks.slack.invalid/x",
@@ -176,7 +193,8 @@ class Irm(Base):
     def test_drift_issue_body(self):
         self.fake(plan_json=irm_plan_json(), plan_rc=2)
         bodies = []
-        with mock.patch.object(tf_ci, "drift_issue", lambda root, title, body: bodies.append(body)):
+        with mock.patch.object(tf_ci, "drift_issue", lambda root, title, body: bodies.append(body)), \
+                mock.patch.object(tf_ci, "gh", lambda *a, **k: "[]"):
             result, text = self.sinks(lambda: tf_ci.cmd_drift("solo7-irm", True, self.env))
         self.assertIsInstance(result, tf.Exit)
         self.assertEqual(result.code, 1)
@@ -240,6 +258,75 @@ class Drift(Base):
         self.fake(plan_rc=0)
         self.assertEqual(tf_ci.main(["drift", "--stack", "solo7dev"], self.env), 0)
 
+    def runs_gh(self, *run_lists, issues="[]", close_fails=False):
+        """A gh whose `run list` answers come from run_lists in turn (the last repeats)."""
+        calls, answers = [], list(run_lists)
+
+        def gh(*args, input_text=None):
+            calls.append(args)
+            if args[:2] == ("run", "list"):
+                return json.dumps(answers.pop(0) if len(answers) > 1 else answers[0])
+            if args[:2] == ("issue", "list"):
+                return issues
+            if args[:2] == ("issue", "close") and close_fails:
+                raise tf.Exit(1, "gh issue close failed: HTTP 403")
+            return ""
+
+        p = mock.patch.object(tf_ci, "gh", gh)
+        p.start()
+        self.addCleanup(p.stop)
+        return calls
+
+    def apply_run(self, created="2999-01-01T00:00:00Z", status="in_progress"):
+        return {"databaseId": 77, "event": "push", "status": status, "createdAt": created}
+
+    def test_without_issue_no_gh_at_all(self):
+        """make tf-drift from the dev box: no run guard, no issue."""
+        self.fake(plan_rc=0)
+        self.assertEqual(tf_ci.main(["drift", "--stack", "solo7dev"], self.env), 0)
+
+    def test_waits_out_an_apply_in_progress(self):
+        t = self.fake(plan_rc=0)
+        calls = self.runs_gh([self.apply_run()], [self.apply_run()], [])
+        result, text = self.sinks(lambda: tf_ci.cmd_drift("solo7", True, self.env))
+        self.assertEqual(result, 0)
+        self.assertGreaterEqual(len([c for c in calls if c[:2] == ("run", "list")]), 3)
+        self.assertTrue([c for c in t.calls if c[0][0] == "plan"])
+
+    def test_an_apply_that_never_ends_skips_the_check(self):
+        t = self.fake(plan_rc=2)
+        calls = self.runs_gh([self.apply_run()])
+        result, text = self.sinks(lambda: tf_ci.cmd_drift("solo7", True, self.env))
+        self.assertEqual(result, 0)
+        self.assertIn("skipped", text)
+        self.assertEqual([c for c in t.calls if c[0][0] == "plan"], [])
+        self.assertFalse(any(c[0] == "issue" for c in calls))
+
+    def test_an_apply_started_during_the_plan_makes_it_inconclusive(self):
+        t = self.fake(plan_rc=2)
+        calls = self.runs_gh([], [self.apply_run(created="2999-01-01T00:00:00Z", status="completed")])
+        result, text = self.sinks(lambda: tf_ci.cmd_drift("solo7", True, self.env))
+        self.assertEqual(result, 0)
+        self.assertIn("inconclusive", text)
+        self.assertTrue([c for c in t.calls if c[0][0] == "plan"])
+        self.assertFalse(any(c[0] == "issue" for c in calls), "no drift issue from a half-applied stack")
+
+    def test_an_older_finished_run_does_not_count(self):
+        self.fake(plan_rc=0)
+        calls = self.runs_gh([self.apply_run(created="2000-01-01T00:00:00Z", status="completed")])
+        result, _ = self.sinks(lambda: tf_ci.cmd_drift("solo7", True, self.env))
+        self.assertEqual(result, 0)
+        self.assertTrue(any(c[:2] == ("issue", "list") for c in calls), "a clean check went on to the issue")
+
+    def test_a_failed_close_is_a_warning(self):
+        self.fake(plan_rc=0)
+        calls = self.runs_gh([], issues='[{"number": 9}]', close_fails=True)
+        result, text = self.sinks(lambda: tf_ci.cmd_drift("solo7", True, self.env))
+        self.assertEqual(result, 0)
+        self.assertIn("closing issue #9 failed", text)
+        self.assertFalse(any(c[:2] == ("issue", "comment") for c in calls))
+        self.assertNotIn("failed before it could compare", text)
+
     def test_no_drift_closes_the_open_issue(self):
         self.fake(plan_rc=0)
         calls = []
@@ -299,7 +386,8 @@ class Drift(Base):
     def test_a_failed_job_opens_the_issue(self):
         self.env.pop("GRAFANA_SOLO7_READ_TOKEN")
         bodies = []
-        with mock.patch.object(tf_ci, "drift_issue", lambda root, title, body: bodies.append((title, body))):
+        with mock.patch.object(tf_ci, "drift_issue", lambda root, title, body: bodies.append((title, body))), \
+                mock.patch.object(tf_ci, "gh", lambda *a, **k: "[]"):
             result, _ = self.sinks(lambda: tf_ci.cmd_drift("solo7", True, self.env))
         self.assertEqual(result.code, 3)
         self.assertEqual(len(bodies), 1)

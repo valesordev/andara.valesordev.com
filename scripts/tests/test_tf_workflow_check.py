@@ -169,13 +169,15 @@ class Workflow(unittest.TestCase):
         self.w["jobs"]["apply-prod"]["concurrency"]["group"] = "elsewhere"
         self.broken("plan-prod", "concurrency")
 
-    def test_drift_without_its_roots_apply_group(self):
-        """A drift leg plans without a lock, so it waits for its root's apply: solo7 apply-prod's, solo7dev apply's."""
-        self.w["jobs"]["drift"].pop("concurrency", None)
+    def test_drift_in_an_apply_group(self):
+        """In an apply's group, a drift leg could replace a pending apply; tf_ci.py waits out applies instead."""
+        self.w["jobs"]["drift"]["concurrency"] = {
+            "group": "${{ matrix.stack == 'solo7' && 'terraform-prod' || 'terraform-apply' }}", "cancel-in-progress": False}
         self.broken("drift", "concurrency")
 
-    def test_drift_in_the_wrong_group(self):
-        self.w["jobs"]["drift"]["concurrency"] = {"group": "terraform-drift-${{ matrix.stack }}", "cancel-in-progress": False}
+    def test_drift_without_actions_read(self):
+        """The apply guard lists the workflow's runs, which needs actions: read."""
+        self.w["jobs"]["drift"]["permissions"].pop("actions", None)
         self.broken("drift", "concurrency")
 
     def test_drift_prod_irm_cancelling(self):

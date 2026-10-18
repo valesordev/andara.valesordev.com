@@ -18,7 +18,8 @@ reads the workflow and fails on any job that breaks one of these rules, naming t
   pr-plan            the pull-request `plan` job referencing anything but its own stack's READ and
                      FLEET_READ tokens, plan service account and webhook, or holding an environment
   concurrency        `apply` outside its own group, or plan-prod, apply-prod and drift-prod-irm outside one
-                     shared group; any of them cancelling a run in progress
+                     shared group; any of them cancelling a run in progress; `drift` holding any group (it
+                     could replace a pending apply); a drift job without `actions: read` (it waits out applies)
   secrets-context    the whole secrets context (`toJSON(secrets)`, a bare `secrets`) anywhere
   drift-auth         a drift job that runs on anything but the schedule (the plan accounts trust no dispatch)
   failure-report     a `failure()` step that runs a repository file: it may be reporting a failed checkout
@@ -163,13 +164,14 @@ def check(workflow):
     for n, (_, cancel) in prod.items():
         if cancel is not False:
             out.append((n, "concurrency", "cancel-in-progress must be false"))
-    # drift's legs plan without a lock: solo7 waits in the prod group, solo7dev in apply's.
-    prod_group = next(iter(groups)) if len(groups) == 1 else None
-    want = "${{ matrix.stack == 'solo7' && '%s' || '%s' }}" % (prod_group, apply_group)
-    drift_group, drift_cancel = group("drift")
-    if drift_group != want or drift_cancel is not False:
-        out.append(("drift", "concurrency", "drift's legs wait in their root's apply group: group: %s, "
-                                            "cancel-in-progress: false" % want))
+    # drift plans without a lock. In an apply's group it could replace that group's pending apply, so it
+    # holds no group; tf_ci.py waits out apply runs instead, which needs actions: read on both drift jobs.
+    if (jobs.get("drift") or {}).get("concurrency"):
+        out.append(("drift", "concurrency", "drift holds no concurrency group: queued into an apply's group "
+                                            "it could replace a pending apply; tf_ci.py waits out applies"))
+    for n in ("drift", "drift-prod-irm"):
+        if ((jobs.get(n) or {}).get("permissions") or {}).get("actions") != "read":
+            out.append((n, "concurrency", "%s needs actions: read to wait out apply runs" % n))
     return out
 
 

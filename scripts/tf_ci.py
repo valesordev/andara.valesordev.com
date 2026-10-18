@@ -46,6 +46,7 @@ import shutil
 import subprocess
 import sys
 import tempfile
+import time
 import urllib.parse
 import urllib.request
 
@@ -382,13 +383,61 @@ def drift_issue(root, title, body):
 
 
 def close_drift_issue(root, url):
-    """A clean check closes the open drift:<root> issue: an open one means drift or a failure now."""
-    found = json.loads(gh("issue", "list", "--label", "drift:" + root, "--state", "open", "--json", "number",
-                          "--limit", "1"))
-    if found:
-        gh("issue", "close", str(found[0]["number"]), "--comment",
-           "No drift in `%s` as of %s; closing." % (root, url))
-        tf.say("closed issue #%s (drift:%s)" % (found[0]["number"], root))
+    """A clean check closes the open drift:<root> issue: an open one means drift or a failure now. The
+    comparison already succeeded, so a gh failure here is reported, never turned into a failed check."""
+    try:
+        found = json.loads(gh("issue", "list", "--label", "drift:" + root, "--state", "open", "--json", "number",
+                              "--limit", "1") or "[]")
+    except tf.Exit as e:
+        tf.say("drift %s: none, but listing its drift issue failed: %s" % (root, e.msg))
+        return
+    if not found:
+        return
+    number = found[0]["number"]
+    try:
+        gh("issue", "close", str(number), "--comment", "No drift in `%s` as of %s; closing." % (root, url))
+    except tf.Exit as e:
+        tf.say("drift %s: none, but closing issue #%s failed: %s" % (root, number, e.msg))
+        return
+    tf.say("closed issue #%s (drift:%s)" % (number, root))
+
+
+# The drift check plans with -lock=false (its accounts can only read), so it must not compare while an
+# apply is changing the stack. A concurrency group would do that, but a scheduled job queued into an apply's
+# group can replace that group's pending apply (GitHub keeps one pending job per group). So the check waits
+# out the workflow's push and dispatch runs instead, and calls its result inconclusive if one began while it
+# planned.
+APPLY_EVENTS = ("push", "workflow_dispatch")
+ACTIVE = ("queued", "in_progress", "waiting", "pending", "requested")
+APPLY_WAIT_SECONDS = 1200
+APPLY_POLL_SECONDS = 30
+
+
+def apply_runs(env):
+    """This workflow's push and dispatch runs, other than this one."""
+    out = gh("run", "list", "--workflow", "terraform.yaml", "--json", "databaseId,event,status,createdAt",
+             "--limit", "30")
+    runs = json.loads(out or "[]")
+    me = str(env.get("GITHUB_RUN_ID", ""))
+    return [r for r in runs if r.get("event") in APPLY_EVENTS and str(r.get("databaseId")) != me]
+
+
+def wait_for_applies(env):
+    """True once no apply run is queued or running; False if one still is after APPLY_WAIT_SECONDS."""
+    deadline = time.monotonic() + APPLY_WAIT_SECONDS
+    while True:
+        busy = [r for r in apply_runs(env) if r.get("status") in ACTIVE]
+        if not busy:
+            return True
+        if time.monotonic() >= deadline:
+            return False
+        tf.say("an apply run is %s (run %s); waiting" % (busy[0].get("status"), busy[0].get("databaseId")))
+        time.sleep(APPLY_POLL_SECONDS)
+
+
+def applied_since(env, started):
+    """An apply run created at or after started (an ISO-8601 UTC string), or None."""
+    return next((r for r in apply_runs(env) if str(r.get("createdAt", "")) >= started), None)
 
 
 def cmd_drift(root, issue, env):
@@ -397,6 +446,11 @@ def cmd_drift(root, issue, env):
     if root != "solo7dev" and env.get("GITHUB_ACTIONS") != "true":
         raise tf.Exit(2, "%s's drift is checked by CI only (ADR-0012 decision 4)" % root)
     env = tf.load_box_env(env)
+    if issue and not wait_for_applies(env):
+        tf.say("drift %s: skipped; an apply run was still going after %d minutes. The next scheduled check "
+               "covers it." % (root, APPLY_WAIT_SECONDS // 60))
+        return 0
+    started = time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime())
     try:
         tenv = root_env(root, env, "plan")
         cwd = root_in(tf.TF_DIR, root)
@@ -405,12 +459,7 @@ def cmd_drift(root, issue, env):
         try:
             plan_file = os.path.join(tmp, "plan")
             rc = plan_to(cwd, root, tenv, plan_file, lock=False, detailed=True)
-            if rc == 0:
-                tf.say("drift %s: none" % root)
-                if issue:
-                    close_drift_issue(root, run_url(env))
-                return 0
-            text, pj = plan_report(root, "the live stack", cwd, tenv, plan_file)
+            text, pj = (plan_report(root, "the live stack", cwd, tenv, plan_file) if rc else (None, None))
         finally:
             shutil.rmtree(tmp, ignore_errors=True)
     except tf.Exit as e:
@@ -419,6 +468,17 @@ def cmd_drift(root, issue, env):
                         "The drift job for `%s` failed before it could compare: %s\n\nRun: %s\n"
                         % (root, "credential unset" if e.code == 3 else e.msg, run_url(env)))
         raise
+    if issue:
+        moved = applied_since(env, started)
+        if moved:
+            tf.say("drift %s: inconclusive; apply run %s began while this check planned, so the issue is left "
+                   "as it was. The next scheduled check covers it." % (root, moved.get("databaseId")))
+            return 0
+    if rc == 0:
+        tf.say("drift %s: none" % root)
+        if issue:
+            close_drift_issue(root, run_url(env))
+        return 0
     tf.say("drift %s: %s" % (root, counts_line(pj)))
     if issue:
         body = "The live `%s` stack differs from `main` (someone changed a managed resource by hand, or an "
