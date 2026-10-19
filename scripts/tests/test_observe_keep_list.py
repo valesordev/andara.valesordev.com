@@ -41,8 +41,9 @@ class Store:
         return [s for s in self.series if selects(selector, s)]
 
     def metrics_labels(self, ctx, label, match=None):
+        # Stack-wide, with no window: values whose samples are older than the series window still show.
         self.selectors.append((ctx, "labels:" + label))
-        return sorted({s[label] for s in self.series if label in s})
+        return sorted({s[label] for s in self.series + getattr(self, "stale", []) if label in s})
 
 
 def healthy(env="dev", names=None):
@@ -124,7 +125,8 @@ class KeepList(unittest.TestCase):
         code, out = run(store)
         self.assertEqual(code, 0, out)
         self.assertIn("always-present", out)
-        self.assertRegex(out, r"summary: always-present \d+ pass, 0 fail; fault-only 2 named, not queried")
+        self.assertRegex(out, r"summary: always-present \d+ pass, 0 fail; environment 0 fail; fault-only 2 named, "
+                              r"not queried")
         self.assertEqual({c for c, _ in store.selectors}, {"solo7dev"})
         presence = [s for _, s in store.selectors if 'environment="unknown"' not in s]
         self.assertFalse([s for s in presence if any(f in s for f in kl.FAULT_ONLY)],
@@ -185,13 +187,28 @@ class KeepList(unittest.TestCase):
 
     def test_an_environment_value_outside_the_five_fails(self):
         """ADR-0012 decision 9: a sender that sets environment outside local/dev/staging/prod/unknown is reported."""
-        stray = healthy() + [{"__name__": "up", "environment": "development", "namespace": "andara-dev"}]
+        stray = healthy() + [{"__name__": "up", "environment": "development", "namespace": "andara-dev",
+                              "job": "andara-server"}]
         code, out = run(Store(stray))
         self.assertEqual(code, 1)
-        self.assertIn('FAIL environment     value "development" is not one of local, dev, staging, prod, unknown', out)
+        self.assertIn('FAIL environment     value "development" is not one of local, dev, staging, prod, unknown: '
+                      'up{job="andara-server", namespace="andara-dev"}', out)
+        self.assertRegex(out, r"environment 1 fail")
+        self.assertRegex(out, r"always-present \d+ pass, 0 fail", "a label defect is counted on its own")
+        # Reported even when the presence rows fail.
+        code, out = run(Store([{"__name__": "up", "environment": "development", "namespace": "andara-dev"}]))
+        self.assertEqual(code, 1)
+        self.assertIn('FAIL environment     value "development"', out)
         ok = healthy() + [{"__name__": "up", "environment": "unknown", "namespace": "kube-system"},
                           {"__name__": "up", "environment": "local", "namespace": "andara-local"}]
         self.assertEqual(run(Store(ok))[0], 0)
+
+    def test_a_stray_value_outside_the_window_is_reported_not_failed(self):
+        store = Store(healthy())
+        store.stale = [{"__name__": "up", "environment": "development", "namespace": "andara-dev"}]
+        code, out = run(store)
+        self.assertEqual(code, 0, out)
+        self.assertIn('--   environment    value "development" has no series in the last 10m (stale; ages out)', out)
 
     def test_an_unclassified_name_fails_the_run(self):
         out = io.StringIO()

@@ -161,7 +161,7 @@ def run(env, ctx, q=gcx, names=None):
     names = source_names() if names is None else names
     loose = unclassified(names)
     ns = "andara-" + env
-    counts = {"always-present": [0, 0], "fault-only": [0, 0]}  # [pass, fail]
+    counts = {"always-present": [0, 0], "environment": [0, 0]}  # [pass, fail]
     say = lambda m: print("observe-check: keep-list: " + m)  # noqa: E731
     if loose:
         say("FAIL %s: in neither the always-present rows nor FAULT_ONLY" % ", ".join(loose))
@@ -183,10 +183,20 @@ def run(env, ctx, q=gcx, names=None):
         say("--   fault-only     %-56s not queried: the keep pipeline must name it; the first drill "
             "that produces the fault must see it" % name)
     # Decision 9: a sender that sets environment outside the four (and the reserved unknown) is a defect.
+    # `metrics labels` has no window, so a value is a failure only while it still has series in SINCE;
+    # an older one is reported and ages out with the stack's retention.
     for value in q.metrics_labels(ctx, "environment"):
-        if value not in ENVIRONMENTS:
-            say('FAIL environment     value "%s" is not one of %s' % (value, ", ".join(ENVIRONMENTS)))
-            counts["always-present"][1] += 1
+        if value in ENVIRONMENTS:
+            continue
+        live = q.metrics_series(ctx, '{environment="%s"}' % value, since=SINCE)
+        if not live:
+            say('--   environment    value "%s" has no series in the last %s (stale; ages out)' % (value, SINCE))
+            continue
+        senders = sorted({'%s{job="%s", namespace="%s"}' % (s.get("__name__", ""), s.get("job", ""), s.get("namespace", ""))
+                          for s in live})
+        say('FAIL environment     value "%s" is not one of %s: %s'
+            % (value, ", ".join(ENVIRONMENTS), ", ".join(senders[:5]) + (" …" if len(senders) > 5 else "")))
+        counts["environment"][1] += 1
     if present and not loose:
         for name in sorted(n for n in names if not platform(n) and not not_shipped(n)):
             bad = q.metrics_series(ctx, unknown_selector(name), since=SINCE)
@@ -198,5 +208,7 @@ def run(env, ctx, q=gcx, names=None):
     else:
         say("--   unknown guard skipped: it is a pass only when the always-present series exist")
     p, f = counts["always-present"]
-    say("summary: always-present %d pass, %d fail; fault-only %d named, not queried" % (p, f, len(FAULT_ONLY)))
-    return 0 if f == 0 and present else 1
+    ef = counts["environment"][1]
+    say("summary: always-present %d pass, %d fail; environment %d fail; fault-only %d named, not queried"
+        % (p, f, ef, len(FAULT_ONLY)))
+    return 0 if f == 0 and ef == 0 and present else 1

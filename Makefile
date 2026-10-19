@@ -545,7 +545,7 @@ tf-bootstrap-gcp:
 observe-check:
 	@$(PY) $(SCRIPTS)/observe_check.py "$(ENV)" $(if $(filter 1,$(KEEP_LIST)),--keep-list)
 
-## gcx-config: write $GCX_CONFIG (default .local/gcx.yaml, mode 0600) with one gcx context per stack whose GRAFANA_<STACK>_READ_TOKEN is set; exits 3 with none (AW-INF-075)
+## gcx-config: write $GCX_CONFIG (default .local/gcx.yaml, or $RUNNER_TEMP/gcx.yaml in CI; mode 0600) with one gcx context per stack whose GRAFANA_<STACK>_READ_TOKEN is set; exits 3 with none (AW-INF-075)
 gcx-config:
 	@$(PY) $(SCRIPTS)/gcx.py config
 

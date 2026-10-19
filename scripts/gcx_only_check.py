@@ -95,13 +95,17 @@ def check(files, exceptions_text):
     return errors
 
 
+def read_text(path):
+    # errors="replace": a non-UTF-8 file is still scanned, never skipped as clean.
+    with open(path, encoding="utf-8", errors="replace") as fh:
+        return fh.read()
+
+
 def main():
     files = {}
     for f in tracked():
         try:
-            # errors="replace": a non-UTF-8 file is still scanned, never skipped as clean.
-            with open(os.path.join(REPO, f), encoding="utf-8", errors="replace") as fh:
-                files[f] = fh.read()
+            files[f] = read_text(os.path.join(REPO, f))
         except (IsADirectoryError, FileNotFoundError):
             continue
     with open(os.path.join(REPO, EXCEPTIONS)) as fh:

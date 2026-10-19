@@ -105,6 +105,13 @@ class Tree(unittest.TestCase):
             "scripts/stack_recover_mismatch.sh": "AW-INF-064",
         })
 
+    def test_a_non_utf8_file_is_scanned_not_skipped(self):
+        import tempfile
+        path = os.path.join(tempfile.mkdtemp(), "x.sh")
+        with open(path, "wb") as f:
+            f.write(b"\xff\xfe latin junk\ncurl \"$P/api/v1/query\"\n")
+        self.assertEqual(goc.matches(goc.read_text(path)), [(2, "path /api/v1/query")])
+
     def test_tree_is_clean_with_untracked_pycache(self):
         cache = os.path.join(REPO, "scripts", "__pycache__")
         os.makedirs(cache, exist_ok=True)
