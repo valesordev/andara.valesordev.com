@@ -624,3 +624,77 @@ As with the block above, where these differ from the decisions, they win.
     that deletes the group would delete `local`'s checkpoint. The `andara-it` principal of decision 8 (`AW-INF-060`)
     therefore has two `PREFIXED` topic ACLs, create and delete included, on `andara.test.` and `it`; its group ACL stays
     `PREFIXED` on `it-`, delete included, so a test's cleanup of its own topics and group succeeds rather than failing quietly. No environment's topic, and no Kafka, Strimzi or registry internal topic, starts with either topic prefix.
+
+### 2026-10-19, contract review of the SPRINT-05 stories
+
+These record decisions taken while the sprint's drafts were contract-reviewed (`AW-INF-053` to `061`, `070`). As with the blocks above, where they differ from the decisions, they win. The story bodies carry the
+detail; this is the decision and its reason.
+
+18. **The platform has one installer per item and two profiles** (decision 2). `deploy/platform/versions.yaml` is the
+    one source of a platform version that a script or workflow reads (prose copies, such as the chart README's and
+    `deploy/k8s/traefik/values.yaml`'s comment, point at it rather than repeat it; `AW-INF-054` makes them do so).
+    `kind_platform.sh`, `kafka.sh`, `argocd.py` and the CI workflow's kind node image
+    (`.github/workflows/kind.yaml`, which today pins `kindest/node:v1.36.1` without a digest, beside the box's `v1.36.4`)
+    read it. `make check` fails on a pin of a listed item outside it, matched by item rather than by bare string (a chart
+    name next to a version, or a `kindest/node:` reference), in `scripts/` and `.github/workflows/`. Test fixtures under
+    `scripts/tests/` are exempt, and so are tools that are not platform items (`bootstrap.sh`'s `kubectl` shares the node
+    image's version string by design). `make platform-up` takes `PROFILE=box` (cert-manager, the three ClusterIssuers,
+    Traefik, the `andara-shared` namespace, Strimzi, Argo CD; the collectors are `AW-INF-065`'s, the shared services
+    `shared-up`'s) or `PROFILE=ci` (cert-manager, `andara-ca`, Traefik with PROXY trust; CI's lifecycle job installs
+    Argo CD as today and the `drills` job its own Strimzi). `make kind-platform` and `make kafka-operator` are removed,
+    and `make kafka-install` stops calling the operator step, so nothing reinstalls Strimzi with the old watch list.
+    `platform-up` creates the empty `andara-shared` namespace before Strimzi, whose chart binds into each watched
+    namespace and fails if it is absent. The staging issuer of amendment 5 is selected by
+    `tls.issuer: letsencrypt-staging` in the values (the chart's schema already admits it), promoted like any change,
+    not by editing a Certificate. `andara-ca.yaml` has one applier, `platform-up`, after the CA root restore:
+    `helm_install.sh` and `argocd.py`'s preconditions both apply it today, and both change to checking that the
+    ClusterIssuer is Ready, because an apply before the restore mints a new root. The trusted PROXY peer is the `kind`
+    network's IPv4 gateway as a `/32`; the cluster publishes IPv4 loopback only. (`AW-INF-054`.)
+19. **`KafkaUser`s are applied with the authorizer, not before it** (refines amendment 4). Strimzi's User Operator
+    writes ACLs through the Admin API, and a broker with no authorizer refuses them, so a `KafkaUser` with ACLs applied to
+    `AW-INF-055`'s unauthenticated broker would sit not-Ready. `055` renders and validates the principals; `056` turns
+    the authorizer on and applies them in its client-first order. Every client of `andara-log` moves then, the schema
+    registry included. `andara-projector-state-<env>` holds `Delete` on its own group only, which
+    `andara-projector --rebuild` needs.
+20. **The schema registry is Karapace** (decision 8's `[verify: which]`). `scripts/schemas.py` speaks the Confluent
+    API, which Karapace implements natively and Apicurio through a compatibility layer. `AW-INF-004`'s registry findings
+    were measured on a Confluent-compatible registry, so they re-measure like for like. Karapace keeps its schemas in a
+    compacted topic `_schemas` on `andara-log`, so a restart loses nothing without a PVC. The cost: it is a Kafka client
+    and has a principal, `andara-schema-registry`, platform-scoped like `andara-operator`. No workload reads the registry at
+    runtime (no reader of `ANDARA_SCHEMA_REGISTRY_URL` or of compose's `ANDARA_SCHEMA_REGISTRY` in `server/`,
+    `internal/`, `cmd/`, `admin/`), so its NetworkPolicy admits no application namespace, which amends decision 3's
+    "each service's NetworkPolicy admits the application namespaces" for this service, and `schemas.py` reaches it by
+    port-forward. That is also the answer to the registry having no authentication of its own. Subjects are
+    `<prefix>.<subject>`, reference subjects included. That a reference's subject equals its import path is
+    `schemas.py`'s own rule (`schemas.py`'s `subject == file` check), not a registry requirement, since `register` sends
+    a reference's `name` and `subject` separately. `AW-INF-057` changes that rule to `subject == <prefix>.<file>`,
+    unless AC-8's re-measure shows Karapace resolving references by subject name. (`AW-INF-057`.)
+21. **The integration suite reaches the shared brokers through an `it` listener, not "a port-forward"** (amends
+    decision 8, "through a port-forward"). A Kafka client is handed every broker's advertised address in the metadata.
+    On `andara-log` those are `*.andara-shared.svc` names the host cannot resolve, so one port-forward of the bootstrap
+    Service gets the metadata and nothing else. `andara-log` gains a SCRAM listener `it` (port 9094) whose per-broker
+    advertised address is `127.0.0.1:2910<n>`. `make test-integration` port-forwards each broker's 9094 there and the
+    bootstrap to `127.0.0.1:29092`, and the S3 gateway to `127.0.0.1:29000`; these ports are clear of compose's, so both
+    can run. The listener's NetworkPolicy admits no pod, which amends decision 6's NetworkPolicy bullet for this listener.
+    In Strimzi an empty or omitted `networkPolicyPeers` means *allow all*, so "none" is written as one peer whose
+    `podSelector` matches a label no pod carries, and a test asserts a pod in `andara-local` is refused. A port-forward
+    is not governed by NetworkPolicy, so an operator's kubeconfig is the only way in. CI's throwaway Kafka carries the
+    same listener, so the suite has one path on both clusters. **[verify in `AW-INF-060`]** that the pinned Strimzi
+    honours per-broker `advertisedHost`/`advertisedPort` on a `type: internal` listener; if it does not, the listener is
+    `type: nodeport` with the same overrides and the port-forwards target the node ports. The suite creates its own topics, so their size cannot be bounded by a retention the broker imposes.
+    It is bounded by a quota on `andara-it`, a sweep of its prefixes on exit and before each run, and `shared-check`'s
+    own line. (`AW-INF-060`, `AW-INF-061`.)
+22. **`make promote` ships before the deploy parity it is owed** (decision 7). The pre- and post-steps `make promote`
+    shares with `make deploy` live in `AW-INF-041`'s script, which does not exist yet, and `dev` has been down since the
+    `solo7` cluster was deleted on 2026-10-18. So `AW-INF-059` ships `make promote` with a named, empty post-sync hook,
+    and `AW-INF-041` fills it and makes `make deploy ENV=dev` exit `2` naming `make promote`. And the role push hook
+    sees `git push` typed in a session, not a push inside a `make` recipe. So "a promotion is not something an agent
+    session does" is enforced by `make promote` refusing when `CLAUDECODE` is set, a convention and not a control.
+23. **Until compose is retired, two brokers answer to `local`, and CI's drills server is a `local`.**
+    `scripts/topics.py --env local` means the compose Redpanda today. `topics.py` and `world_reset.py` therefore take
+    `--broker compose|cluster` (default `compose` while `deploy/compose/` exists; `make local-up` passes `cluster`), and
+    `AW-INF-067` removes the option with compose. (`world_reset.py` refuses `local` today; `AW-INF-055` AC-7 lifts that
+    with `--broker cluster`; with `compose` it still refuses.) `topics.py`, `world_reset.py`, `schemas.py` and `make test-integration` find the cluster's
+    Kafka by `ANDARA_KAFKA_NAMESPACE` (default `andara-shared`). The `drills` job's server runs with `telemetry.environment=local` and
+    `kafka.topic_prefix=local` on its unshared broker, so no new environment value enters `topics.yaml`, the `stamp`
+    table or the rules. Its `ci-kafka-*` targets refuse any context but `kind-ci`. (`AW-INF-055`, `AW-INF-061`.)

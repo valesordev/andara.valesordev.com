@@ -596,6 +596,50 @@ can hide a real page.
   it until step 3 and the **defined** check on `solo7dev`'s rules are done. This is the migration-and-rollback
   statement CLAUDE.md §6 asks of a dependency.
 
+> **Amendment, 2026-10-19 (contract review of `AW-INF-070`): the ruler freeze, and the outage that began early.**
+> (1) **The ruler is frozen when `AW-INF-047` merges.** This was decided in 047's contract review (2026-10-18), and
+> 047's body cites it as an amendment here, but it was never written into this ADR. It is recorded now. The `alerts`
+> workflow runs `make alerts-sync` with `ANDARA_RULES_CI_WRITE` on every push to `main` that touches the rules. 047's
+> `environment` edits to `alerts.yaml` would make its `absent(…environment="dev"…)` lines true in `solo7`, whose `dev`
+> series carry no `environment`, and would fire a page there. That firing would also block step 4(i). So 047 deletes
+> `.github/workflows/alerts.yaml` in the same commit as the `alerts.yaml` edit, and `alerts_sync.py sync` refuses a
+> file that carries an `# env:` marker (exit 1, before any credential is read). From then on the ruler keeps the
+> pre-edit rules until step 4(ii), and no push to `main` can recreate the namespace after it. 047's rollback
+> ("revert the change, which restores the workflow") is valid only before 4(ii).
+> Two kinds of `alerts` run could still write to the ruler after the freeze. A queued one executes its own commit's
+> workflow: push runs are serialized by one concurrency group (`alerts-ruler-push-main`, `cancel-in-progress:
+> false`), and a run held there has status `pending`. A re-run of an older one does too, and GitHub allows a re-run
+> for 30 days. Both need the write secret, which the job reads when it starts. So step **4(ii-a)** is: once the
+> freeze has merged, Brian deletes the environment secret `ANDARA_RULES_CI_WRITE` from `andara-main`. Its only reader
+> is the deleted workflow's sync job, and `make alerts-delete` uses the hand-exported `MIMIR_API_KEY_WRITE` instead.
+> After that, a run that starts fails on the job's own unset-secret check and writes nothing. `make alerts-delete`
+> (`AW-INF-070`) refuses while any of these holds:
+> - `.github/workflows/alerts.yaml` exists at `origin/main`;
+> - `gh secret list --env andara-main` still lists `ANDARA_RULES_CI_WRITE`;
+> - a run of the path `.github/workflows/alerts.yaml` is `in_progress`, because it may hold the secret from before its
+>   deletion.
+>
+> The last check is one paginated read filtered by path and status, not by workflow name, because a workflow whose
+> file is deleted no longer resolves by name. It is `gh api --paginate
+> 'repos/{owner}/{repo}/actions/runs?status=in_progress&per_page=100'`, filtered on
+> `.path == ".github/workflows/alerts.yaml"`. It is not bounded by date: a re-run keeps its original `created_at`. It
+> exits 1 when the response's `total_count` differs from the number of runs fetched, so the API's 1,000-result cap
+> cannot pass it silently. A failed read exits 1. With the secret gone, no runbook rule against re-runs is needed. Step 6's list therefore loses "the `alerts` workflow", which 047 has
+> already deleted, and `ANDARA_RULES_CI_WRITE`, which 4(ii-a) has already deleted; the other secrets, the environment
+> and the rest of the list still go in step 6 (`AW-INF-077`). Step 4(ii)'s
+> `make alerts-delete` is `AW-INF-070`'s target since the split of 047, not "a target `AW-INF-047` adds". After the
+> freeze no CI job holds the write key, which is still within "given to no CI job beyond what `alerts` holds today".
+> (2) The kind cluster named `solo7` on the box was deleted on 2026-10-18 (`AW-INF-052`'s §8 record), so no namespaced
+> series should have reached the Grafana Cloud stack `solo7` since. This is reasoned, not yet read: step 4(i)'s script
+> prints `count(up{namespace!=""})` on the stack before it decides, and that read is the evidence.
+> `AndaraServerUnavailable`'s guard `and on() count(up{namespace!=""}) > 0` then keeps its absence lines silent, which
+> means step 0's prod-absence alert is no longer firing and step 4(i)'s read is expected to be empty. The planned
+> outage began that day, not at (ii); its end is unchanged. The point-of-no-return paragraph's "before it, nothing has
+> changed for any user" is therefore no longer true of `dev`, which is already down. Rolling back before (ii) still
+> only means pausing or reverting. Step 4(i) treats an empty read as a pass that it
+> prints, and a failed read (an error, a refused token) as a refusal. Before the freeze, the ruler still holds the
+> pre-edit rules, whose absence lines carry no `environment`, so the same guard keeps them silent too.
+
 ### 8. Import
 
 **Decision: recreate, not import.** The hand-made email contact point and the `severity = page` policy in `solo7`
@@ -1039,6 +1083,9 @@ service and a blast radius: a bad pipeline can blind a stack until the next appl
   Prometheus).
 
 ## Amendments
+
+**2026-10-19, the ruler freeze and the early outage.** Recorded in place, under decision 7, as the amendment of
+2026-10-19, because it changes that decision's steps. This is the text `AW-INF-047` cites as "ADR-0012 Amendments".
 
 **2026-10-17, from AW-INF-046's §8 review (PR #581).** This records where the build could not follow the text,
 one root the build added, and the `[verify in 046]` outcomes. None of it changes a decision.
