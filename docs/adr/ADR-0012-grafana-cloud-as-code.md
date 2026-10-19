@@ -596,18 +596,24 @@ can hide a real page.
   it until step 3 and the **defined** check on `solo7dev`'s rules are done. This is the migration-and-rollback
   statement CLAUDE.md §6 asks of a dependency.
 
-> **Amendment, 2026-10-19 (contract review of `AW-INF-070`): step 4(ii-a), and the outage that began early.**
-> (1) The `alerts` workflow runs `make alerts-sync` with `ANDARA_RULES_CI_WRITE` on every push to `main` that touches
-> the rules. After step 4(ii) its next run would recreate the ruler namespace `andara` in `solo7`. So a step **4(ii-a)**
-> comes before (ii): a merge removes the workflow's sync steps and keeps its read-only diff. `make alerts-delete`
-> refuses while `.github/workflows/alerts.yaml` at `origin/main` still sets `MIMIR_API_KEY_WRITE` in a step. The
-> secrets themselves still go in step 6. The text above saying "the key is given to no CI job beyond what `alerts`
-> holds today" holds until (ii-a) and no longer after it.
+> **Amendment, 2026-10-19 (contract review of `AW-INF-070`): the ruler freeze, and the outage that began early.**
+> (1) **The ruler is frozen when `AW-INF-047` merges.** This was decided in 047's contract review (2026-10-18), and
+> 047's body cites it as an amendment here, but it was never written into this ADR. It is recorded now. The `alerts`
+> workflow runs `make alerts-sync` with `ANDARA_RULES_CI_WRITE` on every push to `main` that touches the rules. 047's
+> `environment` edits to `alerts.yaml` would make its `absent(…environment="dev"…)` lines true in `solo7`, whose `dev`
+> series carry no `environment`, and would fire a page there. That firing would also block step 4(i). So 047 deletes
+> `.github/workflows/alerts.yaml` in the same commit as the `alerts.yaml` edit, and `alerts_sync.py sync` refuses a
+> file that carries an `# env:` marker (exit 1, before any credential is read). From then on the ruler keeps the
+> pre-edit rules until step 4(ii), and nothing can recreate the namespace after it. `make alerts-delete` (`AW-INF-070`)
+> refuses while `.github/workflows/alerts.yaml` exists at `origin/main`, that is, before the freeze has merged. The
+> secrets themselves still go in step 6 (`AW-INF-077`). The text above saying "the key is given to no CI job beyond
+> what `alerts` holds today" holds until the freeze and no longer after it.
 > (2) The box cluster `solo7` was deleted on 2026-10-18 (`AW-INF-052`'s §8 record), so no namespaced series has reached
 > `solo7` since. `AndaraServerUnavailable`'s guard `and on() count(up{namespace!=""}) > 0` then keeps its absence lines
 > silent, which means step 0's prod-absence alert is no longer firing and step 4(i)'s read is expected to be empty. The
 > planned outage began that day, not at (ii); its end is unchanged. Step 4(i) treats an empty read as a pass that it
-> prints, and a failed read (an error, a refused token) as a refusal.
+> prints, and a failed read (an error, a refused token) as a refusal. Before the freeze, the ruler still holds the
+> pre-edit rules, whose absence lines carry no `environment`, so the same guard keeps them silent too.
 
 ### 8. Import
 
