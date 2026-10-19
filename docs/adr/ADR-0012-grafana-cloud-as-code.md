@@ -607,12 +607,15 @@ can hide a real page.
 > pre-edit rules until step 4(ii), and no push to `main` can recreate the namespace after it. 047's rollback
 > ("revert the change, which restores the workflow") is valid only before 4(ii). Re-running an old `alerts` run is
 > excluded by the runbook for the same reason. A run queued before the freeze
-> still executes its own commit's workflow, because the workflow's push runs queue (`cancel-in-progress: false`) and
-> wait on the `andara-main` environment. So `make alerts-delete` (`AW-INF-070`) refuses while
-> `.github/workflows/alerts.yaml` exists at `origin/main`, and while any Actions run of that path is `queued`,
-> `in_progress` or `waiting`. That read is by path, `gh api repos/{owner}/{repo}/actions/runs?status=<s>` filtered on
-> `.path == ".github/workflows/alerts.yaml"`, not by workflow name, because a workflow whose file is deleted no longer
-> resolves by name. A failed read exits 1. Step 6's list therefore loses "the `alerts` workflow", which 047 has
+> still executes its own commit's workflow, because the workflow's push runs are serialized by one concurrency group
+> (`alerts-ruler-push-main`, `cancel-in-progress: false`), and a run held there has status `pending`. So
+> `make alerts-delete` (`AW-INF-070`) refuses while `.github/workflows/alerts.yaml` exists at `origin/main`, and while
+> any Actions run of that path is not `completed` (`requested`, `pending`, `queued`, `waiting`, `in_progress` all
+> refuse). That is one paginated read,
+> `gh api --paginate 'repos/{owner}/{repo}/actions/runs?branch=main&per_page=100&created=>=<D>'`, where `<D>` is a
+> week before the freeze commit's date (so the read stays small and still covers any run queued before it), filtered on `.path == ".github/workflows/alerts.yaml" and .status != "completed"`, rather than one call per status
+> (a run moving between states between the calls would escape all of them) and rather than by workflow name (a
+> workflow whose file is deleted no longer resolves by name). A failed read exits 1. Step 6's list therefore loses "the `alerts` workflow", which 047 has
 > already deleted; the secrets, the environment and the rest of the list still go in step 6 (`AW-INF-077`). Step 4(ii)'s
 > `make alerts-delete` is `AW-INF-070`'s target since the split of 047, not "a target `AW-INF-047` adds". After the
 > freeze no CI job holds the write key, which is still within "given to no CI job beyond what `alerts` holds today".
