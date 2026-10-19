@@ -605,21 +605,28 @@ can hide a real page.
 > `.github/workflows/alerts.yaml` in the same commit as the `alerts.yaml` edit, and `alerts_sync.py sync` refuses a
 > file that carries an `# env:` marker (exit 1, before any credential is read). From then on the ruler keeps the
 > pre-edit rules until step 4(ii), and no push to `main` can recreate the namespace after it. 047's rollback
-> ("revert the change, which restores the workflow") is valid only before 4(ii). A re-run of an `alerts` run started
-> after `make alerts-delete` would recreate the namespace while `ANDARA_RULES_CI_WRITE` still exists. So the cutover
-> runbook of `AW-INF-070` forbids re-running any `alerts` run from the freeze until `AW-INF-077` deletes that secret,
-> and deleting the secret is what makes the rule hold rather than the runbook alone. A run queued before the freeze
-> still executes its own commit's workflow, because the workflow's push runs are serialized by one concurrency group
-> (`alerts-ruler-push-main`, `cancel-in-progress: false`), and a run held there has status `pending`. So
-> `make alerts-delete` (`AW-INF-070`) refuses while `.github/workflows/alerts.yaml` exists at `origin/main`, and while
-> any Actions run of that path is not `completed` (`requested`, `pending`, `queued`, `waiting`, `in_progress` all
-> refuse). That is one paginated read,
-> `gh api --paginate 'repos/{owner}/{repo}/actions/runs?branch=main&per_page=100&created=>=<D>'`, where `<D>` is 35
-> days before the freeze commit's date. A re-run keeps its original `created_at`, and GitHub allows one for 30 days,
-> so the bound covers the whole re-run window, not just runs queued at the freeze. The read is filtered on `.path == ".github/workflows/alerts.yaml" and .status != "completed"`, rather than one call per status
-> (a run moving between states between the calls would escape all of them) and rather than by workflow name (a
-> workflow whose file is deleted no longer resolves by name). A failed read exits 1. Step 6's list therefore loses "the `alerts` workflow", which 047 has
-> already deleted; the secrets, the environment and the rest of the list still go in step 6 (`AW-INF-077`). Step 4(ii)'s
+> ("revert the change, which restores the workflow") is valid only before 4(ii).
+> Two kinds of `alerts` run could still write to the ruler after the freeze. A queued one executes its own commit's
+> workflow: push runs are serialized by one concurrency group (`alerts-ruler-push-main`, `cancel-in-progress:
+> false`), and a run held there has status `pending`. A re-run of an older one does too, and GitHub allows a re-run
+> for 30 days. Both need the write secret, which the job reads when it starts. So step **4(ii-a)** is: once the
+> freeze has merged, Brian deletes the environment secret `ANDARA_RULES_CI_WRITE` from `andara-main`. Its only reader
+> is the deleted workflow's sync job, and `make alerts-delete` uses the hand-exported `MIMIR_API_KEY_WRITE` instead.
+> After that, a run that starts fails on the job's own unset-secret check and writes nothing. `make alerts-delete`
+> (`AW-INF-070`) refuses while any of these holds:
+> - `.github/workflows/alerts.yaml` exists at `origin/main`;
+> - `gh secret list --env andara-main` still lists `ANDARA_RULES_CI_WRITE`;
+> - a run of the path `.github/workflows/alerts.yaml` is `in_progress`, because it may hold the secret from before its
+>   deletion.
+>
+> The last check is one paginated read filtered by path and status, not by workflow name, because a workflow whose
+> file is deleted no longer resolves by name. It is `gh api --paginate
+> 'repos/{owner}/{repo}/actions/runs?status=in_progress&per_page=100'`, filtered on
+> `.path == ".github/workflows/alerts.yaml"`. It is not bounded by date: a re-run keeps its original `created_at`. It
+> exits 1 when the response's `total_count` differs from the number of runs fetched, so the API's 1,000-result cap
+> cannot pass it silently. A failed read exits 1. With the secret gone, no runbook rule against re-runs is needed. Step 6's list therefore loses "the `alerts` workflow", which 047 has
+> already deleted, and `ANDARA_RULES_CI_WRITE`, which 4(ii-a) has already deleted; the other secrets, the environment
+> and the rest of the list still go in step 6 (`AW-INF-077`). Step 4(ii)'s
 > `make alerts-delete` is `AW-INF-070`'s target since the split of 047, not "a target `AW-INF-047` adds". After the
 > freeze no CI job holds the write key, which is still within "given to no CI job beyond what `alerts` holds today".
 > (2) The kind cluster named `solo7` on the box was deleted on 2026-10-18 (`AW-INF-052`'s §8 record), so no namespaced
