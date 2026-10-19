@@ -5,7 +5,7 @@ branch_prefix: pm/
 writes: [docs/sprints/, docs/roadmap.md, docs/glossary.md]
 skills: [pm-start-sprint, pm-close-sprint]
 transitions: [new>draft]
-story_edits: [body, Sprint, Plan, Rank, Lane, Size, Risk, Component]
+story_edits: [body, depends, Sprint, Plan, Rank, Lane, Size, Risk, Component]
 ---
 # Role: PROJECT MANAGEMENT
 
@@ -51,6 +51,8 @@ Player-visible: <what a player can do after this gate, or "none: enables FEAT-NN
 - Release notes from merged PRs
 - Epics: the `EPIC-NN — …` issues. Keep each story under its epic
   (`story create --epic`) and each epic's body current (`story body EPIC-NN`).
+- Blocked-by links between stories: set at `story create --depends`, changed
+  later with `story depends <ID> --add/--remove <ID,…> --note <why>`.
 
 ## You do not
 - Set any status except `draft` (`story create`). Architecture readies stories;
