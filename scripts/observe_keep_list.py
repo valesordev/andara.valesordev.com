@@ -20,8 +20,10 @@ The compose dashboard also reads broker series (NOT_SHIPPED, redpanda_*), which 
 drops by design; they are reported and not queried, and no rule may name one. A name in no set
 fails a unit test, so a new rule decides its row when it is written.
 
-Then decision 9's label check: any `environment` value in the stack outside local, dev, staging, prod and
-unknown fails (`gcx metrics labels --label environment`). Then the `unknown` guard: no keep-list series in an andara-* namespace may carry
+Then decision 9's label check: `gcx metrics labels --label environment` lists every value in the stack, with
+no window; a value outside local, dev, staging, prod and unknown fails while it still has series in SINCE
+(`metrics series`), naming up to five senders (metric, job, namespace), and is reported as stale otherwise,
+since it ages out with the stack's retention. Then the `unknown` guard: no keep-list series in an andara-* namespace may carry
 environment="unknown", except PLATFORM_SERIES (certmanager_*, traefik_*; the rules derive their
 environment) and namespace="andara-shared" (ADR-0013's platform namespace). It runs only after
 every always-present row returned series: an empty answer is a pass only when series are known to
@@ -30,7 +32,8 @@ exist.
 One line per row (its set, the series count, pass or fail) and a summary per set, so a failed run
 names every missing series at once.
 
-Exit: 0 every row has series and no unknown series · 1 otherwise, or a gcx error.
+Exit: 0 every row has series, no unknown series and no live stray environment value · 1 otherwise, or a
+gcx error.
 """
 import json
 import os
@@ -182,13 +185,14 @@ def run(env, ctx, q=gcx, names=None):
     for name in FAULT_ONLY:
         say("--   fault-only     %-56s not queried: the keep pipeline must name it; the first drill "
             "that produces the fault must see it" % name)
-    # Decision 9: a sender that sets environment outside the four (and the reserved unknown) is a defect.
+    # Decision 9: a sender that sets environment outside the four values (and the reserved unknown) is a defect.
     # `metrics labels` has no window, so a value is a failure only while it still has series in SINCE;
     # an older one is reported and ages out with the stack's retention.
     for value in q.metrics_labels(ctx, "environment"):
         if value in ENVIRONMENTS:
             continue
-        live = q.metrics_series(ctx, '{environment="%s"}' % value, since=SINCE)
+        # json.dumps quotes and escapes " and \ the way a PromQL string literal needs.
+        live = q.metrics_series(ctx, "{environment=%s}" % json.dumps(value), since=SINCE)
         if not live:
             say('--   environment    value "%s" has no series in the last %s (stale; ages out)' % (value, SINCE))
             continue

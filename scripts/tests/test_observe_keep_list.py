@@ -38,7 +38,13 @@ class Store:
 
     def metrics_series(self, ctx, selector, since="10m"):
         self.selectors.append((ctx, selector))
+        self.windows.append((selector, since))
         return [s for s in self.series if selects(selector, s)]
+
+    @property
+    def windows(self):
+        self.__dict__.setdefault("_windows", [])
+        return self.__dict__["_windows"]
 
     def metrics_labels(self, ctx, label, match=None):
         # Stack-wide, with no window: values whose samples are older than the series window still show.
@@ -209,6 +215,24 @@ class KeepList(unittest.TestCase):
         code, out = run(store)
         self.assertEqual(code, 0, out)
         self.assertIn('--   environment    value "development" has no series in the last 10m (stale; ages out)', out)
+        self.assertIn(('{environment="development"}', kl.SINCE), store.windows, "the follow-up uses the keep-list window")
+
+    def test_senders_are_capped_at_five(self):
+        stray = healthy() + [{"__name__": "m%d" % i, "environment": "development", "namespace": "andara-dev",
+                              "job": "j"} for i in range(6)]
+        code, out = run(Store(stray))
+        self.assertEqual(code, 1)
+        line = [l for l in out.splitlines() if "FAIL environment" in l][0]
+        self.assertTrue(line.endswith(' …'), line)
+        self.assertEqual(line.count('{job="j"'), 5)
+        self.assertIn('m0{job="j", namespace="andara-dev"}, m1', line)
+        self.assertNotIn("m5{", line)
+
+    def test_a_quoted_value_is_escaped_in_the_selector(self):
+        store = Store(healthy())
+        store.stale = [{"__name__": "up", "environment": 'a"b\\c'}]
+        run(store)
+        self.assertIn(('{environment="a\\"b\\\\c"}', kl.SINCE), store.windows)
 
     def test_an_unclassified_name_fails_the_run(self):
         out = io.StringIO()
