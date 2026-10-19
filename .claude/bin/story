@@ -18,6 +18,8 @@ block GraphQL.
     story status <ID> <status> [--note TEXT]
     story set <ID> Field=value [...]      e.g. Sprint=SPRINT-05 Plan=Current Rank=3, or Cycle=2
     story body <ID> --body-file F         replace the issue body (the contract)
+    story depends <ID> [--add ID,ID] [--remove ID,ID] [--note TEXT]
+                                          add or remove the story's blocked-by links
     story comment <ID> (--to ROLE | --record NAME) (--body TEXT | --body-file F)
     story merged <PR>                     the story-merge Action: apply a merged PR's
                                           Story: / Story-Done: lines as its role:<r> label
@@ -32,8 +34,8 @@ Who may do what comes from the session's role file (.claude/roles/<role>.md):
         `from>to`, `from>to@lane` for stories whose Lane is this role, or
         `from>to@<lane>` for stories in that named lane (e.g. @director).
         `new>draft` allows `story create`.
-    story_edits: [body, Sprint, Cycle, Plan, Rank, Lane, Size, Risk, Component]
-        what `story body` and `story set` may change.
+    story_edits: [body, depends, Sprint, Cycle, Plan, Rank, Lane, Size, Risk, Component]
+        what `story body`, `story depends` and `story set` may change.
     on_merge: [in-progress>review@lane]
         moves only `story merged` makes, when a PR labeled role:<role> merges.
         A session can't make them, so `review` means the work is on main.
@@ -50,7 +52,9 @@ the story's lane (other roles' PRs only reference it). `Story-Done: <ID>` moves
 it review → done when the role may. Only merges into the default branch count. It fails, after applying the rest, if a
 lane's own story wasn't in-progress, or the role may not close a story.
 
-`/role none` may do anything. With no role set, every write is refused.
+`/role none` may do anything. With no role set, every write is refused. A
+role-free session (the coordinator's dispatcher, `/sprint-run`) doesn't take a
+role to comment: it posts with `.claude/bin/coordinator comment <ID> --to <role>`.
 Settings come from .claude/roles/_repo.md: project, story_prefix, github_repo,
 story_components (the --comp codes; default SRV, CLI, INF, CLT), and
 `stories: github`. Until a repo sets that (its cutover from docs/stories files),
@@ -59,8 +63,8 @@ The session id comes from --sid, or $CLAUDE_SESSION_ID (set by the
 SessionStart hook).
 
 Several repos can share one Project (a game's server and content repos, say).
-Reads see every story on it, so `--depends` and `show` can name another repo's
-story. Writes touch only this repo's stories: an ID with another prefix, or an
+Reads see every story on it, so `--depends`, `depends` and `show` can name another
+repo's story as a blocker. Writes touch only this repo's stories: an ID with another prefix, or an
 issue in another repository, is refused.
 """
 from __future__ import annotations
@@ -273,9 +277,11 @@ class Who:
     def can_edit(self, what: str) -> bool:
         return self.unrestricted or what in self.meta.get("story_edits", [])
 
-    def require(self) -> None:
+    def require(self, comment: bool = False) -> None:
         if self.name is None:
-            raise StoryError("no role set for this session; ask the owner to run /role <name>")
+            raise StoryError("no role set for this session; ask the owner to run /role <name>" +
+                             (". A role-free dispatcher session doesn't take a role: it posts with "
+                              "`.claude/bin/coordinator comment <ID> --to <role>`" if comment else ""))
 
 
 def session_role(root: Path, sid: str | None) -> Who:
@@ -303,6 +309,23 @@ def labels_of(iss: dict) -> list[str]:
     return [l.get("name") or "" for l in iss.get("labels") or []]
 
 
+def blocked_by(b: Board, it: dict) -> list[dict]:
+    """The issues a story's blocked-by links name."""
+    return b.gh.api("GET", f"/repos/{it['repo']}/issues/{it['number']}/dependencies/blocked_by",
+                    paginate=True) or []
+
+
+def blocker_names(b: Board, deps: list[dict]) -> list[str]:
+    """`<ID> (<Status>)` for a story on the Project, `#<n> (<state>)` for any other issue."""
+    by_issue = {i["issue_id"]: i for i in b.items()}
+    out = []
+    for d in deps:
+        bi = by_issue.get(d.get("id"))
+        out.append(f"{bi['id']} ({bi['fields'].get('Status') or '-'})" if bi and bi["id"]
+                   else f"#{d.get('number')} ({d.get('state')})")
+    return out
+
+
 def cmd_show(b: Board, who: Who, a) -> str:
     it = b.find(a.id)
     iss = b.issue(it["number"], it["repo"])
@@ -310,14 +333,7 @@ def cmd_show(b: Board, who: Who, a) -> str:
     keys = ["Status", "Lane", "Sprint", "Plan", "Rank", "Size", "Risk", "Component"]
     if "Cycle" in b.fields:
         keys.insert(3, "Cycle")
-    deps = b.gh.api("GET", f"/repos/{it['repo']}/issues/{it['number']}/dependencies/blocked_by",
-                    paginate=True) or []
-    by_issue = {i["issue_id"]: i for i in b.items()}
-    blockers = []
-    for d in deps:
-        bi = by_issue.get(d.get("id"))
-        blockers.append(f"{bi['id']} ({bi['fields'].get('Status') or '-'})" if bi and bi["id"]
-                        else f"#{d.get('number')} ({d.get('state')})")
+    blockers = blocker_names(b, blocked_by(b, it))
     lines = [f"{it['title']}  (#{it['number']}, {iss.get('state')})  {iss.get('html_url', '')}",
              "  ".join(f"{k}: {_num(f.get(k)) if f.get(k) is not None else '-'}" for k in keys),
              f"Blocked by: {', '.join(blockers) or '-'}"]
@@ -456,6 +472,47 @@ def cmd_body(b: Board, who: Who, a) -> str:
     return f"{a.id}: body updated"
 
 
+def _ids(v: str | None) -> list[str]:
+    return list(dict.fromkeys(x.strip() for x in (v or "").split(",") if x.strip()))
+
+
+def cmd_depends(b: Board, who: Who, a) -> str:
+    """Add or remove a story's blocked-by links. The story is this repo's; a blocker can be any
+    story on the Project. Everything is checked before the first write."""
+    who.require()
+    if not who.can_edit("depends"):
+        raise StoryError(f"role {who.name} can't change blocked-by links (needs `depends` in story_edits)")
+    add, remove = _ids(a.add), _ids(a.remove)
+    if not add and not remove:
+        raise StoryError("give --add ID,… or --remove ID,… (`story show` prints the current links)")
+    both = set(add) & set(remove)
+    if both:
+        raise StoryError(f"both added and removed: {', '.join(sorted(both))}")
+    it = b.own(a.id)
+    if a.id in add:
+        raise StoryError(f"{a.id} can't block itself")
+    have = {d.get("id") for d in blocked_by(b, it)}
+    adding = [b.find(x) for x in add]
+    removing = [b.find(x) for x in remove]
+    added = [d for d in adding if d["issue_id"] not in have]
+    gone = [d for d in removing if d["issue_id"] in have]
+    if not added and not gone:
+        why = []
+        if adding:
+            why.append(f"already blocked by {', '.join(d['id'] for d in adding)}")
+        if removing:
+            why.append(f"not blocked by {', '.join(d['id'] for d in removing)}")
+        return f"{a.id}: no change ({'; '.join(why)})"
+    for d in added:
+        b.gh.api("POST", f"/repos/{b.repo}/issues/{it['number']}/dependencies/blocked_by",
+                 {"issue_id": d["issue_id"]})
+    for d in gone:
+        b.gh.api("DELETE", f"/repos/{b.repo}/issues/{it['number']}/dependencies/blocked_by/{d['issue_id']}")
+    change = ", ".join([f"+{d['id']}" for d in added] + [f"-{d['id']}" for d in gone])
+    b.comment(it["number"], f"**Depends ({who.name}):** blocked by {change}" + (f". {a.note}" if a.note else ""))
+    return f"{a.id}: blocked by {', '.join(blocker_names(b, blocked_by(b, it))) or '-'} ({change})"
+
+
 def post(b: Board, sid: str, head: str, text: str, author: str) -> str:
     """Post `<head> <text>` on one of this repo's stories, stamped with its author."""
     text = text.strip()
@@ -465,7 +522,7 @@ def post(b: Board, sid: str, head: str, text: str, author: str) -> str:
 
 
 def cmd_comment(b: Board, who: Who, a) -> str:
-    who.require()
+    who.require(comment=True)
     if bool(a.to) == bool(a.record):
         raise StoryError("give exactly one of --to ROLE or --record NAME")
     me = who.name if not who.unrestricted else "owner"
@@ -613,7 +670,7 @@ def cmd_sprint(b: Board, who: Who, a) -> str:
 READS = {"show", "list"}
 COMMANDS = {"show": cmd_show, "list": cmd_list, "create": cmd_create, "start": cmd_start,
             "status": cmd_status, "set": cmd_set, "body": cmd_body, "comment": cmd_comment,
-            "merged": cmd_merged, "sprint": cmd_sprint}
+            "depends": cmd_depends, "merged": cmd_merged, "sprint": cmd_sprint}
 
 
 def parser() -> argparse.ArgumentParser:
@@ -632,6 +689,8 @@ def parser() -> argparse.ArgumentParser:
     s = sub.add_parser("status"); s.add_argument("id"); s.add_argument("to"); s.add_argument("--note")
     s = sub.add_parser("set"); s.add_argument("id"); s.add_argument("pairs", nargs="+")
     s = sub.add_parser("body"); s.add_argument("id"); s.add_argument("--body-file", required=True)
+    s.add_argument("--note")
+    s = sub.add_parser("depends"); s.add_argument("id"); s.add_argument("--add"); s.add_argument("--remove")
     s.add_argument("--note")
     s = sub.add_parser("merged"); s.add_argument("pr", type=int)
     s = sub.add_parser("sprint"); s.add_argument("op", choices=["plan", "activate", "close", "body"])
