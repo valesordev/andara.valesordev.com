@@ -1,0 +1,29 @@
+{
+  "status": "success",
+  "data": {
+    "resultType": "streams",
+    "result": [
+      {
+        "stream": {
+          "container": "server",
+          "environment": "dev",
+          "namespace": "andara-dev"
+        },
+        "values": [
+          {
+            "timestamp": "1792445731500248487",
+            "line": "{\"time\": \"2026-10-19T21:35:31Z\", \"level\": \"INFO\", \"msg\": \"session opened\", \"session_id\": \"s-0001\", \"trace_id\": \"9f330ddce795582aca223dff19488478\"}",
+            "structuredMetadata": {
+              "detected_level": "info"
+            }
+          }
+        ]
+      }
+    ],
+    "stats": {
+      "summary": {
+        "execTime": 0.020336
+      }
+    }
+  }
+}

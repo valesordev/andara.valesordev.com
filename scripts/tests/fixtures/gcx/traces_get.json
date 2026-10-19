@@ -1,0 +1,47 @@
+{
+  "trace": {
+    "resourceSpans": [
+      {
+        "resource": {
+          "attributes": [
+            {
+              "key": "service.name",
+              "value": {
+                "stringValue": "andara-server"
+              }
+            }
+          ]
+        },
+        "scopeSpans": [
+          {
+            "scope": {
+              "name": "andara.gateway"
+            },
+            "spans": [
+              {
+                "attributes": [
+                  {
+                    "key": "rpc.method",
+                    "value": {
+                      "stringValue": "OpenSession"
+                    }
+                  }
+                ],
+                "endTimeUnixNano": "1792444997307000000",
+                "kind": "SPAN_KIND_SERVER",
+                "name": "andara.game.v1.Game/OpenSession",
+                "spanId": "axoVNDYcg/8=",
+                "startTimeUnixNano": "1792444997295000000",
+                "status": {
+                  "code": "STATUS_CODE_OK"
+                },
+                "traceId": "nzMN3OeVWCrKIj3/GUiEeA=="
+              }
+            ]
+          }
+        ]
+      }
+    ]
+  },
+  "metrics": {}
+}

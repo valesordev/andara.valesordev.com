@@ -1,0 +1,45 @@
+{
+  "items": [
+    {
+      "apiVersion": "oncall.ext.grafana.app/v1alpha1",
+      "kind": "AlertGroup",
+      "metadata": {
+        "name": "IAAAAAAAAAAAA",
+        "namespace": "stacks-000000",
+        "creationTimestamp": "2026-10-17T17:44:49.471918Z",
+        "labels": {
+          "service_name": "andara"
+        }
+      },
+      "spec": {
+        "integration": {
+          "id": "CAAAAAAAAAAAA",
+          "name": "irm-prod",
+          "type": "grafana_alerting"
+        },
+        "team": {
+          "id": "TAAAAAAAAAAAA",
+          "name": "andara"
+        },
+        "permalinks": {
+          "web": "https://example.invalid/a/grafana-irm-app/alert-groups/IAAAAAAAAAAAA"
+        }
+      },
+      "status": {
+        "title": "AndaraServerUnavailable",
+        "severity": "page",
+        "state": "firing",
+        "subject": {
+          "labels": {
+            "environment": "prod",
+            "namespace": "andara-prod"
+          }
+        },
+        "timestamps": {
+          "started": "2026-10-17T17:44:49.471918Z"
+        },
+        "alertsCount": 1
+      }
+    }
+  ]
+}

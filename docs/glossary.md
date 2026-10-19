@@ -852,7 +852,10 @@ Fleet's, deployed through Terraform per stack; a series nothing stamped carries 
 (`severity`) to contact points. One tree per stack, owned wholly by Terraform.
 
 **Keep-list** — The metric series a stack's ingest must not drop because a rule or the dashboard reads them
-(ADR-0012 §13). `make observe-check ENV=<env>` in keep-list mode queries each one.
+(ADR-0012 §13). `make observe-check ENV=<env> KEEP_LIST=1` extracts them from the rules and the dashboard and
+queries each **always-present** one, which must have a series on a clean rebuild. A **fault-only** series
+(the exit-code series, the recovery State Hash gauge) exists only after the event it describes, so it is checked
+in the `keep` pipeline's allow-list instead, and seen by the first drill that produces the fault.
 
 **Drift** — A managed Grafana resource that differs from Terraform's plan because someone edited it in the
 UI. Found by the daily `drift` job, which opens a GitHub issue; never an alert (ADR-0012 §5).

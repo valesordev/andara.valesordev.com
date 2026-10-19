@@ -1,0 +1,12 @@
+# make gcx-only-check's exception list (scripts/gcx_only_check.py; ADR-0012 decision 2, AW-INF-075).
+# Each file still calling Grafana's query or alerting APIs directly, and the story that moves it to
+# scripts/gcx.py. That story deletes its line; a line for a file that is gone, or in which no pattern
+# matches, fails the check.
+#
+# <path>                              <story that removes it>
+scripts/alerts_sync.py                AW-INF-077  # the ruler sync and its mimirtool calls
+scripts/grafana_http.py               AW-INF-069  # env_recover.py's and observe_unavailable.py's reads
+scripts/env_recover.py                AW-INF-069  # its range queries and the ruler config read
+scripts/stack_smoke.sh                AW-INF-064  # compose-side Prometheus and Loki queries
+scripts/stack_recover.sh              AW-INF-064
+scripts/stack_recover_mismatch.sh     AW-INF-064

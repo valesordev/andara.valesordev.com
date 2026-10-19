@@ -99,6 +99,9 @@ jobs:
       # AW-INF-068 AC-9: actionlint, then the terraform workflow's credential, sink and concurrency rules.
       - name: terraform workflow check
         run: make tf-workflow-check
+      # AW-INF-075: no script, Makefile line or workflow reads Grafana except through gcx.
+      - name: gcx only
+        run: make gcx-only-check
       # AW-INF-029. On a pull request the merge base with origin/main comes from
       # fetch-depth: 0 above. On a push to main it compares with the commit main was at before
       # the push, so a multi-commit push is checked whole; main's runs are never cancelled (the

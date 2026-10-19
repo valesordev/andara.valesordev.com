@@ -1,0 +1,23 @@
+{
+  "status": "success",
+  "data": {
+    "resultType": "matrix",
+    "result": [
+      {
+        "metric": {
+          "namespace": "andara-dev"
+        },
+        "values": [
+          [
+            1792443600,
+            "1"
+          ],
+          [
+            1792444200,
+            "1"
+          ]
+        ]
+      }
+    ]
+  }
+}

@@ -23,7 +23,8 @@ tenant, so one rule set in ruler namespace `andara` serves both; every rule carr
      can't do (HTTP 401 `invalid scope requested`, seen on `main`'s first run, 2026-10-08), so
      `alerts_sync.py` plans with the read key and POSTs and DELETEs to the ruler API itself with the write key.
 2. **GitHub.** Repository variables `GRAFANA_CLOUD_PROM_URL` and `GRAFANA_CLOUD_PROM_USER` (the pair
-   `make observe-check` uses; `alerts_sync.py` strips `/api/prom` for `mimirtool` and uses the user as
+   `make env-recover` and `make observe-unavailable` use until AW-INF-069; `make observe-check` reads
+   through `gcx` with `GRAFANA_<STACK>_READ_TOKEN` since AW-INF-075; `alerts_sync.py` strips `/api/prom` for `mimirtool` and uses the user as
    the tenant). Repository secret `ANDARA_ALERTS_CI_READ` (the read token). Environment `andara-main`,
    deployable from `main` only, with the secret `ANDARA_RULES_CI_WRITE` (the write token). A job that
    doesn't declare that environment can't read the write token, so a branch can't use it.

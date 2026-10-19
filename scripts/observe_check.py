@@ -2,115 +2,75 @@
 # SPDX-License-Identifier: Apache-2.0
 # Copyright 2026 Valesor Development
 
-"""make observe-check ENV=<env> — do the chart's signals reach Grafana Cloud? (AW-INF-008)
+"""make observe-check ENV=<env> [KEEP_LIST=1] — do the chart's signals reach Grafana Cloud? (AW-INF-008, AW-INF-075)
 
-Asks the three backends the cluster's Alloy ships to, with a read token, whether what the
-chart wires up actually arrived:
+Asks ENV's stack (scripts/grafana_stack.py: local, dev, staging → solo7dev; prod → solo7), through
+gcx (scripts/gcx.py), whether what the chart wires up actually arrived. Every query carries ENV's
+selectors, environment="<env>" and namespace="andara-<env>":
 
-  metrics  up{job="andara-server"} == 1 and andara_sessions_active, both carrying
-           namespace="andara-<env>" and cluster (AC-1); up == 1 for every projector
-           Deployment the namespace runs, each under its own job (AC-2)
-  logs     a `session opened` line from {namespace="andara-<env>", container="server"}
-           (AC-4) — SESSION_ID=<id> pins which one
-  traces   the andara.game.v1.Game/OpenSession span of that line's trace_id, fetched from
-           Tempo by ID (AC-3) — TRACE_ID=<id> overrides
+  metrics  up{job="andara-server"} == 1 and andara_sessions_active (AC-1); up == 1 for every
+           projector Deployment the namespace runs, each under its own job (AC-2)
+  logs     a `session opened` line from the namespace's server container (AC-4) — SESSION_ID=<id>
+           pins which one
+  traces   the andara.game.v1.Game/OpenSession span of that line's trace_id (AC-3) — TRACE_ID=<id>
+           overrides
 
-Then, informational and outside the exit status, every expression in files/alerts.yaml
-evaluated as an instant query against the same series, printed with the labels each result
-carries. AC-6 itself is `make observe-unavailable ENV=dev`, which takes the server away
-and polls AndaraServerUnavailable here until it names that namespace and no other.
+Then, informational and outside the exit status, every expression in files/alerts.yaml evaluated
+as an instant query, printed with the labels each result carries.
 
-Credentials come from the environment and nowhere else; nothing here prints them.
+--keep-list (KEEP_LIST=1) runs scripts/observe_keep_list.py instead: every series the rules and
+the dashboard name, ADR-0012 decision 13.
 
-  GRAFANA_CLOUD_READ_TOKEN                   an access-policy token with metrics:read,
-                                             logs:read, traces:read
-  GRAFANA_CLOUD_PROM_URL / _PROM_USER        e.g. https://prometheus-prod-NN-….grafana.net/api/prom
-  GRAFANA_CLOUD_LOKI_URL / _LOKI_USER        e.g. https://logs-prod-NNN.grafana.net
-  GRAFANA_CLOUD_TEMPO_URL / _TEMPO_USER      e.g. https://tempo-prod-NN-….grafana.net/tempo
+Credentials: GRAFANA_<STACK>_READ_TOKEN for ENV's stack, from the environment or .local/box.env;
+nothing here prints it. Optional: SINCE (default 1h), and PROJECTORS — the enabled projector names,
+comma-separated, `none` for none — which otherwise come from the namespace's Deployments via
+kubectl. If neither can say which projectors run, the check does not guess: AC-2 unanswerable is a
+failed check, not a skipped one.
 
-The URLs and user IDs are on the stack's details page in the Grafana Cloud portal; they are
-not secrets, the token is. Optional: CLUSTER (default solo7-local), SINCE (default 1h), and
-PROJECTORS — the enabled projector names, comma-separated, `none` for none — which otherwise
-come from the namespace's Deployments via kubectl. If neither can say which projectors run, the
-check does not guess: AC-2 unanswerable is exit 3, not a skipped check.
-
-Exit: 0 every signal present · 1 a signal absent · 2 a backend refused or failed the query
-· 3 a credential or URL unset — never a vacuous pass.
+Exit: 0 every signal present · 1 a signal absent, AC-2 unanswerable, or a gcx error · 2 usage ·
+3 the stack's read token unset — never a vacuous pass.
 """
-import base64
 import json
 import os
 import re
 import shutil
 import subprocess
 import sys
-import time
-import urllib.error
-import urllib.parse
-import urllib.request
 
 import yaml
 
-REPO = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+HERE = os.path.dirname(os.path.abspath(__file__))
+sys.path.insert(0, HERE)
+import gcx  # noqa: E402
+import grafana_stack  # noqa: E402
+
+REPO = os.path.dirname(HERE)
 ALERTS = os.path.join(REPO, "deploy", "helm", "andara", "files", "alerts.yaml")
 OPEN_SESSION_SPAN = "andara.game.v1.Game/OpenSession"
 
 
-class BackendError(Exception):
-    pass
+class Failed(Exception):
+    """A check could not be answered (exit 1)."""
 
 
 def say(msg):
     print("observe-check: " + msg)
 
 
-def need(name):
-    v = os.environ.get(name, "").strip()
-    if not v:
-        say("no %s; cannot verify" % name)
-        sys.exit(3)
-    return v
+def since_ok(s):
+    if not re.fullmatch(r"\d+[smhd]", s):
+        raise grafana_stack.Exit(2, "SINCE=%s is not <n>s|m|h|d" % s)
+    return s
 
 
-class Backend:
-    def __init__(self, kind, token):
-        self.url = need("GRAFANA_CLOUD_%s_URL" % kind).rstrip("/")
-        user = need("GRAFANA_CLOUD_%s_USER" % kind)
-        self.auth = "Basic " + base64.b64encode(("%s:%s" % (user, token)).encode()).decode()
-        self.kind = kind.lower()
-
-    def get(self, path, params=None, allow_404=False):
-        url = self.url + path + ("?" + urllib.parse.urlencode(params) if params else "")
-        req = urllib.request.Request(url, headers={"Authorization": self.auth, "Accept": "application/json"})
-        try:
-            with urllib.request.urlopen(req, timeout=30) as r:
-                return json.loads(r.read().decode())
-        except urllib.error.HTTPError as e:
-            if allow_404 and e.code == 404:
-                return None
-            # The body, not the request: the request carries the token.
-            raise BackendError("%s %s: HTTP %d %s" % (self.kind, path, e.code, e.read()[:200].decode(errors="replace")))
-        except (urllib.error.URLError, TimeoutError) as e:
-            raise BackendError("%s %s: %s" % (self.kind, path, e))
-
-
-def since_seconds(s):
-    m = re.fullmatch(r"(\d+)([smhd])", s)
-    if not m:
-        say("SINCE=%s is not <n>s|m|h|d" % s)
-        sys.exit(3)
-    return int(m.group(1)) * {"s": 1, "m": 60, "h": 3600, "d": 86400}[m.group(2)]
-
-
-def instant(prom, q):
-    body = prom.get("/api/v1/query", {"query": q})
-    if body.get("status") != "success":
-        raise BackendError("prom query %r: %s" % (q, body.get("error")))
-    return body["data"]["result"]
+def matchers(env):
+    """ENV's selectors as PromQL/LogQL matchers: environment, and the namespace the drills read."""
+    sel = dict(grafana_stack.selectors(env), namespace="andara-" + env)
+    return ", ".join('%s="%s"' % kv for kv in sorted(sel.items()))
 
 
 def labels(r):
-    m = dict(r["metric"])
+    m = dict(r.get("metric") or {})
     name = m.pop("__name__", "")
     return name + "{" + ", ".join('%s="%s"' % kv for kv in sorted(m.items())) + "}"
 
@@ -118,45 +78,36 @@ def labels(r):
 def projector_jobs(ns):
     """The projector jobs AC-2 expects: PROJECTORS if set, else the projector Deployments the
     namespace actually runs — the chart renders only the enabled ones, so that is what
-    `projectors.<name>.enabled` resolved to. Not knowing is exit 3: an empty list here would
+    `projectors.<name>.enabled` resolved to. Not knowing fails the check: an empty list here would
     drop every projector query and let an absent projector pass."""
     names = os.environ.get("PROJECTORS", "").strip()
     if names:
         return [] if names == "none" else ["andara-projector-" + n.strip() for n in names.split(",") if n.strip()]
     if not shutil.which("kubectl"):
-        say("no kubectl and no PROJECTORS; cannot verify AC-2")
-        sys.exit(3)
+        raise Failed("no kubectl and no PROJECTORS; cannot verify AC-2")
     p = subprocess.run(["kubectl", "-n", ns, "get", "deploy", "-l", "app.kubernetes.io/name=andara",
                         "-o", "jsonpath={.items[*].metadata.name}"], capture_output=True, text=True)
     if p.returncode:
-        say("kubectl could not list %s deployments (%s) and no PROJECTORS; cannot verify AC-2"
-            % (ns, p.stderr.strip()))
-        sys.exit(3)
+        raise Failed("kubectl could not list %s deployments (%s) and no PROJECTORS; cannot verify AC-2"
+                     % (ns, p.stderr.strip()))
     return [n for n in p.stdout.split() if n.startswith("andara-projector-")]
 
 
-def main():
-    env = (sys.argv[1] if len(sys.argv) > 1 else "").strip()
-    if not env:
-        say("usage: make observe-check ENV=<local|dev|prod>")
-        sys.exit(3)
-    token = need("GRAFANA_CLOUD_READ_TOKEN")
-    prom, loki, tempo = (Backend(k, token) for k in ("PROM", "LOKI", "TEMPO"))
+def check(env, ctx, since, q=gcx):
+    """Every signal for ENV through q (scripts/gcx.py); the list of what is absent."""
     ns = "andara-" + env
-    cluster = os.environ.get("CLUSTER", "solo7-local")
-    since = since_seconds(os.environ.get("SINCE", "1h"))
+    sel = matchers(env)
     absent = []
 
     # Metrics (AC-1, AC-2).
-    sel = 'namespace="%s", cluster="%s"' % (ns, cluster)
     checks = [("up", 'up{job="andara-server", %s}' % sel, True),
               ("andara_sessions_active", 'andara_sessions_active{job="andara-server", %s}' % sel, False)]
     checks += [("up " + d, 'up{job="%s", %s}' % (d, sel), True) for d in projector_jobs(ns)]
-    for what, q, must_be_one in checks:
-        res = instant(prom, q)
+    for what, expr, must_be_one in checks:
+        res = q.metrics_query(ctx, expr)
         if not res:
             absent.append(what)
-            say("ABSENT %s" % q)
+            say("ABSENT %s" % expr)
             continue
         for r in res:
             v = r["value"][1]
@@ -166,21 +117,18 @@ def main():
                 absent.append(what)
 
     # Logs (AC-4). The line carries the RPC span's trace_id, which is what ties it to AC-3.
-    now = int(time.time())
-    logq = '{namespace="%s", container="server"} | json | msg="session opened"' % ns
+    logq = '{%s, container="server"} | json | msg="session opened"' % sel
     sid = os.environ.get("SESSION_ID", "").strip()
     if sid:
         logq += ' | session_id="%s"' % sid
-    body = loki.get("/loki/api/v1/query_range", {"query": logq, "start": (now - since) * 10**9,
-                                                 "end": now * 10**9, "limit": 1, "direction": "backward"})
-    lines = [v[1] for s in body.get("data", {}).get("result", []) for v in s.get("values", [])]
+    lines = q.logs_query(ctx, logq, since=since, limit=1)
     trace_id = os.environ.get("TRACE_ID", "").strip()
     if not lines:
         absent.append("session opened log line")
-        say("ABSENT %s over the last %ds" % (logq, since))
+        say("ABSENT %s over the last %s" % (logq, since))
     else:
-        line = json.loads(lines[0])
-        say("ok     loki %s -> session_id=%s trace_id=%s" % (logq, line.get("session_id"), line.get("trace_id")))
+        line = json.loads(lines[0]["line"])
+        say("ok     logs %s -> session_id=%s trace_id=%s" % (logq, line.get("session_id"), line.get("trace_id")))
         trace_id = trace_id or line.get("trace_id", "")
 
     # Traces (AC-3).
@@ -188,29 +136,48 @@ def main():
         absent.append("trace")
         say("ABSENT no trace_id to fetch (no session opened line, no TRACE_ID)")
     else:
-        body = tempo.get("/api/traces/" + trace_id, allow_404=True)
-        if body is None or OPEN_SESSION_SPAN not in json.dumps(body):
+        found = q.trace_get(ctx, trace_id, since=since)
+        if not found or OPEN_SESSION_SPAN not in json.dumps(found):
             absent.append("trace")
-            say("ABSENT tempo trace %s with a %s span" % (trace_id, OPEN_SESSION_SPAN))
+            say("ABSENT trace %s with a %s span" % (trace_id, OPEN_SESSION_SPAN))
         else:
-            say("ok     tempo trace %s carries %s" % (trace_id, OPEN_SESSION_SPAN))
+            say("ok     trace %s carries %s" % (trace_id, OPEN_SESSION_SPAN))
 
-    # The rules, evaluated where AW-INF-009 will evaluate them (AC-6's instrument).
+    # The rules, evaluated against the same stack (AC-6's instrument).
     say("rules (informational — an empty result is a rule that would not fire):")
-    for g in yaml.safe_load(open(ALERTS))["groups"]:
+    with open(ALERTS) as f:
+        groups = yaml.safe_load(f)["groups"]
+    for g in groups:
         for rule in g["rules"]:
-            res = instant(prom, rule["expr"])
+            res = q.metrics_query(ctx, rule["expr"])
             say("  %-26s %s" % (rule["alert"], ", ".join(labels(r) for r in res) or "—"))
+    return absent
 
+
+def main(argv):
+    args = [a for a in argv if a != "--keep-list"]
+    env = (args[0] if args else "").strip()
+    if len(args) != 1 or not env:
+        raise grafana_stack.Exit(2, "usage: make observe-check ENV=<local|dev|staging|prod> [KEEP_LIST=1]")
+    ctx, _ = grafana_stack.require(env)
+    gcx.write_config()
+    if "--keep-list" in argv:
+        import observe_keep_list
+        return observe_keep_list.run(env, ctx)
+    absent = check(env, ctx, since_ok(os.environ.get("SINCE", "1h")))
     if absent:
         say("%d signal(s) absent: %s" % (len(absent), ", ".join(absent)))
-        sys.exit(1)
-    say("every signal present for %s" % ns)
+        return 1
+    say("every signal present for andara-%s in %s" % (env, ctx))
+    return 0
 
 
 if __name__ == "__main__":
     try:
-        main()
-    except BackendError as e:
-        say("backend error: %s" % e)
-        sys.exit(2)
+        sys.exit(main(sys.argv[1:]))
+    except grafana_stack.Exit as e:
+        say(str(e))
+        sys.exit(e.code)
+    except (gcx.GcxError, Failed) as e:
+        say(str(e))
+        sys.exit(1)

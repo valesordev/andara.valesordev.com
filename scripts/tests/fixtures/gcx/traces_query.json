@@ -1,0 +1,16 @@
+{
+  "traces": [
+    {
+      "traceID": "9f330ddce795582aca223dff19488478",
+      "rootServiceName": "andara-server",
+      "rootTraceName": "andara.game.v1.Game/OpenSession",
+      "startTimeUnixNano": "1792444997295000000",
+      "durationMs": 12,
+      "serviceStats": {
+        "andara-server": {
+          "spanCount": 3
+        }
+      }
+    }
+  ]
+}

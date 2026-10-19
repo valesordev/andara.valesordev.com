@@ -1,0 +1,12 @@
+{
+  "status": "success",
+  "data": {
+    "resultType": "streams",
+    "result": [],
+    "stats": {
+      "summary": {
+        "execTime": 0.020336
+      }
+    }
+  }
+}

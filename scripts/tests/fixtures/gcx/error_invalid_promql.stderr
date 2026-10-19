@@ -1,0 +1,14 @@
+Error: Invalid PromQL query
+│
+│ bad_data: invalid parameter "query": 1:4: parse error: unexpected end of input inside braces
+│
+├─ Suggestions:
+│
+│ • Run 'gcx metrics query --help' for usage and examples
+│
+├─ Learn more:
+│
+│ https://grafana.com/docs/grafana/latest/datasources/prometheus/query-editor.md
+│
+└─
+

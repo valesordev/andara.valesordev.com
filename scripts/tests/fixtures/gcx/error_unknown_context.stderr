@@ -1,0 +1,14 @@
+Error: Invalid configuration
+│
+├─ Details:
+│
+│ invalid context "nosuch": context not found
+│
+├─ Suggestions:
+│
+│ • Use one of the configured contexts (solo7, solo7dev), for example: gcx config use-context solo7
+│ • Check for typos in the context name
+│ • Review your configuration: gcx config view
+│
+└─
+
