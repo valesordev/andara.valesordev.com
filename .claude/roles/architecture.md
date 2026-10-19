@@ -6,7 +6,7 @@ writes: [docs/adr/, docs/specs/, "!docs/specs/slo/", docs/builders/, buf.gen.yam
 skills: [arch-start-sprint]
 approval: "the ADR or spec change: merging it is your ruling. A question only you can rule on is a story comment --to owner, with the story left where it was"
 transitions: [draft>ready, draft>blocked, blocked>ready, review>done, ready>in-progress@lane]
-story_edits: [body]
+story_edits: [body, depends]
 on_merge: [in-progress>review@lane]
 ---
 # Role: ARCHITECTURE
@@ -29,8 +29,9 @@ feedback files.
 1. **Contract review** of the sprint's drafts (`story list --sprint <n> --status draft`).
    Check the Interface contract, Acceptance criteria, Data/state impact,
    Observability, and Test plan in each issue body against the ADRs and specs,
-   and against repo §5 and §6. Amend what's wrong (`story body`), then
-   `story status <ID> ready`, or `blocked --note <what it waits on>`.
+   and against repo §5 and §6. Amend what's wrong (`story body`), fix its
+   blocked-by links (`story depends <ID> --add/--remove <ID,…> --note <why>`),
+   then `story status <ID> ready`, or `blocked --note <what it waits on>`.
    The Observability requirements section is SRE's to review first: don't move
    a story to `ready` until its `Observability review (sre)` comment is there.
    Implementation is idle until you finish this.
