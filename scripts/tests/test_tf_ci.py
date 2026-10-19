@@ -575,9 +575,22 @@ class PlanKey(Base):
         r = mock.patch.object(tf_ci.subprocess, "run", run)
         r.start()
         self.addCleanup(r.stop)
+        self.gate = True
+        g = mock.patch.object(tf_ci, "gate_open", lambda repo: self.gate)
+        g.start()
+        self.addCleanup(g.stop)
+
+    def test_refused_while_the_prod_gate_is_closed(self):
+        self.gate = False
+        result, text = self.sinks(lambda: tf_ci.cmd_plan_key(False, {"GITHUB_REPOSITORY": "o/r"}))
+        self.assertIsInstance(result, tf.Exit)
+        self.assertIn("TF_PROD_ENABLED", text)
+        self.assertEqual(self.set, [], "no gh secret set")
+        with open(self.box) as f:
+            self.assertNotIn("TF_PLAN_KEY_PROD", f.read())
 
     def test_one_key_in_both_environments_and_box_env(self):
-        self.sinks(lambda: tf_ci.cmd_plan_key(False, {}))
+        self.sinks(lambda: tf_ci.cmd_plan_key(False, {"GITHUB_REPOSITORY": "o/r"}))
         envs = [a[a.index("--env") + 1] for a, _ in self.set]
         self.assertEqual(envs, ["andara-prod-plan", "andara-prod-apply"])
         keys = {inp for _, inp in self.set}
@@ -593,10 +606,10 @@ class PlanKey(Base):
     def test_an_existing_key_is_kept_unless_rotate(self):
         with open(self.box, "a") as f:
             f.write("export TF_PLAN_KEY_PROD=old\n")
-        result, _ = self.sinks(lambda: tf_ci.cmd_plan_key(False, {}))
+        result, _ = self.sinks(lambda: tf_ci.cmd_plan_key(False, {"GITHUB_REPOSITORY": "o/r"}))
         self.assertIsInstance(result, tf.Exit)
         self.assertEqual(self.set, [])
-        self.sinks(lambda: tf_ci.cmd_plan_key(True, {}))
+        self.sinks(lambda: tf_ci.cmd_plan_key(True, {"GITHUB_REPOSITORY": "o/r"}))
         with open(self.box) as f:
             text = f.read()
         self.assertNotIn("TF_PLAN_KEY_PROD=old", text)
@@ -682,8 +695,30 @@ class Environments(Base):
         self.assertNotIn("andara-prod-plan", self.created)
         self.assertNotIn("andara-prod-apply", self.created)
 
+    def test_gate_off_asks_for_no_prod_variable(self):
+        self.repo_vars -= set(tf_ci.PROD_REPO_VARS)
+        result, text = self.report()
+        self.assertEqual(result, 0, text)
+        self.assertNotIn("missing: repository variable", text)
+
+    def test_gate_on_asks_for_the_prod_variables(self):
+        self.gate = "true"
+        self.repo_vars -= set(tf_ci.PROD_REPO_VARS)
+        _, text = self.report()
+        for v in tf_ci.PROD_REPO_VARS:
+            self.assertIn("missing: repository variable %s" % v, text)
+
+    def test_the_gate_ignores_case_as_the_workflow_does(self):
+        """GitHub's `==` compares strings case-insensitively, so TRUE opens the workflow's gate; the report
+        must agree, or it would call prod off while the prod jobs run."""
+        for value in ("true", "TRUE", "True"):
+            with self.subTest(value=value):
+                self.gate, self.created = value, []
+                self.report(apply=True)
+                self.assertEqual(self.created, ["andara-main", "andara-prod-plan", "andara-prod-apply"])
+
     def test_any_value_but_true_is_off(self):
-        for value in ("false", "TRUE", "1", "yes", ""):
+        for value in ("false", "1", "yes", "", " true"):
             with self.subTest(value=value):
                 self.gate, self.created = value, []
                 result, text = self.report(apply=True)

@@ -13,7 +13,8 @@
 #                  closes it on a clean check. Schedule only: the plan accounts are bound to the
 #                  `schedule` event, not a dispatch.
 #
-# A run started by hand on main (`make tf-replan`) runs apply, plan-prod and apply-prod for main's head.
+# A run started by hand on main (`make tf-replan`) runs apply, and behind the prod gate plan-prod and
+# apply-prod, for main's head.
 # That is how a superseded prod plan is replaced when the merge that moved main touched none of the
 # paths above.
 #
@@ -26,7 +27,8 @@
 # (one awaiting approval doesn't count: it changes nothing).
 #
 # The prod gate: plan-prod, apply-prod and drift-prod-irm run, and the solo7 legs of plan and drift exist,
-# only while the repository variable TF_PROD_ENABLED is exactly 'true'. Unset or anything else, they are
+# only while the repository variable TF_PROD_ENABLED is 'true' (GitHub's == ignores case, so 'TRUE' counts;
+# tf-ci-environments agrees). Unset or anything else, they are
 # skipped, not failed. There is no prod environment yet (2026-10-19), so it is unset. The gate controls
 # availability only: the environments, their reviewers and the WIF attribute conditions stay the boundary.
 #

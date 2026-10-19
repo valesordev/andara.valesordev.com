@@ -532,7 +532,7 @@ ENVIRONMENTS = {
                           "secrets": ("GRAFANA_SOLO7_APPLY_TOKEN", "GRAFANA_SOLO7_FLEET_APPLY_TOKEN",
                                       "GRAFANA_SOLO7_IRM_TOKEN", "TF_PLAN_KEY_PROD")},
 }
-# The prod gate: while this repository variable is not exactly 'true', the workflow runs no prod job and no
+# The prod gate: while this repository variable is not 'true' (any case, as GitHub's == compares), the workflow runs no prod job and no
 # solo7 leg, and this report asks only for the dev items (there is no prod environment yet, 2026-10-19).
 GATE_VAR = "TF_PROD_ENABLED"
 PROD_ENVIRONMENTS = ("andara-prod-plan", "andara-prod-apply")
@@ -548,12 +548,18 @@ def gh_json(*args):
     return json.loads(p.stdout or "null")
 
 
+def gate_open(repo):
+    """Whether TF_PROD_ENABLED opens the workflow's gate. GitHub's `==` compares strings ignoring case, so
+    'TRUE' opens it there; this agrees. An unreadable variable reads as closed."""
+    return str((gh_json("repos/%s/actions/variables/%s" % (repo, GATE_VAR)) or {}).get("value")).lower() == "true"
+
+
 def cmd_environments(apply, env):
     """Report (and with apply, create) the environments; report every missing secret and variable. With the
     prod gate off, only the dev items: the prod environments, secrets and variables are neither reported nor
     created, and apply exits 1 naming the gate rather than create andara-prod-*."""
     repo = env.get("GITHUB_REPOSITORY") or gh_json("repos/{owner}/{repo}", "--jq", "{full_name}")["full_name"]
-    prod = ((gh_json("repos/%s/actions/variables/%s" % (repo, GATE_VAR)) or {}).get("value") == "true")
+    prod = gate_open(repo)
     if not prod:
         tf.say("%s is not 'true': the prod jobs are gated off, so only the dev items are checked" % GATE_VAR)
     missing = []
@@ -612,7 +618,11 @@ def cmd_environments(apply, env):
 
 def cmd_plan_key(rotate, env):
     """Make TF_PLAN_KEY_PROD: one random key, set in both prod environments and .local/box.env (mode 0600).
-    Refuses to replace an existing box.env key unless rotate. The key reaches gh on stdin, never argv."""
+    Refuses to replace an existing box.env key unless rotate. The key reaches gh on stdin, never argv.
+    Refuses, before touching anything, while the prod gate is closed: there are no prod environments."""
+    repo = env.get("GITHUB_REPOSITORY") or gh_json("repos/{owner}/{repo}", "--jq", "{full_name}")["full_name"]
+    if not gate_open(repo):
+        raise tf.Exit(1, "not making TF_PLAN_KEY_PROD: %s is not 'true' (no prod environment yet)" % GATE_VAR)
     path = tf.box_env_path(env) or tf.BOX_ENV
     existing = tf.load_box_env({}, path) if os.path.exists(path) else {}
     if existing.get("TF_PLAN_KEY_PROD") and not rotate:

@@ -114,7 +114,8 @@ The `solo7-irm` root's summaries, logs and drift issue carry resource addresses 
 the provider prints the IRM integration URL in clear.
 
 **The prod gate.** `plan-prod`, `apply-prod` and `drift-prod-irm` run, and the `solo7` legs of `plan`
-and `drift` exist, only while the repository variable `TF_PROD_ENABLED` is exactly `true`. With it unset
+and `drift` exist, only while the repository variable `TF_PROD_ENABLED` is `true` (any case: GitHub's `==`
+ignores case for strings, and `make tf-ci-environments` agrees). With it unset
 (or any other value) they are skipped, not failed. That is the state today: there is no prod environment
 yet (2026-10-19), so only `solo7dev` is planned, applied and checked for drift. A pull request that changes
 the `solo7` or `solo7-irm` root still gets `tf_policy.py` and `make tf-test`, but no plan; the first
@@ -154,7 +155,7 @@ nothing, and deletes the artifact. If that merge touched the Terraform paths, it
 `plan-prod` to read and approve. If it didn't (server code, docs), nothing re-plans by itself. Run:
 
 ```
-make tf-replan                    # the workflow on main: apply solo7dev, plan-prod and apply-prod for main's head
+make tf-replan                    # the workflow on main: apply solo7dev, then (prod gate) plan-prod and apply-prod for main's head
 ```
 
 The same recovers a `plan-prod` that never ran. GitHub keeps one running and one pending job per
@@ -221,7 +222,8 @@ minutes:
 - `ENV=local`: no contact point is notified; the route ends at `blackhole`, muted by `always`.
 
 Then remove it: `make tf-test-alert-clean STACK=solo7dev ENV=<same>`. Record what was seen in the story's
-§8 record. `solo7`'s post to `#andaras-world` is recorded at `AW-INF-068`'s first `apply-prod`.
+§8 record. `solo7`'s post to `#andaras-world` is recorded at the first `apply-prod`, which moved with the
+prod half to `AW-INF-078` (parked until prod hosting exists).
 
 ## Recovering a state object
 

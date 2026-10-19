@@ -198,7 +198,10 @@ class Workflow(unittest.TestCase):
                      "vars.TF_PROD_ENABLED == 'true' && github.event_name == 'push' || github.event_name == 'workflow_dispatch'",
                      "vars.TF_PROD_ENABLED == 'true' && (github.event_name == 'push') || (github.event_name == 'workflow_dispatch')",
                      "vars.TF_PROD_ENABLED != 'true' && (github.event_name == 'push')",
-                     "vars.TF_PROD_ENABLED && (github.event_name == 'push')"):
+                     "vars.TF_PROD_ENABLED && (github.event_name == 'push')",
+                     # parens inside string literals must not balance the group
+                     "vars.TF_PROD_ENABLED == 'true' && (github.ref == '(' ) || always() || ( github.ref == ')' )",
+                     "vars.TF_PROD_ENABLED == 'true' && (github.ref == 'it''s (' ) || always() || ( github.ref == ')' )"):
             with self.subTest(cond=cond):
                 self.w = load()
                 self.w["jobs"]["plan-prod"]["if"] = cond
@@ -235,6 +238,34 @@ class Workflow(unittest.TestCase):
     def test_drift_losing_its_dev_leg(self):
         set_legs(self.w["jobs"]["drift"], wc.PR_MATRIX[1:], [])
         self.broken("drift", "prod-gate")
+
+    def test_a_gated_condition_with_parens_in_a_literal(self):
+        """A literal '(' or ')' inside the gated group is just text."""
+        self.w["jobs"]["plan-prod"]["if"] = "vars.TF_PROD_ENABLED == 'true' && (github.ref != 'refs/heads/x)')"
+        self.assertEqual(wc.check(self.w), [])
+
+    def test_a_matrix_axis_beside_the_gated_include(self):
+        """A `stack: [solo7]` axis makes its own leg whatever include says."""
+        for job in ("plan", "drift"):
+            with self.subTest(job=job):
+                self.w = load()
+                self.w["jobs"][job]["strategy"]["matrix"]["stack"] = ["solo7"]
+                self.broken(job, "prod-gate")
+
+    def test_a_whole_matrix_expression(self):
+        self.w["jobs"]["drift"]["strategy"]["matrix"] = "${{ fromJSON(vars.TF_MATRIX) }}"
+        self.broken("drift", "prod-gate")
+
+    def test_another_matrix_job_built_some_other_way(self):
+        job = copy.deepcopy(self.w["jobs"]["drift"])
+        job["strategy"]["matrix"]["include"] = "${{ fromJSON(vars.TF_MATRIX) }}"
+        self.w["jobs"]["drift-copy"] = job
+        self.broken("drift-copy", "prod-gate")
+
+    def test_drift_prod_irm_is_read_behind_its_gate(self):
+        """The gated schedule condition passes drift-auth; read raw, it would not."""
+        self.w["jobs"]["drift-prod-irm"]["if"] = "vars.TF_PROD_ENABLED == 'true' && (github.event_name == 'schedule')"
+        self.assertFalse([p for p in wc.check(self.w) if p[1] == "drift-auth"])
 
     def test_drift_prod_irm_reachable_by_dispatch_behind_the_gate(self):
         self.w["jobs"]["drift-prod-irm"]["if"] = (

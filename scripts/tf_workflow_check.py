@@ -62,7 +62,8 @@ PR_MATRIX = [{"stack": "solo7dev", "key": "SOLO7DEV", "webhook": "SLACK_WEBHOOK_
              {"stack": "solo7", "key": "SOLO7", "webhook": "SLACK_WEBHOOK_PROD"}]
 DEV_MATRIX = PR_MATRIX[:1]
 
-# The prod gate (ADR-0012, 2026-10-19 amendment): availability only, never the security boundary.
+# The prod gate (architecture on AW-INF-068, 2026-10-19; ADR-0012's amendment to follow): availability
+# only, never the security boundary. GitHub's `==` ignores case, so 'TRUE' opens it too; tf_ci.py agrees.
 GATE = "vars.TF_PROD_ENABLED == 'true'"
 GATED_MATRIX = re.compile(r"^\$\{\{\s*fromJSON\(\s*vars\.TF_PROD_ENABLED == 'true'\s*&&\s*'(?P<on>[^']*)'"
                           r"\s*\|\|\s*'(?P<off>[^']*)'\s*\)\s*\}\}$")
@@ -78,18 +79,26 @@ def gated(cond):
     prefix = GATE + " && ("
     if not (cond.startswith(prefix) and cond.endswith(")")):
         return None
-    rest, depth = cond[len(prefix):-1], 0
+    rest, depth, quoted = cond[len(prefix):-1], 0, False
     for ch in rest:
-        depth += {"(": 1, ")": -1}.get(ch, 0)
-        if depth < 0:
-            return None
-    return rest if depth == 0 else None
+        # A parenthesis inside a '…' literal is text ('' escapes a quote: it toggles twice).
+        if ch == "'":
+            quoted = not quoted
+        elif not quoted:
+            depth += {"(": 1, ")": -1}.get(ch, 0)
+            if depth < 0:
+                return None
+    return rest if depth == 0 and not quoted else None
 
 
 def matrix_legs(job):
     """(on, off): the matrix's legs with the gate on and off. A literal list is the same both ways;
-    an expression that isn't the gated form is (None, None)."""
-    include = ((job.get("strategy") or {}).get("matrix") or {}).get("include")
+    an expression that isn't the gated form, a whole-matrix expression, or any axis beside `include`
+    (which makes legs of its own, whatever include says) is (None, None)."""
+    matrix = (job.get("strategy") or {}).get("matrix")
+    if not isinstance(matrix, dict) or set(matrix) != {"include"}:
+        return None, None
+    include = matrix["include"]
     if isinstance(include, list):
         return include, include
     m = GATED_MATRIX.match(" ".join(str(include or "").split()))
@@ -208,7 +217,7 @@ def check(workflow):
             continue
         on, off = matrix_legs(job)
         if off is None:
-            out.append((name, "prod-gate", "the matrix include is a literal list or "
+            out.append((name, "prod-gate", "the matrix holds `include` only, a literal list or "
                                            "${{ fromJSON(%s && '<on>' || '<off>') }}" % GATE))
         elif not isinstance(off, list) or any(not isinstance(leg, dict) or leg.get("stack") != "solo7dev"
                                               for leg in off):
