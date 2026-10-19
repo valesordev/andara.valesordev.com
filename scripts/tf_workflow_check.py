@@ -23,6 +23,10 @@ reads the workflow and fails on any job that breaks one of these rules, naming t
   secrets-context    the whole secrets context (`toJSON(secrets)`, a bare `secrets`) anywhere
   drift-auth         a drift job that runs on anything but the schedule (the plan accounts trust no dispatch)
   failure-report     a `failure()` step that runs a repository file: it may be reporting a failed checkout
+  prod-gate          a job holding andara-prod-plan or andara-prod-apply whose job-level `if` is not
+                     `vars.TF_PROD_ENABLED == 'true'`, alone or as `… && (<rest>)`; or a matrix that can
+                     produce a stack other than solo7dev except through the gate, built as
+                     `${{ fromJSON(vars.TF_PROD_ENABLED == 'true' && '<on>' || '<off>') }}`
 
 The credential rules cover the workflow-level and job-level `env` as well as each step's. The pull-request
 job's checkout must be the base branch: no `ref`, no `repository`.
@@ -30,6 +34,7 @@ job's checkout must be the base branch: no `ref`, no `repository`.
 Exit: 0 clean · 1 a rule broken · 2 the workflow is missing or unreadable.
 """
 
+import json
 import os
 import re
 import sys
@@ -51,9 +56,49 @@ PR_PLAN_REFS = {
     ("secrets", "format('GRAFANA_{0}_READ_TOKEN', matrix.key)"),
     ("secrets", "format('GRAFANA_{0}_FLEET_READ_TOKEN', matrix.key)"),
     ("secrets", "matrix.webhook"),
+    ("vars", "TF_PROD_ENABLED"),  # the prod gate on its matrix; a flag, not a credential
 }
 PR_MATRIX = [{"stack": "solo7dev", "key": "SOLO7DEV", "webhook": "SLACK_WEBHOOK_DEV"},
              {"stack": "solo7", "key": "SOLO7", "webhook": "SLACK_WEBHOOK_PROD"}]
+DEV_MATRIX = PR_MATRIX[:1]
+
+# The prod gate (ADR-0012, 2026-10-19 amendment): availability only, never the security boundary.
+GATE = "vars.TF_PROD_ENABLED == 'true'"
+GATED_MATRIX = re.compile(r"^\$\{\{\s*fromJSON\(\s*vars\.TF_PROD_ENABLED == 'true'\s*&&\s*'(?P<on>[^']*)'"
+                          r"\s*\|\|\s*'(?P<off>[^']*)'\s*\)\s*\}\}$")
+
+
+def gated(cond):
+    """The rest of a job-level if behind the gate ("" for the gate alone), or None when it isn't gated.
+    Accepted: the gate alone, or `<gate> && (<rest>)` with <rest> one balanced group, so no operator
+    precedence can lift <rest> out from under the gate."""
+    cond = " ".join(str(cond or "").split())
+    if cond == GATE:
+        return ""
+    prefix = GATE + " && ("
+    if not (cond.startswith(prefix) and cond.endswith(")")):
+        return None
+    rest, depth = cond[len(prefix):-1], 0
+    for ch in rest:
+        depth += {"(": 1, ")": -1}.get(ch, 0)
+        if depth < 0:
+            return None
+    return rest if depth == 0 else None
+
+
+def matrix_legs(job):
+    """(on, off): the matrix's legs with the gate on and off. A literal list is the same both ways;
+    an expression that isn't the gated form is (None, None)."""
+    include = ((job.get("strategy") or {}).get("matrix") or {}).get("include")
+    if isinstance(include, list):
+        return include, include
+    m = GATED_MATRIX.match(" ".join(str(include or "").split()))
+    if not m:
+        return None, None
+    try:
+        return json.loads(m.group("on")), json.loads(m.group("off"))
+    except ValueError:
+        return None, None
 
 
 def refs(obj):
@@ -130,9 +175,10 @@ def check(workflow):
         if extra:
             out.append(("plan", "pr-plan", "references beyond its own stack's read credentials: %s"
                         % ", ".join("%s[%s]" % r for r in extra)))
-        matrix = ((plan.get("strategy") or {}).get("matrix") or {}).get("include")
-        if matrix != PR_MATRIX:
-            out.append(("plan", "pr-plan", "the matrix must be exactly %s" % PR_MATRIX))
+        on, off = matrix_legs(plan)
+        if on != PR_MATRIX or off != DEV_MATRIX:
+            out.append(("plan", "pr-plan", "the matrix must be exactly %s with the prod gate on and %s with "
+                                           "it off" % (PR_MATRIX, DEV_MATRIX)))
         cond = str(plan.get("if", ""))
         for needle in ("pull_request_target", "head.repo.full_name == github.repository", "base.ref == 'main'"):
             if needle not in cond:
@@ -144,10 +190,34 @@ def check(workflow):
                                                "the pull request's files are read as data by tf_policy.py extract"))
 
     # The plan accounts are bound to event_name `schedule` (and `pull_request_target`), never a dispatch.
+    # drift-prod-irm's condition is read behind its gate (prod-gate checks the gate itself).
     for name in ("drift", "drift-prod-irm"):
-        if str((jobs.get(name) or {}).get("if", "")).strip() != "github.event_name == 'schedule'":
+        cond = (jobs.get(name) or {}).get("if", "")
+        if name == "drift-prod-irm":
+            cond = gated(cond)
+        if " ".join(str(cond or "").split()) != "github.event_name == 'schedule'":
             out.append((name, "drift-auth", "the drift jobs run on the schedule only "
                                             "(if: github.event_name == 'schedule')"))
+
+    # prod-gate: a prod job runs, and a non-dev matrix leg exists, only behind TF_PROD_ENABLED.
+    for name, job in jobs.items():
+        if environment(job) in PROD_ENVS and gated(job.get("if")) is None:
+            out.append((name, "prod-gate", "a job in %s needs `if: %s`, alone or as `%s && (<rest>)`"
+                        % (environment(job), GATE, GATE)))
+        if "matrix" not in (job.get("strategy") or {}):
+            continue
+        on, off = matrix_legs(job)
+        if off is None:
+            out.append((name, "prod-gate", "the matrix include is a literal list or "
+                                           "${{ fromJSON(%s && '<on>' || '<off>') }}" % GATE))
+        elif not isinstance(off, list) or any(not isinstance(leg, dict) or leg.get("stack") != "solo7dev"
+                                              for leg in off):
+            out.append((name, "prod-gate", "with TF_PROD_ENABLED off the matrix may hold solo7dev only, got %s"
+                        % off))
+    drift_on, drift_off = matrix_legs(jobs.get("drift") or {})
+    if (drift_on, drift_off) != (PR_MATRIX, DEV_MATRIX):
+        out.append(("drift", "prod-gate", "the drift matrix must be exactly %s with the prod gate on and %s "
+                                          "with it off" % (PR_MATRIX, DEV_MATRIX)))
 
     def group(job_name):
         c = (jobs.get(job_name) or {}).get("concurrency") or {}

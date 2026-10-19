@@ -4,6 +4,7 @@
 """make tf-workflow-check (AW-INF-068 AC-1, AC-9, AC-11): the real workflow is clean, and each rule fails on a
 workflow that breaks it, naming the job and the rule."""
 import copy
+import json
 import os
 import sys
 import unittest
@@ -22,6 +23,12 @@ def load():
 
 def step(job, name):
     return next(s for s in job["steps"] if s.get("name", "").startswith(name) or s.get("id") == name)
+
+
+def set_legs(job, on, off):
+    """Write a job's matrix in the gated form, with these legs on and off."""
+    job["strategy"]["matrix"]["include"] = "${{ fromJSON(%s && '%s' || '%s') }}" % (
+        wc.GATE, json.dumps(on, separators=(",", ":")), json.dumps(off, separators=(",", ":")))
 
 
 class Workflow(unittest.TestCase):
@@ -164,9 +171,75 @@ class Workflow(unittest.TestCase):
         self.broken("plan", "pr-plan")
 
     def test_the_plan_job_planning_the_irm_root(self):
-        self.w["jobs"]["plan"]["strategy"]["matrix"]["include"].append(
-            {"stack": "solo7-irm", "key": "SOLO7", "webhook": "SLACK_WEBHOOK_PROD"})
+        irm = {"stack": "solo7-irm", "key": "SOLO7", "webhook": "SLACK_WEBHOOK_PROD"}
+        set_legs(self.w["jobs"]["plan"], wc.PR_MATRIX + [irm], wc.DEV_MATRIX)
         self.broken("plan", "pr-plan")
+
+    # prod-gate (the 2026-10-19 scope change: no prod environment yet)
+
+    def test_the_real_matrices_hold_solo7_only_behind_the_gate(self):
+        for job in ("plan", "drift"):
+            with self.subTest(job=job):
+                self.assertEqual(wc.matrix_legs(self.w["jobs"][job]), (wc.PR_MATRIX, wc.DEV_MATRIX))
+
+    def test_a_prod_job_without_the_gate(self):
+        ungated = {"plan-prod": "github.event_name == 'push'",
+                   "apply-prod": "needs.plan-prod.outputs.changes == 'true'",
+                   "drift-prod-irm": "github.event_name == 'schedule'"}
+        for job, cond in ungated.items():
+            with self.subTest(job=job):
+                self.w = load()
+                self.w["jobs"][job]["if"] = cond
+                self.broken(job, "prod-gate")
+
+    def test_a_gate_that_precedence_can_bypass(self):
+        """`gate && a || b` runs on b alone; `gate && (a) || (b)` likewise. Only `gate && (<one group>)` holds."""
+        for cond in ("vars.TF_PROD_ENABLED == 'true' || github.event_name == 'push'",
+                     "vars.TF_PROD_ENABLED == 'true' && github.event_name == 'push' || github.event_name == 'workflow_dispatch'",
+                     "vars.TF_PROD_ENABLED == 'true' && (github.event_name == 'push') || (github.event_name == 'workflow_dispatch')",
+                     "vars.TF_PROD_ENABLED != 'true' && (github.event_name == 'push')",
+                     "vars.TF_PROD_ENABLED && (github.event_name == 'push')"):
+            with self.subTest(cond=cond):
+                self.w = load()
+                self.w["jobs"]["plan-prod"]["if"] = cond
+                self.broken("plan-prod", "prod-gate")
+
+    def test_a_job_moved_into_a_prod_environment_without_the_gate(self):
+        self.w["jobs"]["drift"]["environment"] = "andara-prod-plan"
+        self.broken("drift", "prod-gate")
+
+    def test_a_literal_matrix_with_solo7(self):
+        """The pre-gate shape: a solo7 leg that exists whatever the variable says."""
+        for job in ("plan", "drift"):
+            with self.subTest(job=job):
+                self.w = load()
+                self.w["jobs"][job]["strategy"]["matrix"]["include"] = copy.deepcopy(wc.PR_MATRIX)
+                self.broken(job, "prod-gate")
+
+    def test_solo7_in_the_off_legs(self):
+        for job in ("plan", "drift"):
+            with self.subTest(job=job):
+                self.w = load()
+                set_legs(self.w["jobs"][job], wc.PR_MATRIX, wc.PR_MATRIX)
+                self.broken(job, "prod-gate")
+
+    def test_the_legs_swapped(self):
+        """solo7 present when the gate is off and absent when it is on."""
+        set_legs(self.w["jobs"]["drift"], wc.DEV_MATRIX, wc.PR_MATRIX)
+        self.broken("drift", "prod-gate")
+
+    def test_a_matrix_built_some_other_way(self):
+        self.w["jobs"]["drift"]["strategy"]["matrix"]["include"] = "${{ fromJSON(vars.TF_MATRIX) }}"
+        self.broken("drift", "prod-gate")
+
+    def test_drift_losing_its_dev_leg(self):
+        set_legs(self.w["jobs"]["drift"], wc.PR_MATRIX[1:], [])
+        self.broken("drift", "prod-gate")
+
+    def test_drift_prod_irm_reachable_by_dispatch_behind_the_gate(self):
+        self.w["jobs"]["drift-prod-irm"]["if"] = (
+            "vars.TF_PROD_ENABLED == 'true' && (github.event_name == 'schedule' || github.event_name == 'workflow_dispatch')")
+        self.broken("drift-prod-irm", "drift-auth")
 
     # concurrency (AC-11)
 
@@ -199,8 +272,9 @@ class Workflow(unittest.TestCase):
     def test_every_credential_the_workflow_reads_is_in_tf_ci_environments_table(self):
         """make tf-ci-environments checks the names in tf_ci.py; they must be the ones the jobs read."""
         import tf_ci
-        keys = [m["key"] for m in self.w["jobs"]["plan"]["strategy"]["matrix"]["include"]]
-        hooks = [m["webhook"] for m in self.w["jobs"]["plan"]["strategy"]["matrix"]["include"]]
+        on, _ = wc.matrix_legs(self.w["jobs"]["plan"])
+        keys = [m["key"] for m in on]
+        hooks = [m["webhook"] for m in on]
         for name, job in self.w["jobs"].items():
             env = wc.environment(job)
             allowed = set(tf_ci.REPO_SECRETS) | set(tf_ci.ENVIRONMENTS.get(env, {}).get("secrets", ()))
@@ -214,7 +288,7 @@ class Workflow(unittest.TestCase):
                 for n in names:
                     with self.subTest(job=name, ref=n):
                         if kind == "vars":
-                            self.assertIn(n, tf_ci.REPO_VARS)
+                            self.assertIn(n, tf_ci.REPO_VARS + (tf_ci.GATE_VAR,))
                         else:
                             self.assertIn(n, allowed, "%s reads %s, which tf-ci-environments does not "
                                                       "expect in %s" % (name, n, env or "the repository"))

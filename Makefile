@@ -514,7 +514,7 @@ tf-drift:
 tf-plan-show:
 	@$(PY) $(SCRIPTS)/tf_ci.py plan-show --run "$(RUN)" --stack "$(STACK)"
 
-## tf-ci-environments: report what the terraform workflow needs on GitHub (environments, reviewer, secret and variable names); APPLY=1 creates the environments, never a secret (AW-INF-068)
+## tf-ci-environments: report what the terraform workflow needs on GitHub (environments, reviewer, secret and variable names); APPLY=1 creates the environments, never a secret; with TF_PROD_ENABLED not 'true', the dev items only, and APPLY=1 refuses andara-prod-* (AW-INF-068)
 tf-ci-environments:
 	@$(PY) $(SCRIPTS)/tf_ci.py environments $(if $(filter 1,$(APPLY)),--apply)
 

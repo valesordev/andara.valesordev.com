@@ -104,22 +104,36 @@ make tf-apply STACK=solo7dev          # plan, apply that plan, then a second pla
 
 | Job | When | Environment | What it does |
 |---|---|---|---|
-| `plan` | pull request touching the roots, `alerts.yaml` or the dashboards | none | runs the base branch's `scripts/tf_policy.py` over the pull request's files, then plans `solo7dev` and `solo7` with read credentials; the plans are in the job summary |
+| `plan` | pull request touching the roots, `alerts.yaml` or the dashboards | none | runs the base branch's `scripts/tf_policy.py` over the pull request's files, then plans `solo7dev` (and `solo7`, behind the prod gate) with read credentials; the plans are in the job summary |
 | `apply` | merge to `main`, or `make tf-replan` | `andara-main` | applies `solo7dev`, then a second plan that must be empty |
-| `plan-prod` | after `apply` | `andara-prod-plan` | plans `solo7-irm` then `solo7`, uploads both encrypted with `TF_PLAN_KEY_PROD` (one-day artifact), prints each plan's sha256 |
-| `apply-prod` | after `plan-prod`, only when it found changes | `andara-prod-apply` (Brian approves) | refuses a plan whose commit is not `main`'s head, applies exactly the approved plans, checks that a second plan is empty, deletes the artifact |
-| `drift`, `drift-prod-irm` | daily, 06:23 UTC | none / `andara-prod-plan` | opens or updates the issue labelled `drift:<root>` on drift or on any failure of the job, and closes it on a clean check |
+| `plan-prod` | after `apply`; prod gate | `andara-prod-plan` | plans `solo7-irm` then `solo7`, uploads both encrypted with `TF_PLAN_KEY_PROD` (one-day artifact), prints each plan's sha256 |
+| `apply-prod` | after `plan-prod`, only when it found changes; prod gate | `andara-prod-apply` (Brian approves) | refuses a plan whose commit is not `main`'s head, applies exactly the approved plans, checks that a second plan is empty, deletes the artifact |
+| `drift`, `drift-prod-irm` | daily, 06:23 UTC; `solo7` leg and `drift-prod-irm` behind the prod gate | none / `andara-prod-plan` | opens or updates the issue labelled `drift:<root>` on drift or on any failure of the job, and closes it on a clean check |
 
 The `solo7-irm` root's summaries, logs and drift issue carry resource addresses and actions only, because
 the provider prints the IRM integration URL in clear.
 
+**The prod gate.** `plan-prod`, `apply-prod` and `drift-prod-irm` run, and the `solo7` legs of `plan`
+and `drift` exist, only while the repository variable `TF_PROD_ENABLED` is exactly `true`. With it unset
+(or any other value) they are skipped, not failed. That is the state today: there is no prod environment
+yet (2026-10-19), so only `solo7dev` is planned, applied and checked for drift. A pull request that changes
+the `solo7` or `solo7-irm` root still gets `tf_policy.py` and `make tf-test`, but no plan; the first
+`plan-prod` after the gate opens shows the accumulated diff. The gate controls availability only. The
+environments, their reviewers and the workload identity conditions remain what keeps credentials in their
+jobs. `make tf-workflow-check` fails a prod job, or a matrix leg, that isn't behind it.
+
 **Setting it up (once, by Brian).** Run these after `make tf-bootstrap-gcp`, which sets the repository variables:
 
 ```
-make tf-ci-environments APPLY=1   # andara-main, andara-prod-plan, andara-prod-apply: main only; Brian reviews prod-apply
-make tf-plan-key                  # TF_PLAN_KEY_PROD in both prod environments and .local/box.env
+make tf-ci-environments APPLY=1   # andara-main (and, with the gate on, andara-prod-plan and andara-prod-apply): main only; Brian reviews prod-apply
 make tf-ci-environments           # lists every secret still missing, with the gh secret set line for each
 ```
+
+With the gate off, both check only the dev items: `andara-main`, the `solo7dev` read tokens and
+`SLACK_WEBHOOK_DEV`. `APPLY=1` then exits 1 naming `TF_PROD_ENABLED` rather than create `andara-prod-*`.
+**Opening the gate**, once prod hosting exists: `gh variable set TF_PROD_ENABLED --body true`, then
+`make tf-ci-environments APPLY=1`, `make tf-plan-key` (`TF_PLAN_KEY_PROD` in both prod environments and
+`.local/box.env`) and `make tf-ci-environments` until it exits 0.
 
 Paste each token the report names with the `gh secret set` line it prints. `gh` prompts for the value, so
 it never reaches your shell history. Where each token comes from is `grafana-credentials.md` (`AW-INF-076`). The

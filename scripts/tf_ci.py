@@ -532,6 +532,13 @@ ENVIRONMENTS = {
                           "secrets": ("GRAFANA_SOLO7_APPLY_TOKEN", "GRAFANA_SOLO7_FLEET_APPLY_TOKEN",
                                       "GRAFANA_SOLO7_IRM_TOKEN", "TF_PLAN_KEY_PROD")},
 }
+# The prod gate: while this repository variable is not exactly 'true', the workflow runs no prod job and no
+# solo7 leg, and this report asks only for the dev items (there is no prod environment yet, 2026-10-19).
+GATE_VAR = "TF_PROD_ENABLED"
+PROD_ENVIRONMENTS = ("andara-prod-plan", "andara-prod-apply")
+PROD_REPO_SECRETS = ("GRAFANA_SOLO7_READ_TOKEN", "GRAFANA_SOLO7_FLEET_READ_TOKEN", "SLACK_WEBHOOK_PROD")
+PROD_REPO_VARS = ("TFSTATE_SOLO7_PLAN_SA", "TFSTATE_SOLO7_APPLY_SA", "TFSTATE_SOLO7_IRM_APPLY_SA",
+                  "TFSTATE_PRODPLAN_SA")
 
 
 def gh_json(*args):
@@ -542,11 +549,18 @@ def gh_json(*args):
 
 
 def cmd_environments(apply, env):
-    """Report (and with apply, create) the three environments; report every missing secret and variable."""
+    """Report (and with apply, create) the environments; report every missing secret and variable. With the
+    prod gate off, only the dev items: the prod environments, secrets and variables are neither reported nor
+    created, and apply exits 1 naming the gate rather than create andara-prod-*."""
     repo = env.get("GITHUB_REPOSITORY") or gh_json("repos/{owner}/{repo}", "--jq", "{full_name}")["full_name"]
+    prod = ((gh_json("repos/%s/actions/variables/%s" % (repo, GATE_VAR)) or {}).get("value") == "true")
+    if not prod:
+        tf.say("%s is not 'true': the prod jobs are gated off, so only the dev items are checked" % GATE_VAR)
     missing = []
     me = gh_json("user") if apply else None
     for name, want in ENVIRONMENTS.items():
+        if name in PROD_ENVIRONMENTS and not prod:
+            continue
         current = gh_json("repos/%s/environments/%s" % (repo, name))
         if apply:
             body = {"deployment_branch_policy": {"protected_branches": False, "custom_branch_policies": True}}
@@ -577,17 +591,22 @@ def cmd_environments(apply, env):
             if s not in have:
                 missing.append("secret %s in %s: gh secret set %s --env %s" % (s, name, s, name))
     have = {s["name"] for s in (gh_json("repos/%s/actions/secrets?per_page=100" % repo) or {}).get("secrets", [])}
-    missing += ["repository secret %s: gh secret set %s" % (s, s) for s in REPO_SECRETS if s not in have]
+    missing += ["repository secret %s: gh secret set %s" % (s, s) for s in REPO_SECRETS
+                if s not in have and (prod or s not in PROD_REPO_SECRETS)]
     have = {v["name"] for v in (gh_json("repos/%s/actions/variables?per_page=100" % repo) or {}).get("variables", [])}
-    missing += ["repository variable %s (make tf-bootstrap-gcp sets it)" % v for v in REPO_VARS if v not in have]
-    box = tf.load_box_env({})
-    if not box.get("TF_PLAN_KEY_PROD"):
+    missing += ["repository variable %s (make tf-bootstrap-gcp sets it)" % v for v in REPO_VARS
+                if v not in have and (prod or v not in PROD_REPO_VARS)]
+    if prod and not tf.load_box_env({}).get("TF_PLAN_KEY_PROD"):
         missing.append("TF_PLAN_KEY_PROD in .local/box.env (the same value as the environments'; tf-plan-show reads it)")
     for m in missing:
         tf.say("missing: " + m)
     if missing:
         raise tf.Exit(1, "%d item(s) missing for the terraform workflow" % len(missing))
-    tf.say("the terraform workflow's environments, secrets and variables are all present")
+    if apply and not prod:
+        raise tf.Exit(1, "not creating %s: %s is not 'true' (no prod environment yet); the dev items are present"
+                      % (" and ".join(PROD_ENVIRONMENTS), GATE_VAR))
+    tf.say("the terraform workflow's %s are all present"
+           % ("environments, secrets and variables" if prod else "dev environment, secrets and variables"))
     return 0
 
 
