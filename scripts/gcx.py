@@ -14,7 +14,7 @@ lists and never parse gcx output. The shapes are pinned by scripts/tests/fixture
 from the pinned tag (GCX_VERSION in scripts/bootstrap.sh); the pin moves only with a change that
 re-records them.
 
-$GCX_CONFIG defaults to .local/gcx.yaml (mode 0600, gitignored). Each context's grafana.server is
+$GCX_CONFIG defaults to .local/gcx.yaml (mode 0600, gitignored), or $RUNNER_TEMP/gcx.yaml in CI. Each context's grafana.server is
 the stack's grafana_url from deploy/terraform/grafana/stacks/<stack>/terraform.tfvars, its
 grafana.token GRAFANA_<STACK>_READ_TOKEN. --config bypasses gcx's layering, so ~/.config/gcx and a
 .gcx.yaml in the working directory are never read. gcx's agent mode (detected from CLAUDECODE and
@@ -59,7 +59,14 @@ class GcxError(Exception):
 
 
 def config_path(env=None):
-    return (env if env is not None else os.environ).get("GCX_CONFIG") or DEFAULT_CONFIG
+    """$GCX_CONFIG; else $RUNNER_TEMP/gcx.yaml in CI, so the token file never lands in the checkout there;
+    else .local/gcx.yaml."""
+    env = env if env is not None else os.environ
+    if env.get("GCX_CONFIG"):
+        return env["GCX_CONFIG"]
+    if env.get("RUNNER_TEMP"):
+        return os.path.join(env["RUNNER_TEMP"], "gcx.yaml")
+    return DEFAULT_CONFIG
 
 
 def _tokens(env=None):
@@ -135,13 +142,14 @@ def run(context, *args, env=None, gcx=None):
         raise GcxError("gcx: %s not found (run `make bootstrap`)" % argv[0])
     except subprocess.TimeoutExpired:
         raise GcxError("gcx: %s %s: timed out after 120s" % (context, command))
+    # Redact the whole text before any cut, so a cut can never leave a token's prefix behind.
     if p.returncode != 0:
-        raise GcxError(redact("gcx: %s %s: exit %d: %s" % (context, command, p.returncode,
-                                                         _message(p.stderr) or p.stdout.strip()[:300]), env))
+        detail = _message(redact(p.stderr, env)) or redact(p.stdout.strip(), env)[:300]
+        raise GcxError("gcx: %s %s: exit %d: %s" % (context, command, p.returncode, detail))
     try:
         return json.loads(p.stdout) if p.stdout.strip() else None
     except ValueError:
-        raise GcxError(redact("gcx: %s %s: output is not JSON: %s" % (context, command, p.stdout[:200]), env))
+        raise GcxError("gcx: %s %s: output is not JSON: %s" % (context, command, redact(p.stdout, env)[:200]))
 
 
 # --- one function per question (ADR-0012 decision 2's table) -----------------------------------

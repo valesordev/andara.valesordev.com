@@ -30,9 +30,9 @@ def fixture(name):
 class FakeGcx:
     """observe_check's gcx surface, answering from the recorded fixtures; every call recorded."""
 
-    def __init__(self, metrics=True, logs=True, trace=True, up="1"):
+    def __init__(self, metrics=True, logs=True, trace=True, up="1", span=None):
         self.calls = []
-        self.metrics, self.logs, self.trace, self.up = metrics, logs, trace, up
+        self.metrics, self.logs, self.trace, self.up, self.span = metrics, logs, trace, up, span
 
     def metrics_query(self, ctx, expr, since=None):
         self.calls.append(("metrics", ctx, expr))
@@ -50,7 +50,10 @@ class FakeGcx:
 
     def trace_get(self, ctx, trace_id, since=None):
         self.calls.append(("trace", ctx, trace_id))
-        return gcx.normalise(fixture("traces_get.json" if self.trace else "traces_get_missing.json"))
+        found = gcx.normalise(fixture("traces_get.json" if self.trace else "traces_get_missing.json"))
+        if self.span and found:
+            found[0]["resourceSpans"][0]["scopeSpans"][0]["spans"][0]["name"] = self.span
+        return found
 
 
 def run_check(fake, env="dev"):
@@ -88,6 +91,9 @@ class Check(unittest.TestCase):
         self.assertIn("up", run_check(FakeGcx(up="0"))[0])
         self.assertEqual(run_check(FakeGcx(logs=False))[0], ["session opened log line", "trace"])
         self.assertEqual(run_check(FakeGcx(trace=False))[0], ["trace"])
+        absent, out = run_check(FakeGcx(span="andara.game.v1.Game/Subscribe"))
+        self.assertEqual(absent, ["trace"], "a trace without the OpenSession span is absent")
+        self.assertIn("ABSENT trace 9f330ddce795582aca223dff19488478 with a andara.game.v1.Game/OpenSession span", out)
 
     def test_main_reads_through_gcx_against_solo7dev(self):
         """AC-11: the token for solo7dev and no GRAFANA_CLOUD_* variable is enough; every call goes through gcx."""
@@ -138,6 +144,15 @@ class Unavailable(unittest.TestCase):
             with self.assertRaises(SystemExit) as e:
                 observe_unavailable.main()
         self.assertEqual(e.exception.code, 3)
+
+    def test_env_recover_builds_its_backend_from_grafana_http(self):
+        import env_recover
+        with mock.patch.dict(os.environ, {"GRAFANA_CLOUD_READ_TOKEN": "t", "GRAFANA_CLOUD_PROM_URL": "https://p.invalid",
+                                          "GRAFANA_CLOUD_PROM_USER": "1"}):
+            g = env_recover.Grafana()
+        self.assertEqual(g.oc.__name__, "grafana_http")
+        self.assertIsInstance(g.prom, g.oc.Backend)
+        self.assertTrue(callable(g.oc.instant))
 
 
 if __name__ == "__main__":

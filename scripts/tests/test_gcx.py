@@ -170,6 +170,11 @@ class Shapes(FakeGcx):
             json.dump(doc, f)
         self.assertEqual(gcx.logs_query("solo7dev", "{}", env=dict(self.env, FAKE_GCX_FIXTURE=path)), [])
 
+    def test_all_null_items_in_a_list_are_dropped(self):
+        self.assertEqual(gcx.normalise([{"ruleName": None, "state": None}]), [])
+        self.assertEqual(gcx.normalise([{"ruleName": None, "state": None}, {"ruleName": "R", "state": None}]),
+                         [{"ruleName": "R", "state": None}])
+
     def test_an_unknown_shape_is_an_error(self):
         with self.assertRaises(gcx.GcxError):
             gcx.normalise({"something": "else"})
@@ -186,6 +191,23 @@ class Run(FakeGcx):
 
     def test_default_config_path(self):
         self.assertEqual(gcx.config_path({}), os.path.join(REPO, ".local", "gcx.yaml"))
+        self.assertEqual(gcx.config_path({"RUNNER_TEMP": "/rt"}), "/rt/gcx.yaml")
+        self.assertEqual(gcx.config_path({"RUNNER_TEMP": "/rt", "GCX_CONFIG": "/c.yaml"}), "/c.yaml")
+
+    def test_a_cut_never_leaves_a_token_prefix(self):
+        """gcx's --json error path prints the raw token on stdout; redaction happens before the 300-byte cut."""
+        out = os.path.join(self.tmp, "out")
+        with open(out, "w") as f:
+            f.write("x" * 290 + TOKEN + "\n")
+        with self.assertRaises(gcx.GcxError) as e:
+            gcx.metrics_query("solo7dev", "up", env=dict(self.env, FAKE_GCX_FIXTURE=out, FAKE_GCX_EXIT="1",
+                                                       GRAFANA_SOLO7DEV_READ_TOKEN=TOKEN))
+        self.assertNotIn(TOKEN[:10], str(e.exception))
+        self.assertIn("***", str(e.exception))
+        with self.assertRaises(gcx.GcxError) as e:  # not JSON
+            gcx.metrics_query("solo7dev", "up", env=dict(self.env, FAKE_GCX_FIXTURE=out,
+                                                       GRAFANA_SOLO7DEV_READ_TOKEN=TOKEN))
+        self.assertNotIn(TOKEN[:10], str(e.exception))
 
     def test_agent_mode_is_switched_off(self):
         gcx.metrics_query("solo7dev", "up", **self.serve("metrics_query_vector.json", CLAUDECODE="1", GCX_AGENT_MODE="1"))

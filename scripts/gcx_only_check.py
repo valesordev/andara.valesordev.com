@@ -99,9 +99,10 @@ def main():
     files = {}
     for f in tracked():
         try:
-            with open(os.path.join(REPO, f), encoding="utf-8") as fh:
+            # errors="replace": a non-UTF-8 file is still scanned, never skipped as clean.
+            with open(os.path.join(REPO, f), encoding="utf-8", errors="replace") as fh:
                 files[f] = fh.read()
-        except (UnicodeDecodeError, IsADirectoryError, FileNotFoundError):
+        except (IsADirectoryError, FileNotFoundError):
             continue
     with open(os.path.join(REPO, EXCEPTIONS)) as fh:
         errors = check(files, fh.read())

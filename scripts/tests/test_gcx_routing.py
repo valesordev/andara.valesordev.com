@@ -10,12 +10,14 @@ have caught it.
 """
 import json
 import os
+import re
 import shutil
 import sys
 import tempfile
 import threading
 import unittest
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
+from unittest import mock
 
 REPO = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 sys.path.insert(0, os.path.join(REPO, "scripts"))
@@ -81,11 +83,17 @@ class Routing(unittest.TestCase):
         shutil.rmtree(cls.tmp)
 
     def write_config(self, current):
-        stacks = "".join("  %s:\n    grafana:\n      server: http://127.0.0.1:%d\n      token: stub\n      org-id: 1\n"
-                         % (name, s.server_address[1]) for name, s in self.stubs.items())
-        contexts = "".join("  %s:\n    stack: %s\n" % (n, n) for n in self.stubs)
+        """make gcx-config's own rendering, pointed at the stubs. gcx discovers a *.grafana.net stack's ID
+        itself (seen live with this rendering, 2026-10-19: `config check` says "Context type: Grafana Cloud");
+        a 127.0.0.1 server has nothing to discover, so the test adds `org-id: 1` and changes nothing else."""
+        urls = {name: "http://127.0.0.1:%d" % s.server_address[1] for name, s in self.stubs.items()}
+        order = [current] + [n for n in self.stubs if n != current]
+        with mock.patch.object(gcx, "grafana_url", lambda stack: urls[stack]):
+            text = gcx.render_config({n: "stub" for n in order})
+        text = re.sub(r"^(      token: .*)$", r"\1\n      org-id: 1", text, flags=re.M)
+        self.assertIn("current-context: %s\n" % current, text)
         with open(self.config, "w") as f:
-            f.write("version: 1\nstacks:\n%scontexts:\n%scurrent-context: %s\n" % (stacks, contexts, current))
+            f.write(text)
 
     def test_each_adapter_reaches_only_the_requested_stack(self):
         env = {"PATH": os.environ.get("PATH", ""), "HOME": self.tmp, "GCX_CONFIG": self.config}

@@ -46,6 +46,7 @@ class Patterns(unittest.TestCase):
         self.assertFails('h = {"Authorization": "Bearer " + os.environ["GRAFANA_SOLO7_READ_TOKEN"]}\n', "bearer")
         self.assertFails('  -H "Authorization: Bearer ${GRAFANA_SOLO7DEV_READ_TOKEN}" \\\n', "bearer",
                          path="scripts/x.sh")
+        self.assertFails('h = "%s %s" % (os.environ["GRAFANA_SOLO7_READ_TOKEN"], "Bearer")\n', "bearer")
 
     def test_other_bearers_pass(self):
         # argocd.py's and image_digest.sh's headers, verbatim in shape.

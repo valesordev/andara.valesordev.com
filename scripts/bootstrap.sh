@@ -110,7 +110,8 @@ install_pinned() {
     || fail "could not install $name $want; check network access to the Go module proxy"
   if [[ -n "$sum" ]]; then
     have_sum="$(go version -m "$BIN/$name" 2>/dev/null | awk '$1=="mod"{print $4; exit}' || true)"
-    [[ "$have_sum" == "$sum" ]] || fail "$name $want built with module hash ${have_sum:-<none>}, not the pinned $sum"
+    [[ "$have_sum" == "$sum" ]] \
+      || { rm -f "$BIN/$name"; fail "$name $want built with module hash ${have_sum:-<none>}, not the pinned $sum; removed it"; }
   fi
   ok "$name" "$want (installed)"
 }

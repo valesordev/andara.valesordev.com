@@ -118,8 +118,8 @@ a fresh cluster needs `kind create cluster --config deploy/kind/config.yaml && m
   `server.telemetry.otlp_endpoint` pointing at that receiver. The scraper runs in
   `networkPolicy.observabilityNamespace`, which the NetworkPolicy admits to the http port.
   Traefik and cert-manager are scraped by the platform already. `make observe-check ENV=<env>`
-  asks Grafana Cloud whether it all arrived (credentials from `GRAFANA_CLOUD_*`; it exits 3
-  without them rather than pass).
+  asks ENV's Grafana Cloud stack, through `gcx`, whether it all arrived (`GRAFANA_<STACK>_READ_TOKEN`;
+  it exits 3 without it rather than pass).
 
 ## Environments
 

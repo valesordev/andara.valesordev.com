@@ -40,6 +40,10 @@ class Store:
         self.selectors.append((ctx, selector))
         return [s for s in self.series if selects(selector, s)]
 
+    def metrics_labels(self, ctx, label, match=None):
+        self.selectors.append((ctx, "labels:" + label))
+        return sorted({s[label] for s in self.series if label in s})
+
 
 def healthy(env="dev", names=None):
     """One series per always-present row for ENV, labelled as the stamp pipeline labels them."""
@@ -178,6 +182,24 @@ class KeepList(unittest.TestCase):
         self.assertEqual(code, 1)
         self.assertIn('FAIL unknown         kube_pod_container_status_ready in namespace andara-dev carries '
                       'environment="unknown"', out)
+
+    def test_an_environment_value_outside_the_five_fails(self):
+        """ADR-0012 decision 9: a sender that sets environment outside local/dev/staging/prod/unknown is reported."""
+        stray = healthy() + [{"__name__": "up", "environment": "development", "namespace": "andara-dev"}]
+        code, out = run(Store(stray))
+        self.assertEqual(code, 1)
+        self.assertIn('FAIL environment     value "development" is not one of local, dev, staging, prod, unknown', out)
+        ok = healthy() + [{"__name__": "up", "environment": "unknown", "namespace": "kube-system"},
+                          {"__name__": "up", "environment": "local", "namespace": "andara-local"}]
+        self.assertEqual(run(Store(ok))[0], 0)
+
+    def test_an_unclassified_name_fails_the_run(self):
+        out = io.StringIO()
+        with contextlib.redirect_stdout(out):
+            code = kl.run("dev", "solo7dev", q=Store(healthy()), names=kl.source_names() | {"brand_new"})
+        self.assertEqual(code, 1)
+        self.assertIn("FAIL brand_new: in neither", out.getvalue())
+        self.assertIn("unknown guard skipped", out.getvalue())
 
     def test_not_shipped_is_reported_not_queried(self):
         store = Store(healthy())
