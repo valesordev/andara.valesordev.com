@@ -494,8 +494,8 @@ per stack in a fixed order; (c) apply from the dev box only.
 > **Amendment, 2026-10-19 (AW-INF-068's §8 review): no prod for now, so the prod jobs are gated.**
 > Brian runs no prod environment for now (2026-10-19). A prod cluster costs money, and the likely future is
 > mini-PCs on his local network, which has no plan or budget yet. The workflow as decided assumed prod existed.
-> With only `solo7dev`'s secrets set, `plan-prod` would fail on every push to `main`, and the `solo7` leg of
-> `plan` would fail on every pull request. The `solo7` leg of `drift` and all of `drift-prod-irm` would fail
+> With only `solo7dev`'s secrets set, `plan-prod` would fail on every push to `main` that touches the roots, and the
+> `solo7` leg of `plan` would fail on every such pull request. The `solo7` leg of `drift` and all of `drift-prod-irm` would fail
 > every day, and each failure would open a `drift:<root>` issue. And the first job naming `andara-prod-plan`
 > would create that environment unprotected, because GitHub creates a missing environment when a job uses it.
 >
@@ -509,8 +509,21 @@ per stack in a fixed order; (c) apply from the dev box only.
 >   exist. A leg that starts and then exits 0 is not allowed, because it would show a green plan that never ran.
 > - The workflow fixture check refuses any job naming `andara-prod-plan` or `andara-prod-apply` without the gate.
 >   It also refuses any matrix that can produce a leg other than `solo7dev`'s outside it.
-> - While the gate is closed, `make tf-ci-environments` reports and creates only the dev items, and
->   `make tf-plan-key` refuses to run.
+> - While the gate is closed, `make tf-ci-environments` reports only the dev items and exits 0 when they are
+>   present. With `APPLY=1` it creates `andara-main` and no `andara-prod-*`, then exits 1 naming `TF_PROD_ENABLED`,
+>   because it was asked for environments it refused to create. `make tf-plan-key` refuses (exit 1).
+>
+> **Opening the gate** (`AW-INF-078`, by Brian). The steps run in this order, in one sitting:
+> 1. `gh variable set TF_PROD_ENABLED --body true`;
+> 2. `make tf-ci-environments APPLY=1`, which creates both prod environments protected;
+> 3. the prod secrets, then `make tf-plan-key`;
+> 4. `make tf-ci-environments`, until it exits 0.
+>
+> The gate opens first because the two targets refuse while it is closed. Between step 1 and step 3, a gated job
+> that starts fails on an unset secret. A push touching the roots or the 06:23Z schedule can start one, so the
+> sitting avoids both. If one does run before step 2, it may create an `andara-prod-*` environment unprotected.
+> Step 2 then sets the reviewer and the `main`-only branch policy on it, because it writes those settings to an
+> existing environment as well. Any `drift:<root>` issue opened by such a failure is closed by hand.
 >
 > **The gate is not a security boundary.** It controls availability only. The property this decision keeps (no
 > pull-request job holds a credential that can change Grafana's configuration or routing) still rests on the
@@ -520,20 +533,21 @@ per stack in a fixed order; (c) apply from the dev box only.
 > **The consequence we accept.** While the gate is closed, a pull request that changes the `solo7` or `solo7-irm`
 > root gets `tf_policy.py` and `terraform test`, but no plan. The first `plan-prod` after the gate opens shows the
 > accumulated diff, and Brian reads it before approving `apply-prod`, as he reads any prod plan. To keep that diff
-> small, the work that only prod needs is not written ahead: the `solo7-irm` root and IRM wait whole (decision 15).
+> small, the work that only prod needs is not written ahead. In particular, the `solo7-irm` root's IRM resources wait
+> whole; `AW-INF-046`'s skeleton of that root (backend, endpoints, provider block, an empty `module "irm"`) stays (decision 15).
 >
 > **What waits for prod, in `AW-INF-078`, outside any sprint until prod hosting is planned:**
 > - opening the gate, the two `andara-prod-*` environments, and `TF_PLAN_KEY_PROD`;
 > - every real run of the prod jobs;
 > - decision 7's `solo7` halves of steps 1 and 2, and step 5 (that amendment is under decision 7);
 > - decision 8's recreate;
-> - decision 10's `solo7` routing and decision 15's IRM root and `solo7` pipelines;
+> - decision 10's `solo7` routing, decision 11's dashboard in `solo7`, and decision 15's IRM resources and `solo7` pipelines;
 > - the four prod service accounts' checks under decision 3.
 >
 > **What does not wait.** `solo7` is still read: `AW-INF-070` reads its ruler through `gcx` with
 > `GRAFANA_SOLO7_READ_TOKEN` from the box, and deletes the ruler namespace with the hand-exported ruler key.
-> Neither is a Terraform apply. The repository copy of that read token is read only by the gated `solo7` legs,
-> so it waits with them.
+> Neither is a Terraform apply. The repository copy of that read token is read only by gated jobs (the `solo7`
+> legs, `plan-prod` and `drift-prod-irm`), so it waits with them.
 
 ### 6. Scope of "all Grafana Cloud pieces"
 
@@ -688,9 +702,13 @@ can hide a real page.
 > the same date gates the prod jobs off until prod exists. So the `solo7` halves of steps 1 and 2 wait for
 > prod, as step 5 always did, all in `AW-INF-078`. Step 4, the `dev` cutover, does not wait. It touches `solo7`
 > only through the ruler (the 4(i) read with `gcx`, 4(ii-a), and 4(ii)'s delete with the hand-exported key),
-> and none of that is a Terraform apply. Without step 1's `solo7` half, `solo7` keeps its hand-made policy tree.
-> Until 4(ii) the ruler's alerts follow it and email Brian, rather than post to `#andaras-world` as step 1 accepted. That is
-> quieter, and it changes nothing that 4(i) reads. `solo7` holds no Grafana-managed rules until `AW-INF-078` applies them
+> and none of that is a Terraform apply. Without step 1's `solo7` half, `solo7` keeps its hand-made policy tree,
+> and step 1's accepted interim (the ruler's alerts posting to `#andaras-world`) does not happen. Where the ruler's
+> alerts are delivered until 4(ii) is not settled by this ADR. Step 0 and Context say "routed nowhere", while step 1
+> says the hand-made policy "emailed Brian". So a `dev` outage before 4(ii) may notify nobody. That is accepted:
+> `dev` has been down since 2026-10-18 (the amendment above), nobody is playing, and the outage ends at 4(iii)
+> unchanged. Settling which of the two is true needs a read of the stack's ruler delivery, not 4(i)'s instance list.
+> It is not needed for the cutover and changes nothing that 4(i) reads. `solo7` holds no Grafana-managed rules until `AW-INF-078` applies them
 > paused, so "a rule must not be live in both places" holds trivially. Step 6 (`AW-INF-077`) does not depend on
 > prod either.
 
@@ -1140,7 +1158,8 @@ service and a blast radius: a bad pipeline can blind a stack until the next appl
 
 **2026-10-19, no prod for now (AW-INF-068's §8 review).** Recorded in place, as the amendment under decision 5
 (the `TF_PROD_ENABLED` gate) and the second amendment under decision 7 (the cutover without prod). Decisions 8, 10
-(`solo7`) and 15 (the IRM root and `solo7`'s pipelines) are unchanged in content and wait for prod in `AW-INF-078`.
+(`solo7`), 11 (the dashboard in `solo7`) and 15 (the IRM resources and `solo7`'s pipelines) are unchanged in content
+and wait for prod in `AW-INF-078`.
 Revisit when prod hosting is planned (below).
 
 **2026-10-19, the ruler freeze and the early outage.** Recorded in place, under decision 7, as the amendment of
@@ -1211,7 +1230,7 @@ one root the build added, and the `[verify in 046]` outcomes. None of it changes
   once: split `local` back into its own stack.
 - A third stack (a customer environment): root-per-stack still scales, but the credential count (decision 4)
   does not; reopen it then.
-- Prod hosting is planned (the 2026-10-19 amendments): re-check decisions 8, 10 and 15 against what has
+- Prod hosting is planned (the 2026-10-19 amendments): re-check decisions 8, 10, 11 and 15 against what has
   merged by then, before `AW-INF-078` opens `TF_PROD_ENABLED`. If prod's hosting changes the stack's role,
   for example prod on Brian's local network shipping to `solo7`, re-check decision 9 as well.
 - The state bucket is breached or its webhook secrets leak once: move the contact points' secrets out of
