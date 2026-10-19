@@ -66,7 +66,7 @@ HAS_GO := $(shell find . -name '*.go' -not -path './.git/*' -not -path './bin/*'
         objectstore-install projector-stop projector-start projector-rebuild server-stop server-start core-versions-check \
         builder-reference builder-reference-check guide-check \
         stack-boundary-lost cli-offline-check stack-projector-check recovery-timing recovery-timing-previous recovery-timing-summary startup-budget-check alerts-sync alerts-diff update-agents \
-        tf-plan tf-apply tf-unlock tf-test-alert tf-test-alert-clean tf-fmt-check tf-validate tf-test tf-lock tf-bootstrap-gcp
+        tf-plan tf-apply tf-unlock tf-test-alert tf-test-alert-clean tf-fmt-check tf-validate tf-test tf-lock tf-bootstrap-gcp tf-drift tf-plan-show tf-workflow-check tf-ci-environments tf-plan-key tf-replan
 
 ## help: print this target list
 help:
@@ -136,7 +136,7 @@ CHECK_TARGETS := fmt-check vet lint test proto-check schemas-check \
                  values-schema-check k8s-dry helm-test \
                  license-check content-grammar-check content-conformance scripts-test \
                  core-versions-check builder-reference-check guide-check \
-                 tf-fmt-check tf-validate tf-test
+                 tf-fmt-check tf-validate tf-test tf-workflow-check
 
 ## check: fmt, vet, lint, test, proto, manifests — what CI runs
 check: $(CHECK_TARGETS)
@@ -505,6 +505,33 @@ tf-validate:
 ## tf-test: terraform test every root against its committed terraform.tfvars, mock provider: policy routes, endpoints (AW-INF-046 AC-6, AC-10, AC-11)
 tf-test:
 	@$(PY) $(SCRIPTS)/tf.py test
+
+## tf-drift: compare a Grafana Cloud root with main and print any drift; exits 1 on drift — STACK=solo7dev (solo7 and solo7-irm are CI's) (AW-INF-068)
+tf-drift:
+	@$(PY) $(SCRIPTS)/tf_ci.py drift --stack "$(STACK)"
+
+## tf-plan-show: print a plan-prod run's encrypted plan, decrypted in memory, with its sha256 — RUN=<run id> STACK=<solo7|solo7-irm>; TF_PLAN_KEY_PROD from .local/box.env (AW-INF-068)
+tf-plan-show:
+	@$(PY) $(SCRIPTS)/tf_ci.py plan-show --run "$(RUN)" --stack "$(STACK)"
+
+## tf-ci-environments: report what the terraform workflow needs on GitHub (environments, reviewer, secret and variable names); APPLY=1 creates the environments, never a secret (AW-INF-068)
+tf-ci-environments:
+	@$(PY) $(SCRIPTS)/tf_ci.py environments $(if $(filter 1,$(APPLY)),--apply)
+
+## tf-replan: start the terraform workflow on main by hand: apply solo7dev, plan-prod and apply-prod for main's head, replacing a superseded or cancelled prod plan; needs gh (AW-INF-068)
+tf-replan:
+	@gh workflow run terraform.yaml --ref main
+	@echo "tf-replan: started the terraform workflow on main; gh run list --workflow terraform.yaml shows it"
+
+## tf-plan-key: make TF_PLAN_KEY_PROD and set it in andara-prod-plan, andara-prod-apply and .local/box.env; ROTATE=1 replaces an existing one (AW-INF-068)
+tf-plan-key:
+	@$(PY) $(SCRIPTS)/tf_ci.py plan-key $(if $(filter 1,$(ROTATE)),--rotate)
+
+## tf-workflow-check: actionlint the terraform workflow, then check its credential, sink and concurrency rules (AW-INF-068 AC-9)
+tf-workflow-check:
+	@if ! command -v actionlint >/dev/null 2>&1; then echo "make: tf-workflow-check: actionlint not found (run \`make bootstrap\`)" >&2; exit 1; fi
+	actionlint .github/workflows/terraform.yaml
+	$(PY) $(SCRIPTS)/tf_workflow_check.py
 
 ## tf-lock: re-pin the grafana provider hashes in every root's .terraform.lock.hcl, for linux and darwin on amd64 and arm64
 tf-lock:

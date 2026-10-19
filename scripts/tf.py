@@ -200,11 +200,11 @@ def child_env(env, token=None, webhook=None, data_dir=None):
     return out
 
 
-def run(args, cwd, env, capture=False):
+def run(args, cwd, env, capture=False, pass_fds=()):
     """Run terraform, streaming its output; (exit code, combined output)."""
     os.makedirs(PLUGIN_CACHE, exist_ok=True)
     proc = subprocess.Popen([terraform()] + args, cwd=cwd, env=env, text=True,
-                            stdout=subprocess.PIPE, stderr=subprocess.STDOUT)
+                            stdout=subprocess.PIPE, stderr=subprocess.STDOUT, pass_fds=pass_fds)
     out = []
     for line in proc.stdout:
         out.append(line)

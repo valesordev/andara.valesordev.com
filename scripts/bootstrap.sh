@@ -20,6 +20,8 @@ BUF_VERSION="v1.72.0"
 GRPCURL_VERSION="v1.9.4"
 HELM_VERSION="v3.22.0"
 KUBECONFORM_VERSION="v0.8.0"
+# actionlint validates .github/workflows/terraform.yaml in `make tf-workflow-check` (AW-INF-068).
+ACTIONLINT_VERSION="v1.7.12"
 # The compose Prometheus's version (deploy/compose/docker-compose.yaml), so the rules are
 # checked by the parser that loads them. A release tarball, not a Go module — see below.
 PROMETHEUS_VERSION="3.1.0"
@@ -172,6 +174,7 @@ fi
 # pin the same way buf does. The system helm may be a different major; ./bin wins on PATH.
 install_pinned helm helm.sh/helm/v3/cmd/helm "$HELM_VERSION"
 install_pinned kubeconform github.com/yannh/kubeconform/cmd/kubeconform "$KUBECONFORM_VERSION"
+install_pinned actionlint github.com/rhysd/actionlint/cmd/actionlint "$ACTIONLINT_VERSION"
 
 # promtool backs `make helm-test`'s rule checks (AW-INF-008): `check rules` over the chart's
 # alerts.yaml and `test rules` over deploy/helm/tests/alerts_test.yaml. Not `go install`:
