@@ -604,12 +604,18 @@ can hide a real page.
 > series carry no `environment`, and would fire a page there. That firing would also block step 4(i). So 047 deletes
 > `.github/workflows/alerts.yaml` in the same commit as the `alerts.yaml` edit, and `alerts_sync.py sync` refuses a
 > file that carries an `# env:` marker (exit 1, before any credential is read). From then on the ruler keeps the
-> pre-edit rules until step 4(ii), and nothing can recreate the namespace after it. A run queued before the freeze
+> pre-edit rules until step 4(ii), and no push to `main` can recreate the namespace after it. 047's rollback
+> ("revert the change, which restores the workflow") is valid only before 4(ii). Re-running an old `alerts` run is
+> excluded by the runbook for the same reason. A run queued before the freeze
 > still executes its own commit's workflow, because the workflow's push runs queue (`cancel-in-progress: false`) and
 > wait on the `andara-main` environment. So `make alerts-delete` (`AW-INF-070`) refuses while
-> `.github/workflows/alerts.yaml` exists at `origin/main`, and while `gh run list --workflow alerts.yaml` shows any run
-> `queued`, `in_progress` or `waiting`. The secrets themselves still go in step 6 (`AW-INF-077`). After the freeze no CI
-> job holds the write key, which is still within "given to no CI job beyond what `alerts` holds today".
+> `.github/workflows/alerts.yaml` exists at `origin/main`, and while any Actions run of that path is `queued`,
+> `in_progress` or `waiting`. That read is by path, `gh api repos/{owner}/{repo}/actions/runs?status=<s>` filtered on
+> `.path == ".github/workflows/alerts.yaml"`, not by workflow name, because a workflow whose file is deleted no longer
+> resolves by name. A failed read exits 1. Step 6's list therefore loses "the `alerts` workflow", which 047 has
+> already deleted; the secrets, the environment and the rest of the list still go in step 6 (`AW-INF-077`). Step 4(ii)'s
+> `make alerts-delete` is `AW-INF-070`'s target since the split of 047, not "a target `AW-INF-047` adds". After the
+> freeze no CI job holds the write key, which is still within "given to no CI job beyond what `alerts` holds today".
 > (2) The kind cluster named `solo7` on the box was deleted on 2026-10-18 (`AW-INF-052`'s §8 record), so no namespaced
 > series should have reached the Grafana Cloud stack `solo7` since. This is reasoned, not yet read: step 4(i)'s script
 > prints `count(up{namespace!=""})` on the stack before it decides, and that read is the evidence.
@@ -1064,6 +1070,9 @@ service and a blast radius: a bad pipeline can blind a stack until the next appl
   Prometheus).
 
 ## Amendments
+
+**2026-10-19, the ruler freeze and the early outage.** Recorded in place, under decision 7, as the amendment of
+2026-10-19, because it changes that decision's steps. This is the text `AW-INF-047` cites as "ADR-0012 Amendments".
 
 **2026-10-17, from AW-INF-046's §8 review (PR #581).** This records where the build could not follow the text,
 one root the build added, and the `[verify in 046]` outcomes. None of it changes a decision.

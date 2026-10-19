@@ -631,7 +631,9 @@ These record decisions taken while the sprint's drafts were contract-reviewed (`
 detail; this is the decision and its reason.
 
 18. **The platform has one installer per item and two profiles** (decision 2). `deploy/platform/versions.yaml` is the
-    one source of a platform version. `kind_platform.sh`, `kafka.sh`, `argocd.py` and the CI workflow's kind node image
+    one source of a platform version that a script or workflow reads (prose copies, such as the chart README's and
+    `deploy/k8s/traefik/values.yaml`'s comment, point at it rather than repeat it; `AW-INF-054` makes them do so).
+    `kind_platform.sh`, `kafka.sh`, `argocd.py` and the CI workflow's kind node image
     (`.github/workflows/kind.yaml`, which today pins `kindest/node:v1.36.1` without a digest, beside the box's `v1.36.4`)
     read it. `make check` fails on a pin of a listed item outside it, matched by item rather than by bare string (a chart
     name next to a version, or a `kindest/node:` reference), in `scripts/` and `.github/workflows/`. Test fixtures under
@@ -692,7 +694,7 @@ detail; this is the decision and its reason.
     `scripts/topics.py --env local` means the compose Redpanda today. `topics.py` and `world_reset.py` therefore take
     `--broker compose|cluster` (default `compose` while `deploy/compose/` exists; `make local-up` passes `cluster`), and
     `AW-INF-067` removes the option with compose. (`world_reset.py` refuses `local` today; `AW-INF-055` AC-7 lifts that
-    for the cluster broker.) `topics.py`, `world_reset.py`, `schemas.py` and `make test-integration` find the cluster's
+    with `--broker cluster`; with `compose` it still refuses.) `topics.py`, `world_reset.py`, `schemas.py` and `make test-integration` find the cluster's
     Kafka by `ANDARA_KAFKA_NAMESPACE` (default `andara-shared`). The `drills` job's server runs with `telemetry.environment=local` and
     `kafka.topic_prefix=local` on its unshared broker, so no new environment value enters `topics.yaml`, the `stamp`
     table or the rules. Its `ci-kafka-*` targets refuse any context but `kind-ci`. (`AW-INF-055`, `AW-INF-061`.)
