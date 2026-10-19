@@ -575,9 +575,22 @@ class PlanKey(Base):
         r = mock.patch.object(tf_ci.subprocess, "run", run)
         r.start()
         self.addCleanup(r.stop)
+        self.gate = True
+        g = mock.patch.object(tf_ci, "gate_open", lambda repo: self.gate)
+        g.start()
+        self.addCleanup(g.stop)
+
+    def test_refused_while_the_prod_gate_is_closed(self):
+        self.gate = False
+        result, text = self.sinks(lambda: tf_ci.cmd_plan_key(False, {"GITHUB_REPOSITORY": "o/r"}))
+        self.assertIsInstance(result, tf.Exit)
+        self.assertIn("TF_PROD_ENABLED", text)
+        self.assertEqual(self.set, [], "no gh secret set")
+        with open(self.box) as f:
+            self.assertNotIn("TF_PLAN_KEY_PROD", f.read())
 
     def test_one_key_in_both_environments_and_box_env(self):
-        self.sinks(lambda: tf_ci.cmd_plan_key(False, {}))
+        self.sinks(lambda: tf_ci.cmd_plan_key(False, {"GITHUB_REPOSITORY": "o/r"}))
         envs = [a[a.index("--env") + 1] for a, _ in self.set]
         self.assertEqual(envs, ["andara-prod-plan", "andara-prod-apply"])
         keys = {inp for _, inp in self.set}
@@ -593,14 +606,143 @@ class PlanKey(Base):
     def test_an_existing_key_is_kept_unless_rotate(self):
         with open(self.box, "a") as f:
             f.write("export TF_PLAN_KEY_PROD=old\n")
-        result, _ = self.sinks(lambda: tf_ci.cmd_plan_key(False, {}))
+        result, _ = self.sinks(lambda: tf_ci.cmd_plan_key(False, {"GITHUB_REPOSITORY": "o/r"}))
         self.assertIsInstance(result, tf.Exit)
         self.assertEqual(self.set, [])
-        self.sinks(lambda: tf_ci.cmd_plan_key(True, {}))
+        self.sinks(lambda: tf_ci.cmd_plan_key(True, {"GITHUB_REPOSITORY": "o/r"}))
         with open(self.box) as f:
             text = f.read()
         self.assertNotIn("TF_PLAN_KEY_PROD=old", text)
         self.assertEqual(text.count("TF_PLAN_KEY_PROD="), 1)
+
+
+class Environments(Base):
+    """make tf-ci-environments behind the prod gate: with TF_PROD_ENABLED unset it asks only for the dev items
+    and never creates andara-prod-* (2026-10-19 scope change)."""
+
+    REPO = "o/r"
+
+    def setUp(self):
+        super().setUp()
+        self.gate = None
+        self.envs = {"andara-main": {"protection_rules": []}}
+        self.repo_secrets = {"GRAFANA_SOLO7DEV_READ_TOKEN", "GRAFANA_SOLO7DEV_FLEET_READ_TOKEN", "SLACK_WEBHOOK_DEV"}
+        self.env_secrets = {"andara-main": {"GRAFANA_SOLO7DEV_APPLY_TOKEN", "GRAFANA_SOLO7DEV_FLEET_APPLY_TOKEN"}}
+        self.repo_vars = set(tf_ci.REPO_VARS)
+        self.created = []
+
+        def gh_json(*args):
+            path = args[-1] if args[0] != "-X" else args[2]
+            base = "repos/%s/" % self.REPO
+            if path == "user":
+                return {"id": 1, "login": "brian"}
+            rel = path[len(base):].split("?")[0]
+            if rel == "actions/variables/" + tf_ci.GATE_VAR:
+                return None if self.gate is None else {"name": tf_ci.GATE_VAR, "value": self.gate}
+            if rel == "actions/secrets":
+                return {"secrets": [{"name": n} for n in self.repo_secrets]}
+            if rel == "actions/variables":
+                return {"variables": [{"name": n} for n in self.repo_vars]}
+            parts = rel.split("/")
+            if parts[0] == "environments":
+                name = parts[1]
+                if name not in self.envs:
+                    return None
+                if parts[2:] == ["secrets"]:
+                    return {"secrets": [{"name": n} for n in self.env_secrets.get(name, ())]}
+                if parts[2:] == ["deployment-branch-policies"]:
+                    return {"branch_policies": [{"name": "main"}]}
+                return self.envs[name]
+            raise AssertionError("unexpected gh api %s" % (args,))
+
+        def run(args, input=None, **kw):
+            name = args[4].split("/")[-1]  # gh api -X PUT repos/<repo>/environments/<name> --input -
+            self.created.append(name)
+            self.envs[name] = {"protection_rules": [{"type": "required_reviewers"}]}
+            return types.SimpleNamespace(returncode=0, stdout="", stderr="")
+
+        for target, attr, fn in ((tf_ci, "gh_json", gh_json), (tf_ci.subprocess, "run", run),
+                                 (tf, "load_box_env", lambda env, path=None: {})):
+            p = mock.patch.object(target, attr, fn)
+            p.start()
+            self.addCleanup(p.stop)
+
+    def report(self, apply=False):
+        return self.sinks(lambda: tf_ci.cmd_environments(apply, {"GITHUB_REPOSITORY": self.REPO}))
+
+    def test_gate_off_asks_only_for_the_dev_items(self):
+        result, text = self.report()
+        self.assertEqual(result, 0, text)
+        self.assertIn("TF_PROD_ENABLED is not 'true'", text)
+        for prod in ("andara-prod", "SOLO7_READ", "SLACK_WEBHOOK_PROD", "TF_PLAN_KEY_PROD"):
+            self.assertNotIn("missing: " + prod, text)
+
+    def test_gate_off_still_reports_a_missing_dev_item(self):
+        self.repo_secrets.discard("SLACK_WEBHOOK_DEV")
+        self.env_secrets["andara-main"].discard("GRAFANA_SOLO7DEV_APPLY_TOKEN")
+        result, text = self.report()
+        self.assertIsInstance(result, tf.Exit)
+        self.assertEqual(result.code, 1)
+        self.assertIn("repository secret SLACK_WEBHOOK_DEV", text)
+        self.assertIn("secret GRAFANA_SOLO7DEV_APPLY_TOKEN in andara-main", text)
+        self.assertIn("2 item(s) missing", text)
+
+    def test_gate_off_apply_refuses_the_prod_environments(self):
+        result, text = self.report(apply=True)
+        self.assertIsInstance(result, tf.Exit)
+        self.assertEqual(result.code, 1)
+        self.assertIn("not creating andara-prod-plan and andara-prod-apply: TF_PROD_ENABLED", text)
+        self.assertNotIn("andara-prod-plan", self.created)
+        self.assertNotIn("andara-prod-apply", self.created)
+
+    def test_gate_off_asks_for_no_prod_variable(self):
+        self.repo_vars -= set(tf_ci.PROD_REPO_VARS)
+        result, text = self.report()
+        self.assertEqual(result, 0, text)
+        self.assertNotIn("missing: repository variable", text)
+
+    def test_gate_on_asks_for_the_prod_variables(self):
+        self.gate = "true"
+        self.repo_vars -= set(tf_ci.PROD_REPO_VARS)
+        _, text = self.report()
+        for v in tf_ci.PROD_REPO_VARS:
+            self.assertIn("missing: repository variable %s" % v, text)
+
+    def test_the_gate_ignores_case_as_the_workflow_does(self):
+        """GitHub's `==` compares strings case-insensitively, so TRUE opens the workflow's gate; the report
+        must agree, or it would call prod off while the prod jobs run."""
+        for value in ("true", "TRUE", "True"):
+            with self.subTest(value=value):
+                self.gate, self.created = value, []
+                self.report(apply=True)
+                self.assertEqual(self.created, ["andara-main", "andara-prod-plan", "andara-prod-apply"])
+
+    def test_any_value_but_true_is_off(self):
+        for value in ("false", "1", "yes", "", " true"):
+            with self.subTest(value=value):
+                self.gate, self.created = value, []
+                result, text = self.report(apply=True)
+                self.assertEqual(self.created, ["andara-main"])
+                self.assertIn("not creating", text)
+
+    def test_gate_on_asks_for_everything(self):
+        self.gate = "true"
+        result, text = self.report()
+        self.assertIsInstance(result, tf.Exit)
+        for item in ("environment andara-prod-plan", "environment andara-prod-apply",
+                     "repository secret GRAFANA_SOLO7_READ_TOKEN", "repository secret SLACK_WEBHOOK_PROD",
+                     "TF_PLAN_KEY_PROD in .local/box.env"):
+            self.assertIn("missing: " + item, text)
+
+    def test_gate_on_apply_creates_the_prod_environments(self):
+        self.gate = "true"
+        self.report(apply=True)
+        self.assertEqual(self.created, ["andara-main", "andara-prod-plan", "andara-prod-apply"])
+
+    def test_the_prod_lists_name_only_items_the_tables_hold(self):
+        self.assertTrue(set(tf_ci.PROD_REPO_SECRETS) <= set(tf_ci.REPO_SECRETS))
+        self.assertTrue(set(tf_ci.PROD_REPO_VARS) <= set(tf_ci.REPO_VARS))
+        self.assertTrue(set(tf_ci.PROD_ENVIRONMENTS) <= set(tf_ci.ENVIRONMENTS))
 
 
 class Misc(Base):

@@ -514,16 +514,16 @@ tf-drift:
 tf-plan-show:
 	@$(PY) $(SCRIPTS)/tf_ci.py plan-show --run "$(RUN)" --stack "$(STACK)"
 
-## tf-ci-environments: report what the terraform workflow needs on GitHub (environments, reviewer, secret and variable names); APPLY=1 creates the environments, never a secret (AW-INF-068)
+## tf-ci-environments: report what the terraform workflow needs on GitHub (environments, reviewer, secret and variable names); APPLY=1 creates the environments, never a secret; with TF_PROD_ENABLED not 'true', the dev items only, and APPLY=1 refuses andara-prod-* (AW-INF-068)
 tf-ci-environments:
 	@$(PY) $(SCRIPTS)/tf_ci.py environments $(if $(filter 1,$(APPLY)),--apply)
 
-## tf-replan: start the terraform workflow on main by hand: apply solo7dev, plan-prod and apply-prod for main's head, replacing a superseded or cancelled prod plan; needs gh (AW-INF-068)
+## tf-replan: start the terraform workflow on main by hand: apply solo7dev, then (behind TF_PROD_ENABLED) plan-prod and apply-prod for main's head, replacing a superseded or cancelled prod plan; needs gh (AW-INF-068)
 tf-replan:
 	@gh workflow run terraform.yaml --ref main
 	@echo "tf-replan: started the terraform workflow on main; gh run list --workflow terraform.yaml shows it"
 
-## tf-plan-key: make TF_PLAN_KEY_PROD and set it in andara-prod-plan, andara-prod-apply and .local/box.env; ROTATE=1 replaces an existing one (AW-INF-068)
+## tf-plan-key: make TF_PLAN_KEY_PROD and set it in andara-prod-plan, andara-prod-apply and .local/box.env; ROTATE=1 replaces an existing one; refused while TF_PROD_ENABLED is not 'true' (AW-INF-068)
 tf-plan-key:
 	@$(PY) $(SCRIPTS)/tf_ci.py plan-key $(if $(filter 1,$(ROTATE)),--rotate)
 

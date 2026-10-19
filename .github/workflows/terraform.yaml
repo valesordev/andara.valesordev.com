@@ -3,16 +3,18 @@
 #   plan           pull request: the pull request's Terraform, read as data, planned per stack after
 #                  scripts/tf_policy.py (from the BASE branch) allows it. Read credentials only.
 #   apply          main: solo7dev, then a second plan that must be empty. Environment andara-main.
-#   plan-prod      main, after apply: plans solo7-irm then solo7, uploads both plans encrypted with
+#   plan-prod      [prod gate] main, after apply: plans solo7-irm then solo7, uploads both plans encrypted with
 #                  TF_PLAN_KEY_PROD as a one-day artifact. Environment andara-prod-plan.
-#   apply-prod     waits for Brian's approval (environment andara-prod-apply), refuses a superseded
+#   apply-prod     [prod gate] waits for Brian's approval (environment andara-prod-apply), refuses a superseded
 #                  plan, applies exactly the approved plans, then checks that a second plan is empty.
-#   drift          daily, solo7dev and solo7; drift-prod-irm daily, the IRM root, from andara-prod-plan.
+#   drift          daily, solo7dev and [prod gate] solo7; [prod gate] drift-prod-irm daily, the IRM root,
+#                  from andara-prod-plan.
 #                  Each opens or updates one issue labelled drift:<root>, on drift and on failure, and
 #                  closes it on a clean check. Schedule only: the plan accounts are bound to the
 #                  `schedule` event, not a dispatch.
 #
-# A run started by hand on main (`make tf-replan`) runs apply, plan-prod and apply-prod for main's head.
+# A run started by hand on main (`make tf-replan`) runs apply, and behind the prod gate plan-prod and
+# apply-prod, for main's head.
 # That is how a superseded prod plan is replaced when the merge that moved main touched none of the
 # paths above.
 #
@@ -23,6 +25,12 @@
 # (docs/runbooks/terraform-state.md). The drift job holds no group, so it can never replace a pending
 # apply. scripts/tf_ci.py calls its result inconclusive when a push or dispatch run overlapped the plan
 # (one awaiting approval doesn't count: it changes nothing).
+#
+# The prod gate: plan-prod, apply-prod and drift-prod-irm run, and the solo7 legs of plan and drift exist,
+# only while the repository variable TF_PROD_ENABLED is 'true' (GitHub's == ignores case, so 'TRUE' counts;
+# tf-ci-environments agrees). Unset or anything else, they are
+# skipped, not failed. There is no prod environment yet (2026-10-19), so it is unset. The gate controls
+# availability only: the environments, their reviewers and the WIF attribute conditions stay the boundary.
 #
 # The property kept: a pull-request job never holds a credential that can change Grafana's
 # configuration or routing. Every Terraform call and every sink is in scripts/tf_ci.py; this file
@@ -68,14 +76,13 @@ jobs:
       id-token: write
     strategy:
       fail-fast: false
+      # The solo7 leg exists only behind the prod gate (above); a leg that started and exited 0 would be a
+      # green plan that never ran.
       matrix:
-        include:
-          - stack: solo7dev
-            key: SOLO7DEV
-            webhook: SLACK_WEBHOOK_DEV
-          - stack: solo7
-            key: SOLO7
-            webhook: SLACK_WEBHOOK_PROD
+        include: >-
+          ${{ fromJSON(vars.TF_PROD_ENABLED == 'true'
+          && '[{"stack":"solo7dev","key":"SOLO7DEV","webhook":"SLACK_WEBHOOK_DEV"},{"stack":"solo7","key":"SOLO7","webhook":"SLACK_WEBHOOK_PROD"}]'
+          || '[{"stack":"solo7dev","key":"SOLO7DEV","webhook":"SLACK_WEBHOOK_DEV"}]') }}
     concurrency:
       group: terraform-plan-${{ github.event.pull_request.number }}-${{ matrix.stack }}
       cancel-in-progress: true
@@ -155,7 +162,7 @@ jobs:
 
   plan-prod:
     needs: apply
-    if: github.event_name == 'push' || (github.event_name == 'workflow_dispatch' && github.ref == 'refs/heads/main')
+    if: vars.TF_PROD_ENABLED == 'true' && (github.event_name == 'push' || (github.event_name == 'workflow_dispatch' && github.ref == 'refs/heads/main'))
     runs-on: ubuntu-latest
     timeout-minutes: 30
     environment: andara-prod-plan
@@ -205,7 +212,7 @@ jobs:
 
   apply-prod:
     needs: plan-prod
-    if: needs.plan-prod.outputs.changes == 'true'
+    if: vars.TF_PROD_ENABLED == 'true' && (needs.plan-prod.outputs.changes == 'true')
     runs-on: ubuntu-latest
     timeout-minutes: 30
     environment: andara-prod-apply
@@ -289,14 +296,12 @@ jobs:
     # the workflow's push or dispatch runs overlapped it (actions: read lists them).
     strategy:
       fail-fast: false
+      # The solo7 leg exists only behind the prod gate (above).
       matrix:
-        include:
-          - stack: solo7dev
-            key: SOLO7DEV
-            webhook: SLACK_WEBHOOK_DEV
-          - stack: solo7
-            key: SOLO7
-            webhook: SLACK_WEBHOOK_PROD
+        include: >-
+          ${{ fromJSON(vars.TF_PROD_ENABLED == 'true'
+          && '[{"stack":"solo7dev","key":"SOLO7DEV","webhook":"SLACK_WEBHOOK_DEV"},{"stack":"solo7","key":"SOLO7","webhook":"SLACK_WEBHOOK_PROD"}]'
+          || '[{"stack":"solo7dev","key":"SOLO7DEV","webhook":"SLACK_WEBHOOK_DEV"}]') }}
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-go@v5
@@ -346,7 +351,7 @@ jobs:
           fi
 
   drift-prod-irm:
-    if: github.event_name == 'schedule'
+    if: vars.TF_PROD_ENABLED == 'true' && (github.event_name == 'schedule')
     runs-on: ubuntu-latest
     timeout-minutes: 30
     environment: andara-prod-plan
