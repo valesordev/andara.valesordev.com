@@ -81,6 +81,15 @@ test now catches that class mechanically.
       `gofmt -w`, kubeconfig exec plugins, `helm --post-renderer`. Allow the
       exact command instead (the #39 fragment).
 
+## Identities and grants
+
+- [ ] For each command a credential runs, its role allows every write the
+      command makes, including the implicit ones (a state lock, a default
+      object, a cache), and grants nothing beyond them. Check the identity
+      and the command together, not each against its own spec
+      (andara.valesordev.com#581: a read-only CI plan account, and
+      `terraform plan`, which writes the gcs backend's lock object).
+
 ## Copies and drift
 
 - [ ] Changed files that have copies elsewhere (scaffolds, templates,

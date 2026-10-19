@@ -13,7 +13,7 @@ are no story files to edit.
 | Story contract | the issue body (`story show <ID>`) | PM writes it at `draft`; architecture amends it in contract review (`story body`); SRE amends only its Observability requirements section |
 | Status | the Project's Status field | per role `transitions:`; `in-progress → review` only by the story-merge Action |
 | Sprint, Plan, Rank | Project fields | PM (`story set <ID> Sprint=N Plan=Current Rank=k`) |
-| Dependencies | GitHub blocked-by links (`story show` prints `Blocked by:`) | PM at `story create --depends` |
+| Dependencies | GitHub blocked-by links (`story show` prints `Blocked by:`) | PM at `story create --depends`; later, any role with `depends` in `story_edits` (`story depends <ID> --add <ID,…>` / `--remove <ID,…>`) |
 | Feedback and questions | comments on the story: `story comment <ID> --to <role> --body …` | any role |
 | Records (§8, observability review, verification) | comments: `story comment <ID> --record "<name>" --body …` | the role that did the work |
 | Sprint goal and demo goal | the sprint issue `SPRINT-NN — <goal>` | PM (`story sprint plan/activate/close/body`) |

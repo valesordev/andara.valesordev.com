@@ -25,7 +25,7 @@ Read them from `origin/main` (`git fetch origin` first): a branch can be behind.
 | `house-style` | `docs/art/house-style.md` | concept-art |
 | `brief` | `docs/design/briefs/<slug>.md` | game-designer |
 
-Every file opens with frontmatter (`title`, `kind`), then a `**Status:** <state>` line, then the body. Slugs are kebab-case. `.claude/bin/lore-check` validates all of it in `make check`.
+Every file opens with frontmatter (`title`, `kind`), then a `**Status:** <state>` line, then the body. Slugs are kebab-case. `docs/art/inbox/` is the exception: images the owner dropped in under any name, waiting for concept-art to file them on a sheet. They aren't visual reference, so never cite or attach one. `.claude/bin/lore-check` validates all of it in `make check`.
 
 **Status line.**
 

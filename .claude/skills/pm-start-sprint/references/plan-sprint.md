@@ -49,7 +49,9 @@ Every step is a board change with `.claude/bin/story`, made after the owner's an
 
 1. New stories: write each contract to a file in your scratch directory, then
    `story create --comp <SRV|CLI|INF|CLT> --title … --lane … --size … --risk …
-   --component … --body-file <f> --epic EPIC-NN --depends <ID,…>`.
+   --component … --body-file <f> --epic EPIC-NN --depends <ID,…>`. An existing
+   story whose order changed gets its links with `story depends <ID> --add <ID,…>`
+   (or `--remove`).
 2. The sprint issue, unless the state was `planned`:
    `story sprint plan <n> --title "<goal>" --body-file <f>`, in the role
    file's sprint issue format. Its carryover section lists CARRYOVER with
