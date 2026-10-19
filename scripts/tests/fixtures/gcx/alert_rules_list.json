@@ -1,0 +1,52 @@
+[
+  {
+    "name": "andara-recovery",
+    "file": "Andara",
+    "folderUid": "andara",
+    "rules": [
+      {
+        "state": "firing",
+        "name": "RecoveryStateMismatch",
+        "uid": "andara-recovery-state-mismatch",
+        "folderUid": "andara",
+        "health": "ok",
+        "type": "alerting",
+        "query": "andara_recovery_state_hash_match == 0",
+        "lastEvaluation": "2026-10-19T21:38:50Z",
+        "evaluationTime": 0.051666702,
+        "isPaused": false,
+        "labels": {
+          "severity": "page"
+        },
+        "annotations": {
+          "runbook": "docs/runbooks/recovery-state-mismatch.md"
+        },
+        "queriedDatasourceUIDs": [
+          "grafanacloud-prom"
+        ],
+        "alerts": [
+          {
+            "labels": {
+              "__grafana_origin": "",
+              "alertname": "RecoveryStateMismatch",
+              "environment": "dev",
+              "grafana_folder": "Andara",
+              "namespace": "andara-dev",
+              "severity": "page"
+            },
+            "annotations": {},
+            "state": "Alerting",
+            "activeAt": "2026-10-19T21:30:50Z",
+            "value": "0"
+          }
+        ]
+      }
+    ],
+    "totals": {
+      "firing": 1
+    },
+    "interval": 60,
+    "lastEvaluation": "2026-10-19T21:38:50Z",
+    "evaluationTime": 0.051666702
+  }
+]

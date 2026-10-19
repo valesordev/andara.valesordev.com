@@ -1,0 +1,41 @@
+[
+  {
+    "activeAt": "2026-10-19T21:30:50Z",
+    "labels": {
+      "__grafana_origin": "",
+      "alertname": "RecoveryStateMismatch",
+      "environment": "dev",
+      "grafana_folder": "Andara",
+      "namespace": "andara-dev",
+      "severity": "page"
+    },
+    "ruleName": "RecoveryStateMismatch",
+    "state": "Alerting"
+  },
+  {
+    "activeAt": "2026-10-19T21:30:50Z",
+    "labels": {
+      "__grafana_origin": "",
+      "alertname": "RecoveryStateMismatch",
+      "environment": "local",
+      "grafana_folder": "Andara",
+      "namespace": "andara-local",
+      "severity": "page"
+    },
+    "ruleName": "RecoveryStateMismatch",
+    "state": "Normal (NoData)"
+  },
+  {
+    "activeAt": "2026-10-19T21:35:50Z",
+    "labels": {
+      "__grafana_origin": "",
+      "alertname": "RecoveryStateMismatch",
+      "environment": "staging",
+      "grafana_folder": "Andara",
+      "namespace": "andara-staging",
+      "severity": "page"
+    },
+    "ruleName": "RecoveryStateMismatch",
+    "state": "Pending"
+  }
+]

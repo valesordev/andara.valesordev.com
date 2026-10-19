@@ -1,0 +1,17 @@
+{
+  "status": "success",
+  "data": [
+    {
+      "__name__": "andara_ticks_total",
+      "environment": "dev",
+      "job": "andara-server",
+      "namespace": "andara-dev"
+    },
+    {
+      "__name__": "andara_ticks_total",
+      "environment": "local",
+      "job": "andara-server",
+      "namespace": "andara-local"
+    }
+  ]
+}

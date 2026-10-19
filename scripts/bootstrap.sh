@@ -22,6 +22,12 @@ HELM_VERSION="v3.22.0"
 KUBECONFORM_VERSION="v0.8.0"
 # actionlint validates .github/workflows/terraform.yaml in `make tf-workflow-check` (AW-INF-068).
 ACTIONLINT_VERSION="v1.7.12"
+# gcx is the only way scripts read Grafana (ADR-0012 decision 2; AW-INF-075). At least v0.2.13:
+# v0.2.11 ignores --context in some operations. The pin moves only with a change that re-records
+# scripts/tests/fixtures/gcx/. GCX_SUM is the module's go.sum hash, checked against the binary's
+# build info, so a binary built from anything else is replaced.
+GCX_VERSION="v1.5.0"
+GCX_SUM="h1:oqu4+BSIyADxYqZZrooZNs+2Ea/nnN/E9fPD4I6vfQk="
 # The compose Prometheus's version (deploy/compose/docker-compose.yaml), so the rules are
 # checked by the parser that loads them. A release tarball, not a Go module — see below.
 PROMETHEUS_VERSION="3.1.0"
@@ -81,26 +87,32 @@ fi
 
 [[ -f go.mod ]] || fail "go.mod is missing; this repo should not be in that state"
 
-# install_pinned <binary> <module> <version>
+# install_pinned <binary> <module> <version> [<go.sum hash>]
 # Installs only when the binary is absent or is the wrong version, so the common case is
-# a version check and nothing else.
+# a version check and nothing else. With a hash, the binary's module hash must match it too.
 install_pinned() {
-  local name="$1" module="$2" want="$3"
-  local have=""
+  local name="$1" module="$2" want="$3" sum="${4:-}"
+  local have="" have_sum=""
   if [[ -x "$BIN/$name" ]]; then
     # The module version stamped into the binary, not `--version` output: kubeconform built
     # by `go install` reports "development", helm prints a struct, and grpcurl says "dev
     # build". `go version -m` reads the build info every Go binary carries, so one check
     # covers every pinned tool.
     have="$(go version -m "$BIN/$name" 2>/dev/null | awk '$1=="mod"{print $3; exit}' || true)"
+    have_sum="$(go version -m "$BIN/$name" 2>/dev/null | awk '$1=="mod"{print $4; exit}' || true)"
   fi
-  if [[ "${have}" == "$want" ]]; then
+  if [[ "${have}" == "$want" && ( -z "$sum" || "$have_sum" == "$sum" ) ]]; then
     ok "$name" "${have#v} (pinned)"
     return 0
   fi
   echo "  installing $name $want ..."
   GOBIN="$BIN" go install "${module}@${want}" \
     || fail "could not install $name $want; check network access to the Go module proxy"
+  if [[ -n "$sum" ]]; then
+    have_sum="$(go version -m "$BIN/$name" 2>/dev/null | awk '$1=="mod"{print $4; exit}' || true)"
+    [[ "$have_sum" == "$sum" ]] \
+      || { rm -f "$BIN/$name"; fail "$name $want built with module hash ${have_sum:-<none>}, not the pinned $sum; removed it"; }
+  fi
   ok "$name" "$want (installed)"
 }
 
@@ -175,6 +187,7 @@ fi
 install_pinned helm helm.sh/helm/v3/cmd/helm "$HELM_VERSION"
 install_pinned kubeconform github.com/yannh/kubeconform/cmd/kubeconform "$KUBECONFORM_VERSION"
 install_pinned actionlint github.com/rhysd/actionlint/cmd/actionlint "$ACTIONLINT_VERSION"
+install_pinned gcx github.com/grafana/gcx/cmd/gcx "$GCX_VERSION" "$GCX_SUM"
 
 # promtool backs `make helm-test`'s rule checks (AW-INF-008): `check rules` over the chart's
 # alerts.yaml and `test rules` over deploy/helm/tests/alerts_test.yaml. Not `go install`:

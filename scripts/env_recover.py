@@ -28,7 +28,7 @@ Steps (each printed as `env-recover: <step>`):
   AC-7  RecoveryStateMismatch never fired from the start of the run to its end.
 
 Environment: ANDARA_BOOTSTRAP_OPERATOR (user:password); ENV_RECOVER_RTO (seconds, default 120);
-GRAFANA_CLOUD_READ_TOKEN and GRAFANA_CLOUD_PROM_URL / _PROM_USER, as observe_check.py reads them;
+GRAFANA_CLOUD_READ_TOKEN and GRAFANA_CLOUD_PROM_URL / _PROM_USER, as scripts/grafana_http.py reads them;
 MIMIR_ADDRESS, MIMIR_TENANT_ID and MIMIR_API_KEY (the ruler read, AC-2), defaulting from the PROM
 pair and GRAFANA_CLOUD_READ_TOKEN (which carries rules:read) when unset. Credentials go in an isolated $XDG_CONFIG_HOME.
 
@@ -197,7 +197,7 @@ def check_rebound(despawned, reconnected):
 
 class Grafana:
     def __init__(self):
-        self.oc = _load("observe_check")
+        self.oc = _load("grafana_http")
         self.prom = self.oc.Backend("PROM", os.environ["GRAFANA_CLOUD_READ_TOKEN"].strip())
 
     def instant(self, q):

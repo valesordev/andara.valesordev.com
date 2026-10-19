@@ -9,7 +9,7 @@
 
 Reads MIMIR_API_KEY (read), MIMIR_API_KEY_WRITE (sync only, and only when there is drift),
 MIMIR_ADDRESS and MIMIR_TENANT_ID from the environment; the last two default
-to what `make observe-check` and CI already have, GRAFANA_CLOUD_PROM_URL (without its /api/prom)
+to what `make env-recover` and CI already have, GRAFANA_CLOUD_PROM_URL (without its /api/prom)
 and GRAFANA_CLOUD_PROM_USER. ALERTS_FILE names a rule file other than the chart's for `diff` only (`sync` ignores it), which CI sets
 to a pull request's copy so that the base branch's code reads it as data (the workflow says why).
 Exit 3 names whichever of the three are unset, before mimirtool runs. `mimirtool` (pinned by `make bootstrap`)

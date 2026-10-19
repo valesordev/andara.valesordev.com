@@ -22,8 +22,8 @@ is the same property, from the alert's side.
 
 Only ENV=dev. Taking prod's server away is an outage, not a check.
 
-Credentials as for `make observe-check`: GRAFANA_CLOUD_READ_TOKEN and GRAFANA_CLOUD_PROM_URL /
-_PROM_USER, from the environment, never printed.
+Credentials as scripts/grafana_http.py reads them (until AW-INF-069 moves this drill to gcx):
+GRAFANA_CLOUD_READ_TOKEN and GRAFANA_CLOUD_PROM_URL / _PROM_USER, from the environment, never printed.
 
 Exit: 0 the result appeared and cleared, and nothing else moved · 1 it didn't, or another
 namespace moved · 2 a backend or kubectl failed · 3 a credential unset or ENV not dev.
@@ -37,7 +37,7 @@ import time
 import yaml
 
 HERE = os.path.dirname(os.path.abspath(__file__))
-_spec = importlib.util.spec_from_file_location("observe_check", os.path.join(HERE, "observe_check.py"))
+_spec = importlib.util.spec_from_file_location("grafana_http", os.path.join(HERE, "grafana_http.py"))
 oc = importlib.util.module_from_spec(_spec)
 _spec.loader.exec_module(oc)
 

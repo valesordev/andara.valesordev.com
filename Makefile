@@ -61,7 +61,7 @@ HAS_GO := $(shell find . -name '*.go' -not -path './.git/*' -not -path './bin/*'
         proto proto-check adr \
         k8s-dry check-targets clean build build-info goldens \
         values-schema values-schema-check helm-test image image-publish image-check cli-release cli-release-check cli-release-publish kind-load helm-install measure-tick stack-smoke stack-play stack-linkdead stack-recover stack-recover-mismatch \
-        kind-platform cluster-up cluster-down cluster-rebuild stream-soak content-grammar-check observe-check observe-unavailable scripts-test kafka-operator kafka-install kafka-broker-bounce \
+        kind-platform cluster-up cluster-down cluster-rebuild stream-soak content-grammar-check observe-check observe-unavailable gcx-config gcx-only-check scripts-test kafka-operator kafka-install kafka-broker-bounce \
         argocd-install argocd-status argocd-ui argocd-recover argocd-uninstall world-reset content-seed env-destroy env-recover \
         objectstore-install projector-stop projector-start projector-rebuild server-stop server-start core-versions-check \
         builder-reference builder-reference-check guide-check \
@@ -136,7 +136,7 @@ CHECK_TARGETS := fmt-check vet lint test proto-check schemas-check \
                  values-schema-check k8s-dry helm-test \
                  license-check content-grammar-check content-conformance scripts-test \
                  core-versions-check builder-reference-check guide-check \
-                 tf-fmt-check tf-validate tf-test tf-workflow-check
+                 tf-fmt-check tf-validate tf-test tf-workflow-check gcx-only-check
 
 ## check: fmt, vet, lint, test, proto, manifests — what CI runs
 check: $(CHECK_TARGETS)
@@ -541,9 +541,17 @@ tf-lock:
 tf-bootstrap-gcp:
 	@$(PY) $(SCRIPTS)/tf_bootstrap_gcp.py
 
-## observe-check: ask Grafana Cloud whether andara-<env>'s metrics, logs, and traces arrived (GRAFANA_CLOUD_* from the environment; exits 3 without them) — ENV=<env>
+## observe-check: ask ENV's Grafana Cloud stack, through gcx, whether andara-<env>'s metrics, logs and traces arrived; KEEP_LIST=1 checks every series the rules and the dashboard name instead (GRAFANA_<STACK>_READ_TOKEN from the environment or .local/box.env; exits 3 without it) — ENV=<local|dev|staging|prod> (AW-INF-075)
 observe-check:
-	@$(PY) $(SCRIPTS)/observe_check.py "$(ENV)"
+	@$(PY) $(SCRIPTS)/observe_check.py "$(ENV)" $(if $(filter 1,$(KEEP_LIST)),--keep-list)
+
+## gcx-config: write $GCX_CONFIG (default .local/gcx.yaml, or $RUNNER_TEMP/gcx.yaml in CI; mode 0600) with one gcx context per stack whose GRAFANA_<STACK>_READ_TOKEN is set; exits 3 with none (AW-INF-075)
+gcx-config:
+	@$(PY) $(SCRIPTS)/gcx.py config
+
+## gcx-only-check: fail if a script, the Makefile or a workflow calls a Grafana query or alerting API other than through gcx (AW-INF-075)
+gcx-only-check:
+	@$(PY) $(SCRIPTS)/gcx_only_check.py
 
 ## observe-unavailable: scale andara-dev's server to 0 and back, and assert AndaraServerUnavailable names andara-dev and clears, no other namespace moving (GRAFANA_CLOUD_* from the environment) — ENV=dev
 observe-unavailable:

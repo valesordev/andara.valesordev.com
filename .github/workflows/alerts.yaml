@@ -6,7 +6,7 @@
 #
 # Credentials (docs/runbooks/alert-routing.md creates them):
 #   - the Prometheus URL and tenant come from the repository variables GRAFANA_CLOUD_PROM_URL
-#     and GRAFANA_CLOUD_PROM_USER, the same pair `make observe-check` uses;
+#     and GRAFANA_CLOUD_PROM_USER, the same pair `make env-recover` uses until AW-INF-069;
 #   - the diff reads with the repository secret ANDARA_ALERTS_CI_READ (rules:read, alerts:read);
 #   - the sync plans with the same read secret and writes with ANDARA_RULES_CI_WRITE (rules:write
 #     only), a secret of the GitHub Environment `andara-main`, which only `main` may deploy to. A job that doesn't declare

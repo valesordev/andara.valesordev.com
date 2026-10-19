@@ -1,0 +1,20 @@
+{
+  "status": "success",
+  "data": {
+    "resultType": "vector",
+    "result": [
+      {
+        "metric": {
+          "__name__": "up",
+          "environment": "dev",
+          "job": "andara-server",
+          "namespace": "andara-dev"
+        },
+        "value": [
+          1792445681.518,
+          "1"
+        ]
+      }
+    ]
+  }
+}
