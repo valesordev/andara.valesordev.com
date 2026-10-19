@@ -596,6 +596,19 @@ can hide a real page.
   it until step 3 and the **defined** check on `solo7dev`'s rules are done. This is the migration-and-rollback
   statement CLAUDE.md §6 asks of a dependency.
 
+> **Amendment, 2026-10-19 (contract review of `AW-INF-070`): step 4(ii-a), and the outage that began early.**
+> (1) The `alerts` workflow runs `make alerts-sync` with `ANDARA_RULES_CI_WRITE` on every push to `main` that touches
+> the rules. After step 4(ii) its next run would recreate the ruler namespace `andara` in `solo7`. So a step **4(ii-a)**
+> comes before (ii): a merge removes the workflow's sync steps and keeps its read-only diff. `make alerts-delete`
+> refuses while `.github/workflows/alerts.yaml` at `origin/main` still sets `MIMIR_API_KEY_WRITE` in a step. The
+> secrets themselves still go in step 6. The text above saying "the key is given to no CI job beyond what `alerts`
+> holds today" holds until (ii-a) and no longer after it.
+> (2) The box cluster `solo7` was deleted on 2026-10-18 (`AW-INF-052`'s §8 record), so no namespaced series has reached
+> `solo7` since. `AndaraServerUnavailable`'s guard `and on() count(up{namespace!=""}) > 0` then keeps its absence lines
+> silent, which means step 0's prod-absence alert is no longer firing and step 4(i)'s read is expected to be empty. The
+> planned outage began that day, not at (ii); its end is unchanged. Step 4(i) treats an empty read as a pass that it
+> prints, and a failed read (an error, a refused token) as a refusal.
+
 ### 8. Import
 
 **Decision: recreate, not import.** The hand-made email contact point and the `severity = page` policy in `solo7`
