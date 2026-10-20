@@ -286,6 +286,39 @@ class Check(FakeGcx):
         with self.assertRaises(gcx.GcxError):
             gcx.check("solo7", env)
 
+    def test_counts_every_group(self):
+        two = os.path.join(self.tmp, "two.json")
+        doc = fixture("alert_rules_list.json")
+        groups = gcx.normalise(doc)
+        with open(two, "w") as f:
+            json.dump(groups + [dict(groups[0], name="second")], f)
+        env = dict(self.env, FAKE_GCX_FIXTURE=two, ANDARA_BOX_ENV=os.path.join(self.tmp, "no-box.env"),
+                   GRAFANA_SOLO7_READ_TOKEN=TOKEN)
+        self.assertEqual(gcx.check("solo7", env), 2)
+
+    def script(self, env):
+        """`gcx.py check solo7` as make runs it, against the fake gcx."""
+        code = ("import sys; sys.path.insert(0, %r); import gcx\n"
+                "gcx.GCX = %r\n"
+                "sys.exit(gcx.main(['check', 'solo7']))\n" % (os.path.join(REPO, "scripts"), self.bin))
+        return subprocess.run([sys.executable, "-c", code], capture_output=True, text=True, env=env)
+
+    def test_script_exit_codes(self):
+        ok = self.script(self.env_for("alert_rules_list.json", GRAFANA_SOLO7_READ_TOKEN=TOKEN))
+        self.assertEqual(ok.returncode, 0, ok.stderr)
+        self.assertIn("gcx-check: solo7 ok:", ok.stdout)
+        leak = os.path.join(self.tmp, "leak")
+        with open(leak, "w") as f:
+            f.write("Error: Request failed with status 401 | %s\n" % TOKEN)
+        refused = self.script(self.env_for("metrics_query_vector_empty.json", GRAFANA_SOLO7_READ_TOKEN=TOKEN,
+                                           FAKE_GCX_EXIT="1", FAKE_GCX_STDERR=leak))
+        self.assertEqual(refused.returncode, 1, "a refused token is never reported as read")
+        self.assertIn("401", refused.stderr)
+        self.assertNotIn(TOKEN, refused.stdout + refused.stderr)
+        unset = self.script(self.env_for("alert_rules_list.json"))
+        self.assertEqual(unset.returncode, 3)
+        self.assertIn("GRAFANA_SOLO7_READ_TOKEN", unset.stderr)
+
     def test_the_named_stacks_token_unset_exits_3(self):
         # The other stack's token being set must not stand in for it.
         env = self.env_for("alert_rules_list.json", GRAFANA_SOLO7DEV_READ_TOKEN="dev")
