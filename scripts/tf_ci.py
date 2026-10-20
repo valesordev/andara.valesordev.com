@@ -128,8 +128,10 @@ def need(env, *names):
 
 # What Terraform may see of the job's environment. Everything else (the OIDC request token and URL,
 # GITHUB_TOKEN, the runner's own variables) is dropped, so a gap in tf_policy.py that let a plan read
-# /proc/self/environ would find only what the plan already holds.
-ALLOWED_ENV = re.compile(r"^(PATH|HOME|TMPDIR|LANG|LC_[A-Z]+|TZ|SSL_CERT_FILE|SSL_CERT_DIR|TF_[A-Z_]+|GRAFANA_AUTH"
+# /proc/self/environ would find only what the plan already holds. TF_VAR_slack_webhook is named on its own:
+# TF_[A-Z_]+ cannot match its lowercase name, and child_env has already dropped every other TF_VAR_*.
+ALLOWED_ENV = re.compile(r"^(PATH|HOME|TMPDIR|LANG|LC_[A-Z]+|TZ|SSL_CERT_FILE|SSL_CERT_DIR|TF_[A-Z_]+"
+                         r"|TF_VAR_slack_webhook|GRAFANA_AUTH"
                          r"|" + IRM_TOKEN_VAR + r"|GOOGLE_APPLICATION_CREDENTIALS|GOOGLE_GHA_CREDS_PATH"
                          r"|GOOGLE_CLOUD_PROJECT|GCLOUD_PROJECT|CLOUDSDK_[A-Z_]+)$")
 
