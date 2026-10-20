@@ -91,10 +91,8 @@ and rotated by hand. The rules every entry follows:
   - `solo7dev`: a secret of the `andara-main` environment, and `.local/box.env` (the dev box's apply
     path).
   - `solo7`: a secret of `andara-prod-apply`, *not made yet*.
-  - **A deviation:** today `solo7`'s apply token sits in `.local/box.env`. `ADR-0012` decision 4 gives the
-    box `solo7dev`'s apply token only, and `solo7` applies from CI only. No target uses it from the box,
-    because `make tf-apply` refuses `solo7` outside GitHub Actions. Remove it from `.local/box.env` when
-    `andara-prod-apply` holds it, or sooner.
+  - Never `.local/box.env` for `solo7`: `ADR-0012` decision 4 gives the box `solo7dev`'s apply token only,
+    and `make tf-apply` refuses `solo7` outside GitHub Actions. (It was removed from the box 2026-10-20.)
 - **Read by:**
   - the `apply` job on `main`;
   - `make tf-apply STACK=solo7dev` and `make tf-test-alert`;
@@ -224,8 +222,7 @@ and rotated by hand. The rules every entry follows:
 - `GRAFANA_SOLO7DEV_FLEET_READ_TOKEN` and `GRAFANA_SOLO7DEV_FLEET_APPLY_TOKEN`;
 - the read token and `SLACK_WEBHOOK_DEV`.
 
-Each is described above. The `solo7` apply token is also on the box today, which is a deviation (see its
-entry).
+Each is described above. No `solo7` apply or IRM token belongs on the box.
 
 ## Retiring
 
