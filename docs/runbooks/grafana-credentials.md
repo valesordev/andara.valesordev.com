@@ -31,8 +31,8 @@ and rotated by hand. The rules every entry follows:
 
 ## Rotating a token
 
-These steps are for the tokens in `credentials.yaml`. An entry that rotates another way (the plan key, the
-webhooks) says so itself.
+These steps are for the tokens in `credentials.yaml`. `TF_PLAN_KEY_PROD` rotates another way, given in its
+entry.
 
 1. Make the new token next to the old one, from the entry's click path. Give it the same name, the same
    role or scopes, and an expiry no more than 90 days away.
