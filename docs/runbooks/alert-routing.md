@@ -5,82 +5,137 @@ SPDX-License-Identifier: CC-BY-SA-4.0
 
 # Alert routing
 
-**Not an alert.** How the rules in `deploy/helm/andara/files/alerts.yaml` reach the Grafana Cloud ruler,
-and how a firing rule reaches a person. **Written with:** `AW-INF-009`.
+**Not an alert.** This page covers how a firing rule reaches a person, how to read rule state, and, until
+`AW-INF-077`, how the rules reach the legacy ruler. **Written with:** `AW-INF-009`. Rewritten for the
+Terraform setup by `AW-INF-076` (`ADR-0012` decision 10).
 
-One file has three consumers: the compose Prometheus, the chart's ConfigMap, and the Grafana Cloud
-ruler (Mimir) for the `solo7-local` stack. Series from `andara-dev` and `andara-prod` land in one
-tenant, so one rule set in ruler namespace `andara` serves both; every rule carries `namespace`.
+## Where routing lives
 
-## One-time setup (Brian's account; nothing here can be scripted)
+Routing is code. The contact points and the notification policy tree of each stack are Terraform:
 
-1. **Two access policies** on the `solo7-local` stack, each with one token and one scope family, as
-   Grafana Cloud advises:
-   - `andara-alerts-ci-read`: `rules:read` (and `alerts:read`, which nothing here uses yet). Used by the
-     pull-request diff, and by the sync to find what differs.
-   - `andara-rules-ci-write`: `rules:write` only. Used by the sync on `main`, and only when the diff found
-     something to write. `mimirtool rules sync` and `load` list before they write, which a write-only token
-     can't do (HTTP 401 `invalid scope requested`, seen on `main`'s first run, 2026-10-08), so
-     `alerts_sync.py` plans with the read key and POSTs and DELETEs to the ruler API itself with the write key.
-2. **GitHub.** Repository variables `GRAFANA_CLOUD_PROM_URL` and `GRAFANA_CLOUD_PROM_USER` (the pair
-   `make env-recover` and `make observe-unavailable` use until AW-INF-069; `make observe-check` reads
-   through `gcx` with `GRAFANA_<STACK>_READ_TOKEN` since AW-INF-075; `alerts_sync.py` strips `/api/prom` for `mimirtool` and uses the user as
-   the tenant). Repository secret `ANDARA_ALERTS_CI_READ` (the read token). Environment `andara-main`,
-   deployable from `main` only, with the secret `ANDARA_RULES_CI_WRITE` (the write token). A job that
-   doesn't declare that environment can't read the write token, so a branch can't use it.
-3. **Notification policy.** Grafana Cloud, Alerting, Notification policies: a child of the default
-   policy matching `severity = page`, with the contact point that should wake someone. The default
-   contact point is the account email until it is changed. This has no file form this repo owns, so the
-   choice is recorded here: `severity=page` goes to _the account email (default)_. Change this line when
-   the policy changes.
-4. **Metrics the cluster clause needs.** In the tenant, both of these return a series for
-   `namespace="andara-dev"`, `container="server"`; if either does not, the Grafana Cloud keep-list drops
-   it and `RecoveryStateMismatch` cannot fire on the cluster (`AW-INF-025` changed the list for
-   `kube_deployment_spec_replicas` the same way):
+| What | Where |
+|---|---|
+| Contact points `slack-dev` / `slack-prod` and `blackhole`, mute timing `always`, the policy tree | `deploy/terraform/grafana/modules/stack/main.tf` |
+| Which environments a stack holds, and its page receiver (`page_contact_point`) | `deploy/terraform/grafana/stacks/<stack>/terraform.tfvars` |
+| `irm-prod`, the IRM integration, schedule and escalation chain | `deploy/terraform/grafana/stacks/solo7-irm/` (`AW-INF-051`) |
+| A test of every route in the tree, against the committed `terraform.tfvars` | `deploy/terraform/grafana/stacks/<stack>/tests/*.tftest.hcl` (`make tf-test`) |
 
-   ```
-   kube_pod_container_status_last_terminated_exitcode{namespace="andara-dev", container="server"}
-   kube_pod_container_status_ready{namespace="andara-dev", container="server"}
-   ```
+The policy tree is one Terraform resource that owns the whole tree. A routing change is a pull request:
+- the `plan` job shows the change, and `make tf-test` walks the new tree;
+- the merge applies it to `solo7dev`;
+- `solo7` waits for the prod gate (`terraform-state.md`).
 
-## Delivering rules
+A contact point or policy changed by hand in the Grafana UI is drift. The daily drift check opens an issue
+labelled `drift:<stack>`, and the next apply puts the code's version back.
+
+## The routing table
+
+These are the trees as committed. Every alert lands in exactly one row of its stack.
+
+| Stack | `environment` | `severity` | Receiver | Notes |
+|---|---|---|---|---|
+| `solo7dev` | `local` | any | `blackhole` | Muted by `always`: nothing is sent. The rules still evaluate, and `gcx` shows them. |
+| `solo7dev` | `dev`, `staging` | any | `slack-dev` | The root receiver posts to `#andaras-world-dev`. `page` does not page in this stack. |
+| `solo7dev` | none, or any other | any | `slack-dev` | The root receiver: a rule that loses its `environment` label is loud, not silent. |
+| `solo7` | `prod` | `page` | `irm-prod` | From AW-INF-051. The first child, with `continue`, so the next row also matches. |
+| `solo7` | `prod` | `page` | `slack-prod` | The second child posts to `#andaras-world`. One page is one IRM alert group plus one Slack post. |
+| `solo7` | `prod` | any other | `slack-prod` | The root receiver. |
+| `solo7` | none, or any other | any | `slack-prod` | The root receiver: Slack only, never IRM. |
+
+The `irm-prod` row exists once `AW-INF-051` sets `page_contact_point = "irm-prod"` in `solo7`'s
+`terraform.tfvars`. Until then that stack's `page` alerts go to `slack-prod` alone.
+`scripts/tests/test_runbook_credentials.py` checks that the receivers in this table are the committed
+trees' receivers.
+
+**What is live today** (2026-10-20):
+- `solo7dev` holds this tree, applied by the `terraform` workflow.
+- `solo7` does not hold it yet. There is no prod (`AW-INF-078`), so nothing has applied `solo7`.
+- Its live policy is still the hand-made one, which sends `severity = page` to the account email. The first
+  `apply-prod` replaces it with the tree above (`ADR-0012` decision 8).
+- Don't edit the hand-made policy in the meantime: it goes as soon as prod exists.
+
+To check a route end to end, run `make tf-test-alert STACK=solo7dev ENV=<local|dev|staging>`, then
+`make tf-test-alert-clean` (`terraform-state.md`).
+
+## Reading rule state
+
+Every read goes through `gcx` (`ADR-0012` decision 2; `AW-INF-075`). First write the config, which holds
+one context per stack whose read token is set:
+
+```
+make gcx-config
+```
+
+Then pick the command for the question:
+
+| Question | Command |
+|---|---|
+| Which Grafana-managed rule groups and rules exist, paused or not, with health and last evaluation | `bin/gcx --config .local/gcx.yaml --context solo7dev alert rules list --limit 0 -o json` |
+| Which instances of a rule are firing or pending, with their labels | `bin/gcx --config .local/gcx.yaml --context solo7dev alert instances list --name '<rule regex>' --json ruleName,labels,state,activeAt -o json` |
+| What the legacy ruler holds (until `AW-INF-077`) | `bin/gcx --config .local/gcx.yaml --context solo7 alert instances list --datasource grafanacloud-prom -o json` |
+
+Use `--context solo7` for `prod`'s rules. `scripts/gcx.py` maps the states to one vocabulary:
+- `firing` (gcx prints `Alerting` or `firing`);
+- `pending`;
+- `normal` (`Normal`, or `Normal (NoData)`).
+
+**Where the rules are today.** The rules are still in the legacy ruler on `solo7`. Grafana-managed rules
+arrive with `AW-INF-047`, and until then the first two commands find none in `solo7dev`.
+
+`make observe-check ENV=<env> KEEP_LIST=1` checks that every series the rules read exists.
+
+## Delivering rules to the legacy ruler — removed by AW-INF-077
+
+**Removed by `AW-INF-077`**, with the ruler path. Until then, this section describes how
+`deploy/helm/andara/files/alerts.yaml` reaches the Grafana Cloud ruler (Mimir) on `solo7`, in ruler
+namespace `andara`. Every rule carries `namespace`, so one rule set serves `andara-dev` and `andara-prod`.
+
+### Credentials
+
+`ANDARA_ALERTS_CI_READ` (repository secret) and `ANDARA_RULES_CI_WRITE` (secret of `andara-main`) are on
+`grafana-credentials.md`'s Retiring list, which gives their click paths and scopes. The address and
+tenant are the repository variables `GRAFANA_CLOUD_PROM_URL` and `GRAFANA_CLOUD_PROM_USER`.
+`alerts_sync.py` strips `/api/prom` from the URL for `mimirtool`, and uses the user as the tenant.
+
+`mimirtool rules sync` and `load` list rules before they write, which a write-only token can't do. So
+`alerts_sync.py` plans with the read key, and POSTs and DELETEs to the ruler API itself with the write
+key.
+
+### Commands
 
 | Command | Does |
 |---|---|
-| `make alerts-diff` | shows how the ruler differs from the file; the script's exit is `1` on drift, `3` if the key, address or tenant is unset (`make` itself reports any failure as exit `2`; the printed line says which) |
-| `make alerts-sync` | writes the file to the ruler; a second run prints `wrote 0 created, 0 updated, 0 deleted` |
+| `make alerts-diff` | Shows how the ruler differs from the file. The script exits `1` on drift, and `3` if the key, address or tenant is unset. `make` itself reports any failure as exit `2`; the printed line says which. |
+| `make alerts-sync` | Writes the file to the ruler. A second run prints `wrote 0 created, 0 updated, 0 deleted`. |
 
-CI runs `alerts-diff` on a pull request that touches the file (the workflow `alerts`) and shows the
-diff in the job summary. A merge to `main` runs `alerts-sync` and then a second sync that must change
-nothing. The diff runs the base branch's scripts and reads the pull request's rule file as data
-(`ALERTS_FILE`), so a branch's own code never runs with a token; a fork's pull request is skipped, and so is one aimed at a branch other than `main`. A pull request that
-deletes the file fails the diff job with a message saying so.
-Locally, source `.local/box.env` (which has `GRAFANA_CLOUD_PROM_URL` and `_USER`) and export
-`MIMIR_API_KEY` with the read token. That is all `make alerts-diff` needs. `make alerts-sync` also needs
-`MIMIR_API_KEY_WRITE` with the write token, which it reads only when the diff finds drift. Keep the read
-token in `MIMIR_API_KEY` for a sync too: the write token can't list rules, so putting it there makes the
-plan step fail with HTTP 401, and leaving the write variable unset with drift present exits 3.
+CI runs `alerts-diff` on a pull request that touches the file (the `alerts` workflow), and shows the diff
+in the job summary. A merge to `main` runs `alerts-sync`, then a second sync that must change nothing.
 
-`make alerts-sync` stages the file as `andara.yaml` because `mimirtool` takes the ruler namespace from
-the file's name. Pointed at `alerts.yaml` directly it syncs namespace `alerts`, and its
-`--namespaces andara` filter then matches nothing and reports `0 Groups`.
+The diff runs the base branch's scripts and reads the pull request's rule file as data (`ALERTS_FILE`), so
+a branch's own code never runs with a token. Pull requests are handled like this:
+- a fork's pull request is skipped, and so is one aimed at a branch other than `main`;
+- a pull request that deletes the file fails the diff job, with a message saying so.
 
-CI's `sync` step fails while `ANDARA_RULES_CI_WRITE` is unset in `andara-main`, so `main`'s `alerts` run
-is red until the one-time setup above is done.
+To run the commands locally:
+- `make alerts-diff` needs `GRAFANA_CLOUD_PROM_URL` and `_USER`, plus the read token exported as
+  `MIMIR_API_KEY`.
+- `make alerts-sync` also needs the write token as `MIMIR_API_KEY_WRITE`, which it reads only when the
+  diff finds drift.
+- Keep the read token in `MIMIR_API_KEY` for a sync too. The write token can't list rules, so putting it
+  there makes the plan step fail with HTTP 401.
+- With drift present and the write variable unset, the sync exits 3.
 
-## Confirm a rule is loaded
+`make alerts-sync` stages the file as `andara.yaml`, because `mimirtool` takes the ruler namespace from the
+file's name.
 
-`make alerts-diff` exits `0` and prints `no changes detected`. To read what is loaded, export `MIMIR_API_KEY`, `MIMIR_ADDRESS` (`GRAFANA_CLOUD_PROM_URL` without
-`/api/prom`) and `MIMIR_TENANT_ID` (`GRAFANA_CLOUD_PROM_USER`), and run
-`bin/mimirtool rules print --address "$MIMIR_ADDRESS" --id "$MIMIR_TENANT_ID"`, or open Grafana Cloud,
-Alerting, Alert rules, source `grafanacloud-…-prom`.
+**A 401 `invalid token` on the diff step** means `ANDARA_ALERTS_CI_READ` has expired or been revoked. That
+happened on `main` on 2026-10-19. Rotate it (`grafana-credentials.md`), or leave `main`'s `alerts` run red
+until `AW-INF-077` deletes the workflow.
 
-## Things that look wrong and are not
+### Things that look wrong and are not
 
-- **A page for `andara-prod` before prod is installed.** `AndaraServerUnavailable` has an `absent()`
-  line for each of `andara-dev` and `andara-prod`; loading the group before prod exists pages for prod.
-  Silence `alertname=AndaraServerUnavailable, namespace=andara-prod` in Grafana Cloud until prod is
-  installed, and expire the silence then.
-- **`andara-local` is silent.** It is not in the `absent()` list and the platform scrapes only Ready
-  pods, so a local pod that is not Ready does not page. It pages only if a Ready local pod's scrape fails.
+- **A page for `andara-prod` before prod is installed.** `AndaraServerUnavailable` has an `absent()` line
+  for each of `andara-dev` and `andara-prod`. Silence
+  `alertname=AndaraServerUnavailable, namespace=andara-prod` until prod is installed.
+- **`andara-local` is silent.** It is not in the `absent()` list, and the platform scrapes only Ready pods.
 - **A rule edited in the Grafana UI is overwritten** by the next sync: the file is the source.

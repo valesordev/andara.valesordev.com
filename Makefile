@@ -66,7 +66,7 @@ HAS_GO := $(shell find . -name '*.go' -not -path './.git/*' -not -path './bin/*'
         objectstore-install projector-stop projector-start projector-rebuild server-stop server-start core-versions-check \
         builder-reference builder-reference-check guide-check \
         stack-boundary-lost cli-offline-check stack-projector-check recovery-timing recovery-timing-previous recovery-timing-summary startup-budget-check alerts-sync alerts-diff update-agents \
-        tf-plan tf-apply tf-unlock tf-test-alert tf-test-alert-clean tf-fmt-check tf-validate tf-test tf-lock tf-bootstrap-gcp tf-drift tf-plan-show tf-workflow-check tf-ci-environments tf-plan-key tf-replan
+        tf-plan tf-apply tf-unlock tf-test-alert tf-test-alert-clean tf-fmt-check tf-validate tf-test tf-lock tf-bootstrap-gcp tf-drift tf-plan-show tf-workflow-check tf-ci-environments tf-plan-key tf-replan tf-credentials-check
 
 ## help: print this target list
 help:
@@ -526,6 +526,10 @@ tf-replan:
 ## tf-plan-key: make TF_PLAN_KEY_PROD and set it in andara-prod-plan, andara-prod-apply and .local/box.env; ROTATE=1 replaces an existing one; refused while TF_PROD_ENABLED is not 'true' (AW-INF-068)
 tf-plan-key:
 	@$(PY) $(SCRIPTS)/tf_ci.py plan-key $(if $(filter 1,$(ROTATE)),--rotate)
+
+## tf-credentials-check: list each hand-made Grafana Cloud credential's expiry from deploy/terraform/grafana/credentials.yaml; exits 1 when one is within its warn_days (default 14) or expired, or the file is unreadable; no network (AW-INF-076)
+tf-credentials-check:
+	@$(PY) $(SCRIPTS)/tf_credentials.py
 
 ## tf-workflow-check: actionlint the terraform workflow, then check its credential, sink and concurrency rules (AW-INF-068 AC-9)
 tf-workflow-check:

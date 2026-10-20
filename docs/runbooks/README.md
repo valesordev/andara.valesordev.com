@@ -31,8 +31,10 @@ says "connect to the database" is a gap in the CLI (`CLAUDE.md` §10).
 | `state-projector-down.md` | `AW-INF-025` | `StateProjectorDown` |
 | `content-load-failing.md` | `AW-SRV-012` (written by architecture) | `ContentLoadFailing` |
 | `recovery-state-mismatch.md` | `AW-SRV-007` (merged) | `RecoveryStateMismatch` |
-| `alert-routing.md` | `AW-INF-009` | — (how alerts reach a person: access policy, secrets, notification policy) |
+| `alert-routing.md` | `AW-INF-009`, rewritten by `AW-INF-076` | — (how alerts reach a person: the routing table per stack, reading rule state with `gcx`, the legacy ruler until `AW-INF-077`) |
 | `terraform-state.md` | `AW-INF-046` | — (Grafana Cloud Terraform state: bootstrap, credentials, a held lock, a failed apply, the test alert) |
+| `grafana-credentials.md` | `AW-INF-076` | — (every hand-made Grafana Cloud credential: click path, scopes, expiry, storage, reader, rotation) |
+| `terraform-run-failed.md` | `AW-INF-076` | — (a red `apply`, `apply-prod`, `drift` or `drift-prod-irm` run: who looks, what first, the dev-box fallback) |
 
 ## Planned
 

@@ -205,6 +205,9 @@ and the dev box identity cannot write their prefixes). A workflow job to release
 
 ## A failed apply
 
+A red run of the `terraform` workflow (`apply`, `apply-prod`, `drift`, `drift-prod-irm`) has its own entry,
+`terraform-run-failed.md`. This section covers what a failed apply leaves behind.
+
 Terraform writes state after each resource, so a failed apply (a provider error, a 5xx from Grafana)
 leaves the resources it finished applied, recorded, and the lock released by the exiting process. Fix the
 cause if it is in the code, then run `make tf-apply STACK=solo7dev` again: the plan shows exactly the

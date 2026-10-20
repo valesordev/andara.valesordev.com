@@ -1,0 +1,243 @@
+<!--
+SPDX-FileCopyrightText: 2026 Valesor Development
+SPDX-License-Identifier: CC-BY-SA-4.0
+-->
+
+# Grafana Cloud credentials
+
+**Not an alert.** This page covers every credential the Grafana Cloud work runs on: what it is, how to make
+it by hand, where it lives, what reads it, and how to rotate it. **Written with:** `AW-INF-076`
+(`ADR-0012` decision 4). The click paths follow Grafana Cloud's and Slack's UI as of **2026-10-20**. If a
+menu has moved, the name and the role or scopes below are what matter.
+
+Terraform never creates the credentials it authenticates with. They are all made by hand, once, by Brian,
+and rotated by hand. The rules every entry follows:
+
+- **No value is in the repo.** The values live in GitHub (a repository secret, or an environment secret)
+  and in `.local/box.env` on the dev box (gitignored, mode `0600`). The repo holds names, plus expiry dates
+  in `deploy/terraform/grafana/credentials.yaml`.
+- **Expiry is at most 90 days.** The date goes into `credentials.yaml`, and `make tf-credentials-check`
+  reads it there.
+  - The daily `credentials-expiry` job (`.github/workflows/credentials.yaml`) opens one issue labelled
+    `credentials-expiry` when an entry is within its window, 14 days by default and 30 for a telemetry
+    token. It closes the issue on the first clean run.
+  - A credential with no expiry has no entry, and its own entry below says so.
+- **A pull-request job never holds a credential that can change Grafana's configuration or routing.**
+  - It may hold the read tokens, the telemetry token and the Slack webhooks, which are low-harm.
+  - It may not hold an apply token, a Fleet apply token or the IRM token.
+  - `make tf-workflow-check` enforces this on `terraform.yaml`.
+- **Prod isn't built yet** (2026-10-19; `AW-INF-078`). The `solo7` items that only prod jobs read are
+  described here so they can be made later. Each one is marked *not made yet*.
+
+## Rotating any of them
+
+1. Make the new token next to the old one, from the entry's click path. Give it the same name, the same
+   role or scopes, and an expiry no more than 90 days away.
+2. Store it where the entry's **Stored** line says:
+   - repository secret: `gh secret set <NAME>`;
+   - environment secret: `gh secret set <NAME> --env <environment>`;
+   - dev box: edit `.local/box.env` in the main checkout.
+
+   `gh` prompts for the value, so it never reaches your shell history.
+3. Run what the entry's **Read by** line names, and check that it works with the new value.
+4. Delete the old token in the same place you made the new one.
+5. Change its `expires` in `deploy/terraform/grafana/credentials.yaml` and merge that change. The open
+   `credentials-expiry` issue closes on the next daily run.
+
+`make tf-ci-environments` lists every secret the `terraform` workflow is still missing, with the
+`gh secret set` line for each.
+
+## The credentials
+
+`<STACK>` is `SOLO7DEV` or `SOLO7`, and `<stack>` is `solo7dev` or `solo7`. A stack's own pages are at
+`https://<stack>.grafana.net`.
+
+### `GRAFANA_SOLO7DEV_READ_TOKEN`, `GRAFANA_SOLO7_READ_TOKEN`
+
+- **Click path:** the stack → Administration → Users and access → Service accounts → *Add service
+  account*. Set the display name and the role, then *Add service account token* with an expiration date.
+- **Name:** service account `andara-read`.
+- **Role or scopes:** Viewer. **Observed role:** Viewer in both stacks, read 2026-10-20 (Administration →
+  Service accounts).
+  - Viewer is enough. `AW-INF-075`'s `[verify]` recorded its reach on both stacks: rule groups,
+    dashboards, datasource queries, and `irm oncall` on `solo7`
+    ([AW-INF-075's record](https://github.com/valesordev/andara.valesordev.com/issues/546#issuecomment-6278701007)).
+  - So the custom role `andara-reader` is not needed.
+- **Expiry:**
+  - `solo7dev`: 2027-01-15.
+  - `solo7`: **none**. It was made 2026-10-17 without an expiration date, which breaks the 90-day rule.
+    Rotate it with an expiry and add its entry to `credentials.yaml`.
+- **Stored:** a repository secret, and `.local/box.env`. Today only `GRAFANA_SOLO7DEV_READ_TOKEN` is a
+  repository secret. `solo7`'s becomes one when the prod gate opens.
+- **Read by:**
+  - `gcx`, through `make gcx-config`: every drill and `make observe-check`;
+  - the `terraform` workflow's `plan` (pull request), `drift`, `plan-prod` and `drift-prod-irm` jobs;
+  - `make tf-plan STACK=solo7dev`.
+- **Check after a rotation:** `make tf-plan STACK=solo7dev`, then `make observe-check ENV=dev`. A token
+  problem shows as exit 3, or as a gcx `401`.
+
+### `GRAFANA_SOLO7DEV_APPLY_TOKEN`, `GRAFANA_SOLO7_APPLY_TOKEN`
+
+- **Click path:** as `andara-read`, above.
+- **Name:** service account `andara-tf-apply`.
+- **Role or scopes:** Admin, on that stack only. **Observed role:** Admin in both stacks, read 2026-10-20.
+- **Expiry:**
+  - `solo7dev`: 2027-01-15.
+  - `solo7`: **none**, made 2026-10-17. Rotate it with an expiry, as for the read token.
+- **Stored:**
+  - `solo7dev`: a secret of the `andara-main` environment, and `.local/box.env` (the dev box's apply
+    path).
+  - `solo7`: a secret of `andara-prod-apply`, *not made yet*. Today it is only in `.local/box.env`.
+- **Read by:**
+  - the `apply` job on `main`;
+  - `make tf-apply STACK=solo7dev` and `make tf-test-alert`;
+  - for `solo7`, `apply-prod`, which also uses it for the `solo7-irm` root's contact point.
+- **Check after a rotation:** `make tf-apply STACK=solo7dev`. With nothing to change it prints
+  `0 to add, 0 to change, 0 to destroy`.
+
+### `GRAFANA_SOLO7DEV_TELEMETRY_TOKEN`, `GRAFANA_SOLO7_TELEMETRY_TOKEN`
+
+- **Click path:** `grafana.com` → My Account → Security → Access Policies → *Create access policy*. Set
+  the realm to the one stack, add the scopes, then *Add token* with an expiration date.
+- **Name:** access policy `andara-<stack>-telemetry`.
+- **Role or scopes:** `metrics:write logs:write traces:write fleet-management:read`, and nothing else. The
+  collector's `remotecfg` needs the last scope to pull its pipelines.
+- **Expiry:** at most 90 days, entered in `credentials.yaml` with `warn_days: 30`. A lapsed telemetry
+  token blinds every SLO at once (`AW-INF-065`).
+- **Stored:**
+  - `solo7dev`: `.local/box.env`; a repository secret for CI's kind and `stack` jobs; and the
+    `k8s-monitoring` secret made from `.local/box.env` for `local`, `dev` and `staging`.
+  - `solo7`: `.local/box.env` and that secret only, never a repository secret.
+  - **Not made yet.** The cluster rebuild (`AW-INF-066`) is the first thing that ships with it.
+- **Read by:** the collectors (`k8s-monitoring`) and CI's kind and `stack` jobs.
+- **Check after a rotation:** `make observe-check ENV=dev` finds fresh series.
+
+### `GRAFANA_SOLO7DEV_FLEET_READ_TOKEN`, `GRAFANA_SOLO7_FLEET_READ_TOKEN`
+
+- **Click path:** as the telemetry token, above.
+- **Name:** access policy `andara-<stack>-fleet-read`.
+- **Role or scopes:** `fleet-management:read`, with the realm set to the one stack.
+- **Expiry:** at most 90 days.
+- **Stored:** a repository secret for each stack, read-only like the stack read tokens. Today only
+  `solo7dev`'s is made: a repository secret, and `.local/box.env`.
+- **Read by:** the `plan`, `drift` and `plan-prod` jobs. The IRM root has no Fleet resources.
+
+### `GRAFANA_SOLO7DEV_FLEET_APPLY_TOKEN`, `GRAFANA_SOLO7_FLEET_APPLY_TOKEN`
+
+- **Click path:** as the telemetry token, above.
+- **Name:** access policy `andara-<stack>-fleet-apply`.
+- **Role or scopes:** `fleet-management:read fleet-management:write`, with the realm set to the one stack.
+- **Expiry:** at most 90 days.
+- **Stored:**
+  - `solo7dev`: a secret of `andara-main`, and `.local/box.env`;
+  - `solo7`: a secret of `andara-prod-apply`, *not made yet*.
+- **Read by:** `apply`, `apply-prod` and `make tf-apply STACK=solo7dev`. The Fleet provider receives it
+  as `user:token`, composed from the committed `fleet_user` (`AW-INF-051`).
+
+### `GRAFANA_SOLO7_IRM_TOKEN` (the provider reads it as `GRAFANA_ONCALL_ACCESS_TOKEN`)
+
+- **Click path:** the `solo7` stack → IRM → Settings → API → *Create*.
+- **Name:** `andara-terraform`. The ADR names none, so this page chose it; use it when the token is made.
+- **Role or scopes:** IRM's API token. It can write the integration, schedule and escalation chain.
+- **Expiry:** IRM's API tokens carry no expiry of their own. Rotate it at most every 90 days anyway. Its
+  `credentials.yaml` date is the rotation due date, so the job reminds you.
+- **Stored:** secrets of `andara-prod-plan` and `andara-prod-apply`, both reachable from `main` only.
+  *Not made yet.*
+- **Read by:** `plan-prod`, `drift-prod-irm` and `apply-prod`, for the `solo7-irm` root only.
+  `scripts/tf_ci.py` hands it to Terraform as `GRAFANA_ONCALL_ACCESS_TOKEN`.
+
+### `SLACK_WEBHOOK_DEV`, `SLACK_WEBHOOK_PROD`
+
+- **Click path:** `api.slack.com/apps` → the alerts app → Incoming Webhooks → *Add New Webhook to
+  Workspace*, then pick the channel.
+- **Name:** the webhook's channel: `#andaras-world-dev` for `DEV`, `#andaras-world` for `PROD`.
+- **Role or scopes:** posts to that one channel. This is low-harm, which is why a pull-request job may
+  hold it.
+- **Expiry:** none. A webhook lives until it is revoked, so it has no `credentials.yaml` entry.
+- **Stored:**
+  - repository secrets. Today only `SLACK_WEBHOOK_DEV` is one; `SLACK_WEBHOOK_PROD` becomes one with the
+    prod gate;
+  - `.local/box.env` for both.
+- **Read by:** the `plan`, `drift` and `apply` jobs, and `make tf-plan` and `make tf-apply`, as
+  `TF_VAR_slack_webhook`. It is the one credential that is a Terraform variable, by design. State holds
+  it, so reading state is a secret read (`terraform-state.md`).
+
+### `TF_PLAN_KEY_PROD`
+
+- **Click path:** none. `make tf-plan-key` generates it and stores it everywhere it goes.
+- **Name:** `TF_PLAN_KEY_PROD`.
+- **Role or scopes:** a symmetric key that encrypts the prod plan files before they are uploaded.
+- **Expiry:** none, so it has no `credentials.yaml` entry. `make tf-plan-key ROTATE=1` replaces it, and
+  an artifact encrypted with the old key can then no longer be applied.
+- **Stored:** secrets of `andara-prod-plan` and `andara-prod-apply`, and a copy in `.local/box.env`,
+  because a GitHub secret can't be read back. *Not made yet;* `make tf-plan-key` refuses while the prod
+  gate is shut.
+- **Read by:** `plan-prod`, `apply-prod`, and Brian's `make tf-plan-show`.
+
+### `TFSTATE_SOLO7DEV_PLAN_SA`, `TFSTATE_SOLO7_PLAN_SA`, `TFSTATE_SOLO7DEV_APPLY_SA`, `TFSTATE_SOLO7_APPLY_SA`, `TFSTATE_SOLO7_IRM_APPLY_SA`, `TFSTATE_PRODPLAN_SA`, `GCP_WIF_PROVIDER`
+
+- **Click path:** none. `make tf-bootstrap-gcp` creates the six keyless service accounts and the workload
+  identity provider, and sets these variables (`terraform-state.md`).
+- **Name:** the service-account emails and the provider's resource name.
+- **Role or scopes:** not secrets. Each account can reach one root's state prefix, and only from the jobs
+  its workload identity condition names (`ADR-0012` decision 3).
+- **Expiry:** none. They are keyless, so there is nothing to rotate and no `credentials.yaml` entry.
+- **Stored:** repository variables.
+- **Read by:** the `terraform` workflow's jobs, through `google-github-actions/auth`.
+
+### `GCP_DEVBOX_IDENTITY`
+
+- **Click path:** none in Grafana. It is the second Google identity Brian made for the dev box
+  (`terraform-state.md`).
+- **Name:** that identity's email.
+- **Role or scopes:** it can write `solo7dev`'s state prefix and nothing else.
+- **Expiry:** none of its own. Its sign-in on the box is `gcloud auth application-default login
+  --disable-quota-project`, which Google expires on its own schedule.
+- **Stored:** `.local/box.env`.
+- **Read by:** `make tf-bootstrap-gcp`. The dev box's Terraform runs as this identity.
+
+**The dev box's Grafana set**, in `.local/box.env`, for `make tf-apply STACK=solo7dev`:
+
+- `GRAFANA_SOLO7DEV_APPLY_TOKEN`;
+- `GRAFANA_SOLO7DEV_FLEET_READ_TOKEN` and `GRAFANA_SOLO7DEV_FLEET_APPLY_TOKEN`;
+- the read token and `SLACK_WEBHOOK_DEV`.
+
+Each is described above. The box holds no apply credential for `solo7`'s CI path.
+
+## Retiring
+
+These are the ruler-era credentials. Each one goes when the story named next to it removes its last use,
+and that story also deletes its line here. A retiring name that nothing uses any more fails
+`scripts/tests/test_runbook_credentials.py`.
+
+- `GRAFANA_CLOUD_READ_TOKEN`: removed by whichever of `AW-INF-069` and `AW-INF-077` removes its last use.
+  - A Cloud access policy on the `solo7` stack's realm, with at least `metrics:read` and `rules:read`.
+    `make env-recover` reads rule state with it.
+  - Exported by the operator before a run. It is not in `.local/box.env` today, so both targets stop and
+    name it until it is set.
+  - Read by `make env-recover` and `make observe-unavailable` (through `scripts/grafana_http.py`), and by
+    `alerts_sync.py` as a fallback key.
+- `ANDARA_ALERTS_CI_READ`: removed by `AW-INF-077`.
+  - Access policy `andara-alerts-ci-read` (`rules:read alerts:read`).
+  - A repository secret.
+  - Read by the `alerts` workflow's diff, and by its sync to plan.
+- `ANDARA_RULES_CI_WRITE`: removed by `AW-INF-077`.
+  - Access policy `andara-rules-ci-write` (`rules:write`).
+  - A secret of `andara-main`.
+  - Read by the `alerts` workflow's sync on `main`.
+
+Click path for all three: `grafana.com` → My Account → Security → Access Policies, on the `solo7` stack's
+realm. Their expiry dates belong in `credentials.yaml` while they live. On 2026-10-19 the `alerts` sync on
+`main` got `401 invalid token` with `ANDARA_ALERTS_CI_READ`. Rotate it as above if the ruler path still
+has work to do before `AW-INF-077`.
+
+## On the stacks, and not this repo's
+
+The service-account lists hold other accounts. None of them is read by anything in this repo, and none
+has a `credentials.yaml` entry:
+
+- `extsvc-*` and `sa-autogen-*`: Grafana's own plugin accounts.
+- `lanes-gcx-read-only`: Viewer on both stacks, made 2026-10-18.
+- `gcx` and `MCP Server`: Admin on `solo7`, with no expiry. These are Brian's personal tools.
+
+If one of them starts to be read by a job or a target, it gets an entry above.
