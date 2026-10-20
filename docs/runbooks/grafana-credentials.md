@@ -102,8 +102,11 @@ and rotated by hand. The rules every entry follows:
   - the `apply` job on `main`;
   - `make tf-apply STACK=solo7dev` and `make tf-test-alert`;
   - for `solo7`, `apply-prod`, which also uses it for the `solo7-irm` root's contact point.
-- **Check after a rotation:** `make tf-apply STACK=solo7dev`. With nothing to change it prints
-  `0 to add, 0 to change, 0 to destroy`.
+- **Check after a rotation**, on the stack whose token changed:
+  - `solo7dev`: `make tf-apply STACK=solo7dev`. With nothing to change it prints
+    `0 to add, 0 to change, 0 to destroy`.
+  - `solo7`: no check exists yet. The box can't use it, and `apply-prod` runs only when `plan-prod` finds a
+    change, so a mistyped token shows up at the next real `apply-prod`. A protected check is `AW-INF-078`'s.
 
 ### `GRAFANA_SOLO7DEV_TELEMETRY_TOKEN`, `GRAFANA_SOLO7_TELEMETRY_TOKEN`
 
