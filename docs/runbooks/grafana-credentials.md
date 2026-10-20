@@ -67,7 +67,8 @@ and rotated by hand. The rules every entry follows:
 - **Expiry:**
   - `solo7dev`: 2027-01-15.
   - `solo7`: **none**. It was made 2026-10-17 without an expiration date, which breaks the 90-day rule.
-    Rotate it with an expiry and add its entry to `credentials.yaml`.
+    A token's expiry can't be changed after it is made, so make a new token with one (the rotation steps
+    below), delete the old one, and add its entry to `credentials.yaml`. Brian is re-making it (2026-10-20).
 - **Stored:** a repository secret, and `.local/box.env`. Today only `GRAFANA_SOLO7DEV_READ_TOKEN` is a
   repository secret. `solo7`'s becomes one when the prod gate opens.
 - **Read by:**
@@ -240,7 +241,9 @@ and that story also deletes its line here. A retiring name that nothing uses any
   - Read by the `alerts` workflow's sync on `main`.
 
 Click path for all three: `grafana.com` → My Account → Security → Access Policies, on the `solo7` stack's
-realm. Their expiry dates belong in `credentials.yaml` while they live. On 2026-10-19 the `alerts` sync on
+realm. They were made without an expiry, before the 90-day rule. So they have no `credentials.yaml`
+entry, and nothing warns before they stop working. Re-make one with an expiry, and add its entry, only if
+the ruler path still needs it before `AW-INF-077`. On 2026-10-19 the `alerts` sync on
 `main` got `401 invalid token` with `ANDARA_ALERTS_CI_READ`. Rotate it as above if the ruler path still
 has work to do before `AW-INF-077`.
 
