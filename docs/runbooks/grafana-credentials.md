@@ -91,8 +91,10 @@ and rotated by hand. The rules every entry follows:
   - `solo7dev`: a secret of the `andara-main` environment, and `.local/box.env` (the dev box's apply
     path).
   - `solo7`: a secret of `andara-prod-apply`, *not made yet*.
-  - Never `.local/box.env` for `solo7`: `ADR-0012` decision 4 gives the box `solo7dev`'s apply token only,
-    and `make tf-apply` refuses `solo7` outside GitHub Actions. (It was removed from the box 2026-10-20.)
+  - Never `.local/box.env` for `solo7`'s apply token: `ADR-0012` decision 4 gives the box `solo7dev`'s apply
+    token only, and `make tf-apply` refuses `solo7` outside GitHub Actions. It was removed from the box
+    2026-10-20, so the token made that day is held nowhere. A secret can't be read back, so when
+    `andara-prod-apply` is made, make a new token for it and revoke that one.
 - **Read by:**
   - the `apply` job on `main`;
   - `make tf-apply STACK=solo7dev` and `make tf-test-alert`;
