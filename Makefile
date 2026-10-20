@@ -61,7 +61,7 @@ HAS_GO := $(shell find . -name '*.go' -not -path './.git/*' -not -path './bin/*'
         proto proto-check adr \
         k8s-dry check-targets clean build build-info goldens \
         values-schema values-schema-check helm-test image image-publish image-check cli-release cli-release-check cli-release-publish kind-load helm-install measure-tick stack-smoke stack-play stack-linkdead stack-recover stack-recover-mismatch \
-        kind-platform cluster-up cluster-down cluster-rebuild stream-soak content-grammar-check observe-check observe-unavailable gcx-config gcx-only-check scripts-test kafka-operator kafka-install kafka-broker-bounce \
+        kind-platform cluster-up cluster-down cluster-rebuild stream-soak content-grammar-check observe-check observe-unavailable gcx-config gcx-check gcx-only-check scripts-test kafka-operator kafka-install kafka-broker-bounce \
         argocd-install argocd-status argocd-ui argocd-recover argocd-uninstall world-reset content-seed env-destroy env-recover \
         objectstore-install projector-stop projector-start projector-rebuild server-stop server-start core-versions-check \
         builder-reference builder-reference-check guide-check \
@@ -552,6 +552,10 @@ observe-check:
 ## gcx-config: write $GCX_CONFIG (default .local/gcx.yaml, or $RUNNER_TEMP/gcx.yaml in CI; mode 0600) with one gcx context per stack whose GRAFANA_<STACK>_READ_TOKEN is set; exits 3 with none (AW-INF-075)
 gcx-config:
 	@$(PY) $(SCRIPTS)/gcx.py config
+
+## gcx-check: read STACK's rule groups with its read token, the check after rotating GRAFANA_<STACK>_READ_TOKEN; exits 1 when gcx is refused, 3 when the token is unset — STACK=<solo7dev|solo7> (AW-INF-076)
+gcx-check:
+	@$(PY) $(SCRIPTS)/gcx.py check "$(STACK)"
 
 ## gcx-only-check: fail if a script, the Makefile or a workflow calls a Grafana query or alerting API other than through gcx (AW-INF-075)
 gcx-only-check:

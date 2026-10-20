@@ -5,6 +5,7 @@
 """The one gcx wrapper (ADR-0012 decision 2; AW-INF-075).
 
     scripts/gcx.py config      make gcx-config: write $GCX_CONFIG, one context per stack whose read token is set
+    scripts/gcx.py check S     make gcx-check STACK=S: S's read token reads S's rule groups (a rotation's check)
 
 No script, make target or workflow calls Grafana's query or alerting HTTP APIs itself; it calls a
 function here, which runs `bin/gcx --config $GCX_CONFIG --context <stack> … -o json`, maps a
@@ -24,7 +25,8 @@ Logs: `gcx: <context> <command>` on stderr when GCX_DEBUG is set; a failure name
 command, gcx's exit code and its message. No line carries a token: every known token value is
 replaced by *** before it is printed or raised.
 
-Exit codes (config): 0 written; 3 no read token set.
+Exit codes (config): 0 written; 3 no read token set. (check): 0 read; 1 gcx refused, with its message; 3 that
+stack's read token unset. Both: 2 usage.
 """
 import json
 import os
@@ -299,17 +301,39 @@ def write_config(env=None):
     return list(tokens)
 
 
+def check(stack, env=None):
+    """make gcx-check: stack's read token reads its rule groups; their count. Exit 3 when that token is unset,
+    GcxError when gcx is refused (a revoked or mistyped token)."""
+    env = grafana_stack.environ(env)
+    var = grafana_stack.token_var(stack)
+    if not (env.get(var) or "").strip():
+        raise grafana_stack.Exit(3, "%s is not set (the environment or .local/box.env)" % var)
+    write_config(env)
+    return len(rule_groups(stack, env=env))
+
+
 def main(argv):
-    if argv != ["config"]:
-        print("usage: gcx.py config", file=sys.stderr)
-        return 2
-    try:
-        stacks = write_config()
-    except grafana_stack.Exit as e:
-        print("gcx-config: %s" % e, file=sys.stderr)
-        return e.code
-    print("gcx-config: wrote %s (contexts: %s)" % (config_path(), ", ".join(stacks)))
-    return 0
+    if argv == ["config"]:
+        try:
+            stacks = write_config()
+        except grafana_stack.Exit as e:
+            print("gcx-config: %s" % e, file=sys.stderr)
+            return e.code
+        print("gcx-config: wrote %s (contexts: %s)" % (config_path(), ", ".join(stacks)))
+        return 0
+    if len(argv) == 2 and argv[0] == "check" and argv[1] in grafana_stack.STACKS:
+        try:
+            n = check(argv[1])
+        except grafana_stack.Exit as e:
+            print("gcx-check: %s" % e, file=sys.stderr)
+            return e.code
+        except GcxError as e:
+            print("gcx-check: %s" % e, file=sys.stderr)
+            return 1
+        print("gcx-check: %s ok: its read token read %d rule group(s)" % (argv[1], n))
+        return 0
+    print("usage: gcx.py config | gcx.py check <%s>" % "|".join(grafana_stack.STACKS), file=sys.stderr)
+    return 2
 
 
 if __name__ == "__main__":

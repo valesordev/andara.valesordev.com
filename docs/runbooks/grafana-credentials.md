@@ -75,7 +75,10 @@ and rotated by hand. The rules every entry follows:
   - `gcx`, through `make gcx-config`: every drill and `make observe-check`;
   - the `terraform` workflow's `plan` (pull request), `drift`, `plan-prod` and `drift-prod-irm` jobs;
   - `make tf-plan STACK=solo7dev`.
-- **Check after a rotation:** `make tf-plan STACK=solo7dev`, then `make observe-check ENV=dev`.
+- **Check after a rotation**, on the stack whose token changed:
+  - `solo7dev`: `make gcx-check STACK=solo7dev`, then `make tf-plan STACK=solo7dev`.
+  - `solo7`: `make gcx-check STACK=solo7`. The box can't plan `solo7`, and `observe-check` needs prod to be
+    running.
   - An unset token exits 3 and names the variable.
   - A revoked or mistyped token exits 1, with a `401` from the provider or from gcx.
 
@@ -119,7 +122,8 @@ and rotated by hand. The rules every entry follows:
   - `solo7`: `.local/box.env` and that secret only, never a repository secret.
   - **Not made yet.** The cluster rebuild (`AW-INF-066`) is the first thing that ships with it.
 - **Read by:** the collectors (`k8s-monitoring`) and CI's kind and `stack` jobs.
-- **Check after a rotation:** `make observe-check ENV=dev` finds fresh series.
+- **Check after a rotation:** `make observe-check` finds fresh series from the stack whose token changed:
+  `ENV=dev` for `solo7dev`, `ENV=prod` for `solo7`.
 
 ### `GRAFANA_SOLO7DEV_FLEET_READ_TOKEN`, `GRAFANA_SOLO7_FLEET_READ_TOKEN`
 
