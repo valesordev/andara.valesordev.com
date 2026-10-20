@@ -39,7 +39,8 @@ and rotated by hand. The rules every entry follows:
    - dev box: edit `.local/box.env` in the main checkout.
 
    `gh` prompts for the value, so it never reaches your shell history.
-3. Run what the entry's **Read by** line names, and check that it works with the new value.
+3. Run the entry's **Check after a rotation** for the stack whose token changed. Where the entry has none,
+   or it says no check exists, keep the old token until the new one has been used once.
 4. Delete the old token in the same place you made the new one.
 5. Change its `expires` in `deploy/terraform/grafana/credentials.yaml` and merge that change. The open
    `credentials-expiry` issue closes on the next daily run.
@@ -106,7 +107,9 @@ and rotated by hand. The rules every entry follows:
   - `solo7dev`: `make tf-apply STACK=solo7dev`. With nothing to change it prints
     `0 to add, 0 to change, 0 to destroy`.
   - `solo7`: no check exists yet. The box can't use it, and `apply-prod` runs only when `plan-prod` finds a
-    change, so a mistyped token shows up at the next real `apply-prod`. A protected check is `AW-INF-078`'s.
+    change (and not at all until `TF_PROD_ENABLED` is set, `AW-INF-078`), so a mistyped token shows up at
+    the next real `apply-prod`. A protected check is requested on `AW-INF-078` (2026-10-20), not yet in
+    its scope.
 
 ### `GRAFANA_SOLO7DEV_TELEMETRY_TOKEN`, `GRAFANA_SOLO7_TELEMETRY_TOKEN`
 
