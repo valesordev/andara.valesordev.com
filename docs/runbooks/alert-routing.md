@@ -55,7 +55,7 @@ trees' receivers.
 - Don't edit the hand-made policy in the meantime: it goes as soon as prod exists.
 
 To check a route end to end, run `make tf-test-alert STACK=solo7dev ENV=<local|dev|staging>`, then
-`make tf-test-alert-clean` (`terraform-state.md`).
+`make tf-test-alert-clean STACK=solo7dev ENV=<the same>` (`terraform-state.md`).
 
 ## Reading rule state
 
