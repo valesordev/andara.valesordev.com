@@ -5,12 +5,15 @@
 Makefile and the scripts use has an entry in grafana-credentials.md (AC-1, AC-10); alert-routing.md's
 routing table names the committed trees' receivers, with no step that makes routing in the UI (AC-6, AC-8);
 the failed-run entry names who looks, what first, and the dev-box fallback (AC-7)."""
+import datetime
 import os
 import re
 import subprocess
+import sys
 import unittest
 
 REPO = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+sys.path.insert(0, os.path.join(REPO, "scripts"))
 RUNBOOKS = os.path.join(REPO, "docs", "runbooks")
 GRAFANA = os.path.join(REPO, "deploy", "terraform", "grafana")
 
@@ -120,6 +123,16 @@ class Credentials(unittest.TestCase):
         self.assertIn("issues/546#issuecomment-", self.entries["GRAFANA_SOLO7DEV_READ_TOKEN"],
                       "andara-read's entry links AW-INF-075's record of its reach")
 
+    def test_credentials_yaml_names_only_documented_credentials_within_90_days(self):
+        """A typo'd name would never be rotated by anyone, and a far-off date silences the reminder."""
+        import tf_credentials
+        for name, expires, _ in tf_credentials.load(tf_credentials.FILE):
+            with self.subTest(name=name):
+                self.assertTrue(name in self.entries or name in self.retiring,
+                                "%s is in credentials.yaml but has no entry in grafana-credentials.md" % name)
+                self.assertLessEqual((expires - datetime.date.today()).days, 90,
+                                     "%s expires %s, more than 90 days away (ADR-0012 decision 4)" % (name, expires))
+
     def test_the_states_click_paths_are_dated(self):
         self.assertRegex(self.text.split("## The credentials")[0], r"as of \*\*\d{4}-\d{2}-\d{2}\*\*")
 
@@ -149,12 +162,23 @@ class Routing(unittest.TestCase):
     def setUpClass(cls):
         cls.text = read(os.path.join(RUNBOOKS, "alert-routing.md"))
 
-    def test_the_module_names_what_committed_receivers_assumes(self):
+    def test_the_module_routes_as_committed_receivers_assumes(self):
+        """The names, and which child routes where: committed_receivers re-models main.tf, so a rewired route
+        must fail here rather than pass against the model."""
         main = read(os.path.join(GRAFANA, "modules", "stack", "main.tf"))
         self.assertIn('name = "slack-${local.channel}"', main)
         self.assertIn('channel = var.stack == "solo7" ? "prod" : "dev"', main)
         self.assertRegex(main, r'name\s+=\s+"blackhole"')
-        self.assertIn("contact_point = var.page_contact_point", main)
+        children = re.findall(r"(local\.\w+(?: && [^?]+)?) \? \[\{\s*labels\s*=\s*(\{[^}]*\})\s*contact_point\s*=\s*(\S+)",
+                              main)
+        self.assertEqual([(c.strip(), " ".join(l.split()), cp) for c, l, cp in children], [
+            ("local.local", '{ environment = "local" }', "grafana_contact_point.blackhole[0].name"),
+            ("local.prod && var.page_contact_point != null", '{ environment = "prod", severity = "page" }',
+             "var.page_contact_point"),
+            ("local.prod", '{ environment = "prod", severity = "page" }', "grafana_contact_point.slack.name"),
+        ])
+        root = re.search(r'resource "grafana_notification_policy" "this" \{\s*contact_point\s*=\s*(\S+)', main)
+        self.assertEqual(root.group(1), "grafana_contact_point.slack.name")
 
     def test_the_table_names_the_committed_receivers(self):
         table = sections(self.text, 2)["The routing table"]

@@ -531,10 +531,10 @@ tf-plan-key:
 tf-credentials-check:
 	@$(PY) $(SCRIPTS)/tf_credentials.py
 
-## tf-workflow-check: actionlint the terraform workflow, then check its credential, sink and concurrency rules (AW-INF-068 AC-9)
+## tf-workflow-check: actionlint the terraform and credentials workflows, then check terraform's credential, sink and concurrency rules (AW-INF-068 AC-9)
 tf-workflow-check:
 	@if ! command -v actionlint >/dev/null 2>&1; then echo "make: tf-workflow-check: actionlint not found (run \`make bootstrap\`)" >&2; exit 1; fi
-	actionlint .github/workflows/terraform.yaml
+	actionlint .github/workflows/terraform.yaml .github/workflows/credentials.yaml
 	$(PY) $(SCRIPTS)/tf_workflow_check.py
 
 ## tf-lock: re-pin the grafana provider hashes in every root's .terraform.lock.hcl, for linux and darwin on amd64 and arm64

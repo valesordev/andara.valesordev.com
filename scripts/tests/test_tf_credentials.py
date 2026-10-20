@@ -87,7 +87,7 @@ class File(Base):
             "another top-level key": ("tokens: []\n", 1),
             "not YAML": ("credentials:\n  - name: A\n   expires: [\n", 3),
             "a stack token": (text(entry("A_TOKEN", "2027-01-15")) + "# glsa_abc\n", 4),
-            "an access-policy token": ("credentials:\n  - name: glc_x\n", 2),
+            "an access-policy token": (text(entry("A_TOKEN", "2027-01-15")) + "# glc_abc\n", 4),
             "a webhook": ("# https://hooks.slack.com/services/T/B/x\ncredentials: []\n", 1),
         }
         for why, (body, line) in cases.items():
@@ -166,9 +166,27 @@ class Check(Base):
             self.assertEqual(tf_credentials.main(["--nope"], {}), 2)
 
     def test_today_defaults_to_utc(self):
-        now = datetime.datetime.now(datetime.timezone.utc).date()
-        body = text(entry("A_TOKEN", (now + datetime.timedelta(days=14)).isoformat()))
-        with contextlib.redirect_stdout(io.StringIO()) as out:
+        """01:00 UTC on the 21st is still the 20th at UTC-5: the check counts from the UTC date."""
+        instant = datetime.datetime(2026, 10, 21, 1, 0, tzinfo=datetime.timezone.utc)
+
+        class Clock(datetime.datetime):
+            @classmethod
+            def now(cls, tz=None):
+                return instant if tz else instant.astimezone(datetime.timezone(datetime.timedelta(hours=-5))).replace(tzinfo=None)
+
+            @classmethod
+            def today(cls):
+                return cls.now()
+
+        class Day(datetime.date):
+            @classmethod
+            def today(cls):
+                return datetime.date(2026, 10, 20)
+
+        body = text(entry("A_TOKEN", "2026-11-04"))
+        with mock.patch.object(tf_credentials.datetime, "datetime", Clock), \
+                mock.patch.object(tf_credentials.datetime, "date", Day), \
+                contextlib.redirect_stdout(io.StringIO()) as out:
             rc = tf_credentials.main(["--file", self.write(body)], {})
         self.assertEqual(rc, 1)
         self.assertIn("14 days left", out.getvalue())
@@ -190,6 +208,8 @@ class Issue(Base):
         self.calls.append(args)
         if args[:2] == ("issue", "list"):
             return json.dumps([{"number": n} for n, i in sorted(self.issues.items()) if i["state"] == "open"][:1])
+        if args[:2] in (("issue", "create"), ("issue", "edit")) and len(args[args.index("--title") + 1]) > 256:
+            raise tf_credentials.Exit(1, "gh %s failed: title is too long (maximum is 256 characters)" % args[1])
         if args[:2] == ("issue", "create"):
             n = len(self.issues) + 1
             self.issues[n] = {"state": "open", "title": args[args.index("--title") + 1], "body": input_text,
@@ -223,7 +243,25 @@ class Issue(Base):
         self.assertEqual(rc, 1)
         self.assertEqual(len(self.issues), 1, "a second run opened a duplicate")
         self.assertIn("`B_TOKEN`", self.issues[1]["body"])
-        self.assertIn("B_TOKEN", self.issues[1]["title"])
+        self.assertIn("2 Grafana Cloud credentials", self.issues[1]["title"])
+
+    def test_many_due_at_once_still_fit_the_title(self):
+        """Tokens made in one session expire together; GitHub refuses a title over 256 characters."""
+        names = ["GRAFANA_SOLO7DEV_FLEET_APPLY_TOKEN_%02d" % i for i in range(12)]
+        rc, _ = self.main(text(*[entry(n, days(3)) for n in names]), "--issue", env=self.env)
+        self.assertEqual(rc, 1)
+        self.assertEqual(len(self.issues), 1)
+        for n in names:
+            self.assertIn("`%s`" % n, self.issues[1]["body"])
+        self.assertTrue(self.reported())
+
+    def test_the_parse_error_is_printed_even_when_the_issue_fails(self):
+        def broken(*args, input_text=None):
+            raise tf_credentials.Exit(1, "gh label create failed: boom")
+        tf_credentials.gh = broken
+        rc, out = self.main(text(entry("A_TOKEN", "2027-01-15") + "    note: x\n"), "--issue", env=self.env)
+        self.assertEqual(rc, 1)
+        self.assertIn("line 4: unknown field 'note'", out)
 
     def test_a_failed_check_opens_or_updates_the_same_issue(self):
         rc, _ = self.main("credentials: [\n", "--issue", env=self.env)

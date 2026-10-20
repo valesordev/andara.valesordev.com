@@ -239,15 +239,18 @@ def main(argv, env=None):
         try:
             entries = load(a.file)
         except Exit as e:
+            # Printed first: if the issue can't be written, the log still names the line.
+            print("tf-credentials: %s" % e, file=sys.stderr)
             if a.issue:
                 raise_issue("Credentials expiry check failed",
                             "The credentials-expiry check could not read `%s`: %s\n\nUntil it can, no expiry is "
                             "being watched. Run: %s\n" % (os.path.relpath(a.file, REPO), e, run_url(env)), env)
-            raise
+            return e.code
         found = report(entries, today)
         if a.issue:
             if found:
-                raise_issue("Grafana Cloud credentials expiring: %s" % ", ".join(n for n, _, _ in found),
+                # A count, not the names: tokens made together expire together, and a title is 256 characters.
+                raise_issue("%d Grafana Cloud credential%s expiring or expired" % (len(found), "" if len(found) == 1 else "s"),
                             due_body(found, today, env), env)
             else:
                 close_issue(env)

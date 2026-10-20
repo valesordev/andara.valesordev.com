@@ -62,7 +62,8 @@ and rotated by hand. The rules every entry follows:
   - Viewer is enough. `AW-INF-075`'s `[verify]` recorded its reach on both stacks: rule groups,
     dashboards, datasource queries, and `irm oncall` on `solo7`
     ([AW-INF-075's record](https://github.com/valesordev/andara.valesordev.com/issues/546#issuecomment-6278701007)).
-  - So the custom role `andara-reader` is not needed.
+  - So the custom role `andara-reader` is not needed. The link is the `[verify]` outcome posted on the
+    story. AW-INF-075's `§8` record will repeat it once it is posted.
 - **Expiry:**
   - `solo7dev`: 2027-01-15.
   - `solo7`: **none**. It was made 2026-10-17 without an expiration date, which breaks the 90-day rule.
@@ -73,8 +74,9 @@ and rotated by hand. The rules every entry follows:
   - `gcx`, through `make gcx-config`: every drill and `make observe-check`;
   - the `terraform` workflow's `plan` (pull request), `drift`, `plan-prod` and `drift-prod-irm` jobs;
   - `make tf-plan STACK=solo7dev`.
-- **Check after a rotation:** `make tf-plan STACK=solo7dev`, then `make observe-check ENV=dev`. A token
-  problem shows as exit 3, or as a gcx `401`.
+- **Check after a rotation:** `make tf-plan STACK=solo7dev`, then `make observe-check ENV=dev`.
+  - An unset token exits 3 and names the variable.
+  - A revoked or mistyped token exits 1, with a `401` from the provider or from gcx.
 
 ### `GRAFANA_SOLO7DEV_APPLY_TOKEN`, `GRAFANA_SOLO7_APPLY_TOKEN`
 
@@ -87,7 +89,11 @@ and rotated by hand. The rules every entry follows:
 - **Stored:**
   - `solo7dev`: a secret of the `andara-main` environment, and `.local/box.env` (the dev box's apply
     path).
-  - `solo7`: a secret of `andara-prod-apply`, *not made yet*. Today it is only in `.local/box.env`.
+  - `solo7`: a secret of `andara-prod-apply`, *not made yet*.
+  - **A deviation:** today `solo7`'s apply token sits in `.local/box.env`. `ADR-0012` decision 4 gives the
+    box `solo7dev`'s apply token only, and `solo7` applies from CI only. No target uses it from the box,
+    because `make tf-apply` refuses `solo7` outside GitHub Actions. Remove it from `.local/box.env` when
+    `andara-prod-apply` holds it, or sooner.
 - **Read by:**
   - the `apply` job on `main`;
   - `make tf-apply STACK=solo7dev` and `make tf-test-alert`;
@@ -120,7 +126,12 @@ and rotated by hand. The rules every entry follows:
 - **Expiry:** at most 90 days.
 - **Stored:** a repository secret for each stack, read-only like the stack read tokens. Today only
   `solo7dev`'s is made: a repository secret, and `.local/box.env`.
-- **Read by:** the `plan`, `drift` and `plan-prod` jobs. The IRM root has no Fleet resources.
+- **Read by:** nothing yet.
+  - The `plan`, `drift` and `plan-prod` jobs pass it along. No root has a Fleet provider until
+    `AW-INF-051`, and `scripts/tf.py` gives Terraform no `GRAFANA_*_TOKEN` but the one as `GRAFANA_AUTH`.
+  - Until then, no run can show that a rotated token works. Check it in the access policy's token list
+    instead.
+  - The IRM root will have no Fleet resources.
 
 ### `GRAFANA_SOLO7DEV_FLEET_APPLY_TOKEN`, `GRAFANA_SOLO7_FLEET_APPLY_TOKEN`
 
@@ -131,8 +142,9 @@ and rotated by hand. The rules every entry follows:
 - **Stored:**
   - `solo7dev`: a secret of `andara-main`, and `.local/box.env`;
   - `solo7`: a secret of `andara-prod-apply`, *not made yet*.
-- **Read by:** `apply`, `apply-prod` and `make tf-apply STACK=solo7dev`. The Fleet provider receives it
-  as `user:token`, composed from the committed `fleet_user` (`AW-INF-051`).
+- **Read by:** nothing yet. From `AW-INF-051`, the Fleet provider in `apply`, `apply-prod` and
+  `make tf-apply STACK=solo7dev` receives it as `user:token`, composed from the committed `fleet_user`.
+  Until then, a rotation is checked in the access policy's token list, not by a run.
 
 ### `GRAFANA_SOLO7_IRM_TOKEN` (the provider reads it as `GRAFANA_ONCALL_ACCESS_TOKEN`)
 
@@ -202,7 +214,8 @@ and rotated by hand. The rules every entry follows:
 - `GRAFANA_SOLO7DEV_FLEET_READ_TOKEN` and `GRAFANA_SOLO7DEV_FLEET_APPLY_TOKEN`;
 - the read token and `SLACK_WEBHOOK_DEV`.
 
-Each is described above. The box holds no apply credential for `solo7`'s CI path.
+Each is described above. The `solo7` apply token is also on the box today, which is a deviation (see its
+entry).
 
 ## Retiring
 
