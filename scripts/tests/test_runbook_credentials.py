@@ -133,6 +133,30 @@ class Credentials(unittest.TestCase):
                 self.assertLessEqual((expires - datetime.date.today()).days, 90,
                                      "%s expires %s, more than 90 days away (ADR-0012 decision 4)" % (name, expires))
 
+    def test_credentials_yaml_holds_exactly_what_the_runbook_says_is_recorded(self):
+        """Both ways: a dropped yaml entry, or a runbook still saying "not made yet" after one is made, fails.
+        The runbook gives no dates itself, so a rotation changes only credentials.yaml. Whether the runbook
+        lists every live token is §8's check, against the stacks."""
+        import tf_credentials
+        recorded = set()
+        for name_set, body in self._by_entry().items():
+            block = re.search(r"^- \*\*Expiry:\*\*.*?(?=^- \*\*)", body, re.M | re.S)
+            self.assertIsNotNone(block, name_set)
+            for stack, state in re.findall(r"^  - `(solo7dev|solo7)`: (.*)$", block.group(0), re.M):
+                with self.subTest(entry=name_set, stack=stack):
+                    self.assertRegex(state, r"^(recorded in `credentials\.yaml`|not made yet\.)")
+                    infix = "_SOLO7DEV_" if stack == "solo7dev" else "_SOLO7_"
+                    names = [n for n in name_set if infix in n]
+                    self.assertEqual(len(names), 1, "one %s name in the heading" % stack)
+                    if state.startswith("recorded"):
+                        recorded.add(names[0])
+        self.assertEqual(recorded, {n for n, _, _ in tf_credentials.load(tf_credentials.FILE)})
+
+    def _by_entry(self):
+        top = sections(self.text, 2)
+        return {tuple(re.findall(r"`([A-Z][A-Z0-9_]+)`", head)): body
+                for head, body in sections(top["The credentials"], 3).items()}
+
     def test_the_states_click_paths_are_dated(self):
         self.assertRegex(self.text.split("## The credentials")[0], r"as of \*\*\d{4}-\d{2}-\d{2}\*\*")
 

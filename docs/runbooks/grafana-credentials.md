@@ -65,10 +65,10 @@ and rotated by hand. The rules every entry follows:
   - So the custom role `andara-reader` is not needed. The link is the `[verify]` outcome posted on the
     story. AW-INF-075's `§8` record will repeat it once it is posted.
 - **Expiry:**
-  - `solo7dev`: 2027-01-15.
-  - `solo7`: **none**. It was made 2026-10-17 without an expiration date, which breaks the 90-day rule.
-    A token's expiry can't be changed after it is made, so make a new token with one (the rotation steps
-    below), delete the old one, and add its entry to `credentials.yaml`. Brian is re-making it (2026-10-20).
+  - `solo7dev`: recorded in `credentials.yaml`.
+  - `solo7`: recorded in `credentials.yaml`. The first token (2026-10-17) had no expiry, so it was
+    re-made with one on 2026-10-20. An expiry can't be added to an existing token; re-making it is the
+    only fix.
 - **Stored:** a repository secret, and `.local/box.env`. Today only `GRAFANA_SOLO7DEV_READ_TOKEN` is a
   repository secret. `solo7`'s becomes one when the prod gate opens.
 - **Read by:**
@@ -85,8 +85,8 @@ and rotated by hand. The rules every entry follows:
 - **Name:** service account `andara-tf-apply`.
 - **Role or scopes:** Admin, on that stack only. **Observed role:** Admin in both stacks, read 2026-10-20.
 - **Expiry:**
-  - `solo7dev`: 2027-01-15.
-  - `solo7`: **none**, made 2026-10-17. Rotate it with an expiry, as for the read token.
+  - `solo7dev`: recorded in `credentials.yaml`.
+  - `solo7`: recorded in `credentials.yaml`. It was re-made 2026-10-20, as for the read token.
 - **Stored:**
   - `solo7dev`: a secret of the `andara-main` environment, and `.local/box.env` (the dev box's apply
     path).
@@ -109,8 +109,10 @@ and rotated by hand. The rules every entry follows:
 - **Name:** access policy `andara-<stack>-telemetry`.
 - **Role or scopes:** `metrics:write logs:write traces:write fleet-management:read`, and nothing else. The
   collector's `remotecfg` needs the last scope to pull its pipelines.
-- **Expiry:** at most 90 days, entered in `credentials.yaml` with `warn_days: 30`. A lapsed telemetry
-  token blinds every SLO at once (`AW-INF-065`).
+- **Expiry:** at most 90 days. When it is made, record it in `credentials.yaml` with `warn_days: 30`: a
+  lapsed telemetry token blinds every SLO at once (`AW-INF-065`).
+  - `solo7dev`: not made yet.
+  - `solo7`: not made yet.
 - **Stored:**
   - `solo7dev`: `.local/box.env`; a repository secret for CI's kind and `stack` jobs; and the
     `k8s-monitoring` secret made from `.local/box.env` for `local`, `dev` and `staging`.
@@ -125,6 +127,10 @@ and rotated by hand. The rules every entry follows:
 - **Name:** access policy `andara-<stack>-fleet-read`.
 - **Role or scopes:** `fleet-management:read`, with the realm set to the one stack.
 - **Expiry:** at most 90 days.
+  - `solo7dev`: recorded in `credentials.yaml`. That date is an estimate: the token was made with a
+    3-month expiry and stored 2026-10-19, and a stack token can't read an access policy's dates. To get the
+    exact date, read the policy's token list and correct the file.
+  - `solo7`: not made yet.
 - **Stored:** a repository secret for each stack, read-only like the stack read tokens. Today only
   `solo7dev`'s is made: a repository secret, and `.local/box.env`.
 - **Read by:** nothing yet.
@@ -140,6 +146,8 @@ and rotated by hand. The rules every entry follows:
 - **Name:** access policy `andara-<stack>-fleet-apply`.
 - **Role or scopes:** `fleet-management:read fleet-management:write`, with the realm set to the one stack.
 - **Expiry:** at most 90 days.
+  - `solo7dev`: recorded in `credentials.yaml`, an estimate, as for the Fleet read token.
+  - `solo7`: not made yet.
 - **Stored:**
   - `solo7dev`: a secret of `andara-main`, and `.local/box.env`;
   - `solo7`: a secret of `andara-prod-apply`, *not made yet*.
@@ -154,6 +162,7 @@ and rotated by hand. The rules every entry follows:
 - **Role or scopes:** IRM's API token. It can write the integration, schedule and escalation chain.
 - **Expiry:** IRM's API tokens carry no expiry of their own. Rotate it at most every 90 days anyway. Its
   `credentials.yaml` date is the rotation due date, so the job reminds you.
+  - `solo7`: not made yet.
 - **Stored:** secrets of `andara-prod-plan` and `andara-prod-apply`, both reachable from `main` only.
   *Not made yet.*
 - **Read by:** `plan-prod`, `drift-prod-irm` and `apply-prod`, for the `solo7-irm` root only.
@@ -241,11 +250,15 @@ and that story also deletes its line here. A retiring name that nothing uses any
   - Read by the `alerts` workflow's sync on `main`.
 
 Click path for all three: `grafana.com` → My Account → Security → Access Policies, on the `solo7` stack's
-realm. They were made without an expiry, before the 90-day rule. So they have no `credentials.yaml`
-entry, and nothing warns before they stop working. Re-make one with an expiry, and add its entry, only if
-the ruler path still needs it before `AW-INF-077`. On 2026-10-19 the `alerts` sync on
-`main` got `401 invalid token` with `ANDARA_ALERTS_CI_READ`. Rotate it as above if the ruler path still
-has work to do before `AW-INF-077`.
+realm.
+
+None of the three has a `credentials.yaml` entry, so nothing warns before one stops working:
+- The two `ANDARA_*` tokens were made without an expiry, before the 90-day rule.
+- `GRAFANA_CLOUD_READ_TOKEN`'s expiry is not known.
+
+On 2026-10-19 the `alerts` sync on `main` got `401 invalid token` with `ANDARA_ALERTS_CI_READ`. If the
+ruler path still needs one of them before `AW-INF-077`, re-make it with an expiry (as above) and add its
+entry.
 
 ## On the stacks, and not this repo's
 
