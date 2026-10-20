@@ -29,7 +29,10 @@ and rotated by hand. The rules every entry follows:
 - **Prod isn't built yet** (2026-10-19; `AW-INF-078`). The `solo7` items that only prod jobs read are
   described here so they can be made later. Each one is marked *not made yet*.
 
-## Rotating any of them
+## Rotating a token
+
+These steps are for the tokens in `credentials.yaml`. An entry that rotates another way (the plan key, the
+webhooks) says so itself.
 
 1. Make the new token next to the old one, from the entry's click path. Give it the same name, the same
    role or scopes, and an expiry no more than 90 days away.
@@ -39,9 +42,9 @@ and rotated by hand. The rules every entry follows:
    - dev box: edit `.local/box.env` in the main checkout.
 
    `gh` prompts for the value, so it never reaches your shell history.
-3. Run the entry's **Check after a rotation** for the stack whose token changed. Where the entry has none,
-   or it says no check exists, keep the old token until the new one has been used once.
-4. Delete the old token in the same place you made the new one.
+3. Check the new token the way its entry says, for the stack whose token changed. If the check fails, fix
+   or re-make the new token before going on.
+4. Then delete the old token in the same place you made the new one.
 5. Change its `expires` in `deploy/terraform/grafana/credentials.yaml` and merge that change. The open
    `credentials-expiry` issue closes on the next daily run.
 
