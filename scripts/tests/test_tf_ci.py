@@ -770,6 +770,17 @@ class Misc(Base):
                       "GRAFANA_SOLO7_APPLY_TOKEN", "GRAFANA_SOLO7_READ_TOKEN", "RUNNER_SECRET"):
                 self.assertNotIn(k, e)
             self.assertEqual(e["GRAFANA_AUTH"], "read")
+            self.assertEqual(e["TF_VAR_slack_webhook"], "https://hooks.slack.invalid/x")
+
+    def test_root_env_keeps_the_webhook_and_drops_other_tf_vars(self):
+        """The 2026-10-20 drift run: the allow-list dropped TF_VAR_slack_webhook, and every plan through
+        root_env (pr-plan, drift, plan-prod, apply-prod) failed on the unset variable."""
+        env = dict(self.env, TF_VAR_other="x", GRAFANA_SOLO7DEV_APPLY_TOKEN="apply", GRAFANA_SOLO7_APPLY_TOKEN="apply")
+        for root, op, hook in (("solo7dev", "plan", "/d"), ("solo7dev", "apply", "/d"),
+                               ("solo7", "plan", "/x"), ("solo7", "apply", "/x")):
+            tenv = tf_ci.root_env(root, env, op)
+            self.assertEqual(tenv["TF_VAR_slack_webhook"], "https://hooks.slack.invalid" + hook, (root, op))
+            self.assertNotIn("TF_VAR_other", tenv)
 
     def test_pr_plan_refuses_the_irm_root(self):
         self.assertEqual(tf_ci.main(["pr-plan", "--stack", "solo7-irm", "--commit", "x"], self.env), 2)
