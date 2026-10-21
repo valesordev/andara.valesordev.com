@@ -223,7 +223,8 @@ applied by `make platform-up`. They don't appear in Grafana Cloud's Fleet pages,
 
 - **`cluster`:** the destinations' `clusterLabels: [cluster]` with `cluster.name: andara`. The chart's default also
   sets `k8s.cluster.name`, which is dropped, because no rule reads it.
-- **CI** (`values-ci.yaml`) sends to the same destinations, with the same rendered blocks. `andara-ci` maps to
+- **CI** (`values-ci.yaml`) sends to the same destinations, with the same rendered blocks, when it holds the token
+  (§7), with `cluster="ci"` (A3). `andara-ci` maps to
   `local` through the table, so CI needs no override: decision 15's "`environment="local"` set by an override"
   lapses.
 
@@ -285,7 +286,7 @@ it bounds the scrape, not the shipment.
 **Against the limit:** the Grafana Cloud free tier allows **10,000 active metric series** per stack (`[verify 065]`
 against `solo7dev`'s usage page, the record moves from `AW-INF-051` to `AW-INF-065`, its one owner). The shared
 services add at most 80. The chart side is the same set decision 15 planned, so the split moves no series.
-`AW-INF-065` records the total per `environment` beside the limit (the box's alone: CI ships nothing, amendment A3), the record that `ADR-0012`'s revisit trigger
+`AW-INF-065` records the total per `environment` beside the limit (with CI's share, `cluster="ci"`, stated apart; amendment A3), the record that `ADR-0012`'s revisit trigger
 ("`solo7dev` exceeds the free tier's active-series limit twice in a month") measures. Logs: shipping the brokers' pod logs is new volume against the free tier's log allowance, and
 `AW-INF-065` records the first week's ingest.
 
@@ -293,9 +294,9 @@ services add at most 80. The chart side is the same set decision 15 planned, so 
 
 - **What runs:**
   - CI's kind job installs the same chart at the same pin with `values.yaml` and `values-ci.yaml` (`make platform-up
-    PROFILE=ci`). *Amended 2026-10-21 (A3):* CI never holds `solo7dev`'s telemetry token, so this is always the
-    run below. The original read "when the job holds `solo7dev`'s telemetry token".
-  - Without the token, it installs anyway with the `grafana-telemetry` Secret empty, so the collectors
+    PROFILE=ci`), when the job holds `solo7dev`'s telemetry token. Its series carry `cluster="ci"`, which
+    `AndaraServerUnavailable`'s guard excludes (A3).
+  - Without the token (a fork), it installs anyway with the `grafana-telemetry` Secret empty, so the collectors
     ship nothing. Only the Grafana Cloud assertions are skipped, with a notice (`ADR-0012` decision 14, `ADR-0013`'s
     Agreement). That run is where `[verify 065]` item 6 is observed.
   - There is no `fleet` collector and no Fleet registration (decision 15's reason stands: ephemeral collectors would
@@ -347,7 +348,8 @@ The only label added is `cluster`.
 through `metrics`. So a dead `metrics` collector, with `receiver` and `fleet` alive, would satisfy the guard. The
 `dev` absence line would then page "server unavailable" for what is a collector fault. The guard becomes
 `count(up{namespace!="", namespace!="andara-shared"}) > 0`, so it reads the chart's scrape alone, as it did when
-the guard was written. That is an amendment to `AW-INF-047`'s rendered rule and to `alerts.yaml`. Until a
+the guard was written. *Amended 2026-10-21 (A3):* the guard is `count(up{cluster!="ci", namespace!="",
+namespace!="andara-shared"}) > 0`, so it also ignores CI's series. That is an amendment to `AW-INF-047`'s rendered rule and to `alerts.yaml`. Until a
 telemetry-freshness rule exists, a dead `metrics` collector is silent rather than misattributed (Consequences).
 
 ### 10. Supersedes, and the ripple
@@ -454,8 +456,8 @@ deployed (§1).
   exceed the free tier's log allowance in a month: cut the shared services' logs to `warn` and above first.
 - The first alert on a shared-service series: reopen `ADR-0012` decision 9 for its environment value (`ADR-0013`
   amendment 15).
-- A CI job needs a Grafana Cloud assertion (A3): it ships under an environment of its own, by an amendment to
-  `ADR-0012` decision 9, which the rules and the guard exclude. Or it gets a stack of its own.
+- CI's `local` series mask or trip a box `local` alert in practice (A3): give CI an environment of its own, by an
+  amendment to `ADR-0012` decision 9, or a stack of its own.
 
 ## Amendments
 
@@ -475,25 +477,27 @@ its findings are decided here. A4 corrects a false statement.
   - **Effect:** `andara-shared`'s brokers get no `kube_*` rows. Their pod logs are still shipped. The first rule on
     a broker pod's state widens the prefix rule in its own change.
 - **A2. Traefik's `job` is `traefik`.** Traefik's pods carry no `k8s.grafana.com/job`, so autodiscovery would give
-  them the chart's default job. §5's `owner` test and `KEEP_LIST=1` key some checks by job. The platform's Traefik
-  values set the pod annotation `k8s.grafana.com/job: traefik` (`AW-INF-065`). `IngressErrorRateHigh` doesn't select
-  on `job`, so no rule changes.
-- **A3. CI ships nothing to `solo7dev`.** §7 shipped CI's series whenever the job held the token. Those series would
-  carry `environment="local"` and `namespace="andara-local"` (or `andara-ci`, also `local`), the same labels as the
-  box's `andara-local`, differing only in `cluster`. The rules aggregate `by (environment, namespace)`, so:
-  - **a CI run would join the box's `local` alerts**, and a CI server stopping would read as the box's `local`
-    server stopping;
-  - **it would satisfy `AndaraServerUnavailable`'s guard** (§9) during any CI run, so a dead box `metrics`
-    collector would page "server unavailable" for `andara-dev`, the misattribution §9 removes for Fleet;
-  - **each run's new `pod` and `instance` values would churn** into the active-series record, about 100 series a
-    run.
-
-  Excluding `cluster="ci"` in the guard fixes only the second. So **CI's kind jobs never hold
-  `GRAFANA_SOLO7DEV_TELEMETRY_TOKEN`**, and every CI run is the empty-Secret run: the chart is installed and
-  `[verify 065]` item 6 is observed, but nothing ships. No workflow asserts on Grafana Cloud today. `AW-INF-061`'s
-  trace round-trip ("a `gcx` read on `solo7dev` where secrets exist") is dropped from CI, and the box's
-  `make observe-check` is that check. The parity tests of §7 are unchanged, and AW-INF-065's active-series record
-  counts the box alone. Revisit-when gains the case of a CI job that needs a Grafana Cloud assertion.
+  them the chart's default job. §5's `owner` test and `KEEP_LIST=1` key some checks by job. The pod annotation
+  `k8s.grafana.com/job: traefik` is set in `deploy/k8s/traefik/values.yaml`'s `deployment.podAnnotations`
+  (`AW-INF-065`). If `[verify 065]` item 4 takes the `extraConfig` fallback, that scrape sets `job="traefik"` too.
+  `IngressErrorRateHigh` doesn't select on `job`, so no rule changes.
+- **A3. CI keeps shipping, and the guard ignores it.** With the token, CI ships `up` from `andara-local` and
+  `andara-ci` on cluster `ci` into `solo7dev`. §9's guard doesn't select on `cluster`, so during any CI run a dead
+  box `metrics` collector would still satisfy it, and `andara-dev`'s absence line would post "server unavailable",
+  the misattribution §9 removes for Fleet.
+  - **The guard becomes** `count(up{cluster!="ci", namespace!="", namespace!="andara-shared"}) > 0`. It is the same
+    in both stacks: `solo7` has no CI, and its prod cluster's name isn't `ci`. This amends `AW-INF-047`'s guard
+    again, beside §9's change. `values-ci.yaml` sets `cluster.name: ci`, and §7's render test asserts it.
+  - **CI's series still reach `solo7dev`, as decided:** `ADR-0013` decision 8 keeps the `drills` rule-state reads
+    and `stack-recover-mismatch` "where the `solo7dev` secrets exist" (`AW-INF-061`, AW-INF-064), and `ADR-0012`
+    decision 10 counts CI as a real backend. "CI ships nothing" was weighed and refused, because it would void those.
+  - **The known overlap, accepted:** CI's series carry `environment="local"`, the same as the box's
+    `andara-local` (`ADR-0013` made CI a `local`). The rules aggregate by `namespace`, and by `(environment,
+    namespace)` after `AW-INF-047`, so during a CI run CI's `andara-local` and the box's can mask each other in a
+    `local` alert, in either direction. `local` is a developer install that pages nobody. Revisit-when names the
+    trigger.
+  - **Churn:** each CI run brings new `pod` and `instance` values, about 100 series a run by the kube row counts.
+    AW-INF-065's active-series record states CI's share (`cluster="ci"`) apart from the box's.
 - **A4. Correction to §8 and the Consequences.** They said `tf_policy.py`'s `replace()`/`__PLACEHOLDER__` allowance
   is removed. `scripts/tf_policy.py` has no such allowance (its only `replace` is a path separator), so nothing is
   removed. It gains none.
@@ -502,5 +506,8 @@ its findings are decided here. A4 corrects a false statement.
 telemetry-freshness rule is the fix. It belongs with `AW-INF-047`'s rule set and needs its own SLO line, and SRE
 raises it with PM.
 
-**Ripple:** `AW-INF-065` (A1's rule and test; A2's annotation; A3's reason for the CI line it already has) and
-`AW-INF-061` (A3: the trace round-trip). `AW-INF-047`'s guard is unchanged.
+**Ripple:**
+- `AW-INF-065`: A1's rule and test; A2's annotation; A3's `cluster.name: ci` render assertion and the CI share in
+  the active-series record.
+- `AW-INF-047`: A3's guard, with a promtool case in which only `cluster="ci"` series exist.
+- `AW-INF-061` and AW-INF-064: no change.
