@@ -108,7 +108,7 @@ node image); `make platform-up` is `helm upgrade --install` for each in dependen
 | Traefik, cert-manager, the `andara-ca` and `letsencrypt` ClusterIssuers | this repo | the edge is Andara's only now; the ClusterIssuer secrets (Cloudflare token) come from `.local/box.env`, never committed |
 | Strimzi operator | this repo; `watchNamespaces={andara-shared}` | decision 3 |
 | Argo CD | this repo; installed by `make platform-up`, owns only `andara-dev` | the dev tag (decision 7) |
-| Collectors, kube-state-metrics, node-exporter | this repo; the pipelines are Fleet's (`ADR-0012` decisions 13 and 15) | `ADR-0012` |
+| Collectors, kube-state-metrics, node-exporter | this repo; the pipelines are Fleet's (`ADR-0012` decisions 13 and 15). *Amended 2026-10-21 (`ADR-0014`):* the `k8s-monitoring` release in `observability` collects with its own features, and Fleet pipelines collect only `andara-shared`'s services. node-exporter is not deployed (`ADR-0014` §1) | `ADR-0012`, `ADR-0014` |
 | Shared services (Kafka, object store; later Redis, Postgres) | this repo, namespace `andara-shared` | decision 3 |
 
 Nothing stays in the other repo; the dependency is cut.
