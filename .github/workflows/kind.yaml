@@ -189,16 +189,23 @@ jobs:
           CA=.local/tls/cluster/local/ca.pem
           kubectl --context "$ANDARA_KUBE_CONTEXT" -n $NS patch middleware andara-admin-allowlist --type merge \
             -p '{"spec":{"ipAllowList":{"sourceRange":["203.0.113.0/24"]}}}'
-          sleep 3
           # "The server logs no request": its own RPC counter for the Admin service, read
           # off the pod, does not move while the edge answers 403.
           admin_calls() { kubectl --context "$ANDARA_KUBE_CONTEXT" -n $NS exec andara-0 -c server -- wget -qO- http://127.0.0.1:8080/metrics \
             | awk '/^andara_grpc_requests_total\{.*andara.admin.v1.Admin/ { s += $NF } END { print s + 0 }'; }
-          before=$(admin_calls)
-          code=$(curl -s --cacert $CA --resolve andara.local:443:127.0.0.1 -o /dev/null -w '%{http_code}' \
+          admin() { curl -s --cacert $CA --resolve andara.local:443:127.0.0.1 -o /dev/null -w '%{http_code}' \
             -X POST -H 'content-type: application/proto' \
-            https://andara.local/andara.admin.v1.Admin/GetServerInfo --data-binary '')
-          [[ "$code" == "403" ]]
+            https://andara.local/andara.admin.v1.Admin/GetServerInfo --data-binary '' || true; }
+          # Traefik reloads a Middleware asynchronously: poll to the narrowed allowlist
+          # (live-assertions rule 1), then take the counter and assert.
+          deadline=$((SECONDS + 30))
+          until [[ "$(admin)" == "403" ]]; do
+            ((SECONDS < deadline)) || { echo "::error::Admin from the runner was not 403 within 30 s of narrowing the allowlist"; exit 1; }
+            sleep 1
+          done
+          before=$(admin_calls)
+          code=$(admin)
+          [[ "$code" == "403" ]] || { echo "::error::Admin from the runner got $code, not 403"; exit 1; }
           [[ "$(admin_calls)" == "$before" ]]
           # The catch-all is unaffected.
           curl -sf --cacert $CA --resolve andara.local:443:127.0.0.1 -X POST -H 'content-type: application/json' \
@@ -220,19 +227,17 @@ jobs:
           CA=.local/tls/cluster/local/ca.pem
           admin() { curl -s --cacert $CA --resolve andara.local:443:127.0.0.1 "$@" -o /dev/null -w '%{http_code}' \
             -X POST -H 'content-type: application/json' -H "authorization: Bearer $ANDARA_CI_TOKEN" \
-            https://andara.local/andara.admin.v1.Admin/GetServerInfo -d '{}'; }
+            https://andara.local/andara.admin.v1.Admin/GetServerInfo -d '{}' || true; }
           admin_calls() { kubectl --context "$ANDARA_KUBE_CONTEXT" -n $NS exec andara-0 -c server -- wget -qO- http://127.0.0.1:8080/metrics \
             | awk '/^andara_grpc_requests_total\{.*andara.admin.v1.Admin/ { s += $NF } END { print s + 0 }'; }
           # The step above narrowed the allowlist to 203.0.113.0/24 and put it back as its last
           # command; Traefik reloads a Middleware asynchronously, so until it has, 203.0.113.9 is
           # still allowed. Poll to the restored allowlist (live-assertions rule 1), then assert.
-          code=""
-          for i in $(seq 1 30); do
-            code=$(admin --haproxy-protocol --haproxy-clientip 203.0.113.9)
-            [[ "$code" == "403" ]] && break
+          deadline=$((SECONDS + 30))
+          until code=$(admin --haproxy-protocol --haproxy-clientip 203.0.113.9); [[ "$code" == "403" ]]; do
+            ((SECONDS < deadline)) || { echo "::error::a PROXY client 203.0.113.9 (outside the allowlist) got $code, not 403, for 30 s"; exit 1; }
             sleep 1
           done
-          [[ "$code" == "403" ]] || { echo "::error::a PROXY client 203.0.113.9 (outside the allowlist) got $code, not 403, for 30 s"; exit 1; }
           before=$(admin_calls)
           code=$(admin --haproxy-protocol --haproxy-clientip 203.0.113.9)
           [[ "$code" == "403" ]] || { echo "::error::a PROXY client 203.0.113.9 (outside the allowlist) got $code, not 403"; exit 1; }
