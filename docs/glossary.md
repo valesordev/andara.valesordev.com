@@ -839,23 +839,27 @@ until prod is installed. A rule is never live in both places (ADR-0012 §7).
 **IRM (Grafana IRM)** — Grafana Cloud's incident response and on-call product. Only `solo7` uses it: an
 integration, one schedule (Brian alone) and one escalation chain, managed by Terraform (ADR-0012 §10).
 
-**Alloy** — Grafana's telemetry collector. The cluster's runs as bare collectors that take their pipelines from Fleet
-Management and ship `andara-local` and `andara-dev` to `solo7dev` (ADR-0012 §15); compose is retired.
+**Alloy** — Grafana's telemetry collector. On the cluster it runs as the `k8s-monitoring` chart's collectors in the
+`observability` namespace: `metrics`, `logs` and `receiver` collect with the chart's features, and `fleet` runs only
+Fleet Management's pipelines. They ship `andara-local` and `andara-dev` to `solo7dev` (ADR-0014); compose is retired.
 
 **Fleet Management (Grafana Fleet Management)** — Grafana Cloud's service that delivers configuration to
-registered collectors. Here the whole collection pipeline (scrape, `environment` stamp, keep-list, export) is
-Fleet's, deployed through Terraform per stack; a series nothing stamped carries `environment="unknown"`
-(ADR-0012 §15).
+registered collectors. Here it carries only the collection of `andara-shared`'s services (today `shared-kafka`),
+deployed through Terraform per stack, on the one `fleet` collector. Its pipelines forward to the chart's `receiver`,
+so the chart's destinations stamp `environment` (a series nothing stamped carries `environment="unknown"`) and apply
+the keep-list (ADR-0014).
 
 **Contact point** — Where Grafana sends a notification: a Slack channel, an IRM integration, or
 `blackhole`, which notifies no one (its one webhook never resolves, and its route is always muted). **Notification policy** — The tree that matches an alert's labels
 (`severity`) to contact points. One tree per stack, owned wholly by Terraform.
 
 **Keep-list** — The metric series a stack's ingest must not drop because a rule or the dashboard reads them
-(ADR-0012 §13). `make observe-check ENV=<env> KEEP_LIST=1` extracts them from the rules and the dashboard and
-queries each **always-present** one, which must have a series on a clean rebuild. A **fault-only** series
-(the exit-code series, the recovery State Hash gauge) exists only after the event it describes, so it is checked
-in the `keep` pipeline's allow-list instead, and seen by the first drill that produces the fault.
+(ADR-0012 §13). The allow-list is `deploy/platform/collectors/keep-list.yaml`. It is enforced at the
+`k8s-monitoring` chart's metrics destination, and each Fleet pipeline also keeps only its own names (ADR-0014 §5).
+`make observe-check ENV=<env> KEEP_LIST=1` extracts the names from the rules and the dashboard and queries each
+**always-present** one, which must have a series on a clean rebuild. A **fault-only** series (the exit-code series,
+the recovery State Hash gauge) exists only after the event it describes, so it is checked against
+`keep-list.yaml` instead, and seen by the first drill that produces the fault.
 
 **Drift** — A managed Grafana resource that differs from Terraform's plan because someone edited it in the
 UI. Found by the daily `drift` job, which opens a GitHub issue; never an alert (ADR-0012 §5).

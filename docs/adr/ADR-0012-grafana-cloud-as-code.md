@@ -763,6 +763,10 @@ so replacing the tree does not silence them. `solo7dev` is new: nothing to impor
   own usage emails are the "is the free tier enough" signal (no repo job reads usage), and nothing here depends
   on it staying free.
 
+> **Annotation, 2026-10-21: `ADR-0014` moves where the table is applied, not the table.** The chart's three
+> destinations apply it, from `deploy/platform/collectors/environments.yaml`, for the chart's signals and for Fleet's
+> forwarded ones. There is no `stamp` pipeline (`ADR-0014` §4). The values and the `unknown` guard are unchanged.
+
 > **Annotation, 2026-10-10 — ADR-0013 adds one exception, not a change to this decision.** `andara-shared` (Kafka,
 > object store, later Redis and Postgres) is a platform namespace with no environment: the `stamp` pipeline leaves it
 > unlabelled (`unknown`) and `observe-check --keep-list`'s `unknown` guard excludes `namespace="andara-shared"`. The
@@ -881,6 +885,13 @@ and names `GRAFANA_<STACK>_READ_TOKEN`. `make alerts-sync` / `alerts-diff` are r
 step (so their ignored-`ENV` caveat goes away).
 
 ### 13. The cluster and `k8s-monitoring` live in this repo
+
+> **Superseded in part by `ADR-0014` (2026-10-21).** The collection is the `k8s-monitoring` chart's, with
+> values in `deploy/platform/collectors/`. Fleet pipelines collect only `andara-shared`'s services and forward into
+> the chart. The keep-list's allow-list is `deploy/platform/collectors/keep-list.yaml`, enforced at the chart's
+> metrics destination. "The collection pipelines are files … rendered with the stack endpoints" and "the allow-list
+> is read from the in-repo pipeline source" no longer hold. The keep-list table, the checks and the order stand,
+> with order step 1's pipelines read as `shared-kafka` (`ADR-0014` §5, §9).
 
 Until 2026-10-10 the cluster and its `k8s-monitoring` release belonged to a separate repo, and this decision was
 a contract this repo wrote for it. Now one repo owns both the rules and the thing that feeds them.
@@ -1010,6 +1021,13 @@ local broker is still Redpanda is ADR-0013's.
   ADR, not an edit.
 
 ### 15. IRM routing, and the collection pipeline in Fleet Management
+
+> **Superseded in part by `ADR-0014` (2026-10-21, Brian's direction).** The collection half is replaced: the
+> `k8s-monitoring` chart collects Kubernetes and stamps, guards, filters and exports everything. Fleet carries only
+> `andara-shared`'s services on one `fleet` collector, through pipelines that forward to the chart's receiver.
+> Replaced: "the whole collection pipeline lives in Fleet Management", the bare-collector item, the six pipelines,
+> `stamp` as the guard's home, `__PLACEHOLDER__`/`replace()`, and CI's static-config parity. Kept: the IRM half,
+> the credentials, the `stack`-only matcher, `file()` and the `templatefile` refusal.
 
 **Decided by Brian (2026-10-10): the whole collection pipeline lives in Fleet Management, deployed through
 Terraform**, so it is visible in Grafana Cloud and managed in this repo. IRM routing is decided in decisions 10
@@ -1155,6 +1173,11 @@ service and a blast radius: a bad pipeline can blind a stack until the next appl
   Prometheus).
 
 ## Amendments
+
+**2026-10-21, the collection split (`ADR-0014`, `AW-INF-079`).** Decisions 13 and 15 are superseded in part, and
+decision 9's table moves to the chart's destinations. Each carries a dated annotation in place. The Revisit-when line
+"Fleet Management cannot carry the collection pipeline" now applies to Fleet's service pipelines only. `ADR-0014`'s
+own Revisit-when list replaces it for the rest.
 
 **2026-10-19, no prod for now (AW-INF-068's §8 review).** Recorded in place, as the amendment under decision 5
 (the `TF_PROD_ENABLED` gate) and the second amendment under decision 7 (the cutover without prod). Decisions 8, 10
