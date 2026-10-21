@@ -1,0 +1,42 @@
+# The two ACME ClusterIssuers (ADR-0013 decision 11 and amendment 5): `letsencrypt` issues dev's
+# public edge certificate, and `letsencrypt-staging` is its fallback when the weekly duplicate limit is
+# hit. Both answer DNS-01 through Cloudflare, so ports and the workstation nginx don't matter to them.
+#
+# `make platform-up` applies this file only once it has written the Secret
+# cert-manager/cloudflare-api-token (key api-token) from CLOUDFLARE_API_TOKEN in .local/box.env. The
+# token is never committed; without it both issuers are skipped and say so. A values file selects
+# the issuer (`tls.issuer: letsencrypt-staging`), never a hand edit of a Certificate.
+#
+# No account email: ACME doesn't need one, and expiry warnings come from CertificateExpiringSoon,
+# not from Let's Encrypt's mail.
+apiVersion: cert-manager.io/v1
+kind: ClusterIssuer
+metadata:
+  name: letsencrypt
+spec:
+  acme:
+    server: https://acme-v02.api.letsencrypt.org/directory
+    privateKeySecretRef:
+      name: letsencrypt-account-key
+    solvers:
+      - dns01:
+          cloudflare:
+            apiTokenSecretRef:
+              name: cloudflare-api-token
+              key: api-token
+---
+apiVersion: cert-manager.io/v1
+kind: ClusterIssuer
+metadata:
+  name: letsencrypt-staging
+spec:
+  acme:
+    server: https://acme-staging-v02.api.letsencrypt.org/directory
+    privateKeySecretRef:
+      name: letsencrypt-staging-account-key
+    solvers:
+      - dns01:
+          cloudflare:
+            apiTokenSecretRef:
+              name: cloudflare-api-token
+              key: api-token

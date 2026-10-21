@@ -2,8 +2,8 @@
 # Copyright 2026 Valesor Development
 #
 # Argo CD's settings on the box (AW-INF-019), for the argo-cd chart version pinned in
-# scripts/argocd.py. `make argocd-install` reapplies them whenever they differ from the
-# release's.
+# deploy/platform/versions.yaml. `make platform-up` and `make argocd-install` reapply them
+# whenever they differ from the release's.
 dex:
   enabled: false          # one operator, the initial admin; no SSO
 notifications:

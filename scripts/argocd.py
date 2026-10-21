@@ -32,7 +32,9 @@ import yaml
 
 REPO = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 ARGO_REPO = "https://argoproj.github.io/argo-helm"
-ARGOCD_CHART_VERSION = "10.9.2"          # Argo CD v3.5.3
+# Argo CD's chart and version are deploy/platform/versions.yaml's (AW-INF-054). Image Updater isn't a
+# platform item: it keeps its pin here until AW-INF-059 removes it.
+VERSIONS = os.path.join(REPO, "deploy", "platform", "versions.yaml")
 IMAGE_UPDATER_CHART_VERSION = "1.3.1"    # Argo CD Image Updater v1.3.0
 NS = "argocd"
 APP_FILE = os.path.join(REPO, "deploy", "argocd", "andara-dev.yaml")
@@ -107,29 +109,47 @@ def install_chart(release, chart, version, values_file=None):
     say("%s %s in %s" % (chart, version, NS))
 
 
+def argocd_chart():
+    """(chart, version) of Argo CD from versions.yaml."""
+    with open(VERSIONS) as f:
+        entry = (yaml.safe_load(f) or {}).get("argocd") or {}
+    if not entry.get("chart") or not entry.get("version"):
+        raise RuntimeError("deploy/platform/versions.yaml has no argocd chart and version")
+    return entry["chart"], entry["version"]
+
+
 def install_argocd():
     need("install", "helm", "kubectl")
-    install_chart("argocd", "argo-cd", ARGOCD_CHART_VERSION, ARGOCD_VALUES_FILE)
+    install_chart("argocd", *argocd_chart(), ARGOCD_VALUES_FILE)
     install_chart("argocd-image-updater", "argocd-image-updater", IMAGE_UPDATER_CHART_VERSION)
     run(["kubectl", "-n", NS, "rollout", "status", "deploy/argocd-server", "--timeout=5m"])
     run(["kubectl", "-n", NS, "rollout", "status", "deploy/argocd-image-updater-controller", "--timeout=5m"], check=False)
     say("Argo CD Ready in %s" % NS)
 
 
+def issuer_ready(name):
+    issuer = kubectl_json("get", "clusterissuer", name) or {}
+    return any(c.get("type") == "Ready" and c.get("status") == "True"
+               for c in (issuer.get("status") or {}).get("conditions") or [])
+
+
 def preconditions(ns):
-    # The same checks, and messages, helm_install.sh makes.
+    # The same checks, and messages, helm_install.sh makes. Nothing under deploy/k8s/cert-manager/ is
+    # applied here: platform-up is its one applier, after the CA root restore (AW-INF-054).
     if run(["kubectl", "get", "ingressclass", "traefik"], check=False).returncode:
-        die("install", "no IngressClass 'traefik' — run `make kind-platform` on a fresh cluster")
+        die("install", "no IngressClass 'traefik'; run `make platform-up`")
     if run(["kubectl", "get", "crd", "clusterissuers.cert-manager.io"], check=False).returncode:
-        die("install", "cert-manager CRDs absent — run `make kind-platform` on a fresh cluster")
-    run(["kubectl", "apply", "-f", os.path.join(REPO, "deploy", "k8s", "cert-manager", "andara-ca.yaml")])
-    if run(["kubectl", "wait", "--for=condition=Ready", "clusterissuer/andara-ca", "--timeout=60s"], check=False).returncode:
-        die("install", "clusterissuer andara-ca is not Ready")
+        die("install", "cert-manager CRDs absent; run `make platform-up`")
+    edge = ((yaml.safe_load(open(VALUES)) or {}).get("tls") or {}).get("issuer") or "andara-ca"
+    for issuer in dict.fromkeys(("andara-ca", edge)):
+        if not issuer_ready(issuer):
+            die("install", "ClusterIssuer %s is not Ready; run `make platform-up`" % issuer)
     k = kubectl_json("-n", ns, "get", "kafka", "andara-log") or {}
     ready = [c for c in k.get("status", {}).get("conditions", []) if c.get("type") == "Ready"]
     if not ready or ready[0].get("status") != "True":
         die("install", "no Ready kafka/andara-log in %s; run `make kafka-install ENV=dev` first" % ns)
-    say("preconditions: traefik, cert-manager, andara-ca, kafka/andara-log in %s" % ns)
+    say("preconditions: traefik, cert-manager, ClusterIssuers %s, kafka/andara-log in %s"
+        % (", ".join(dict.fromkeys(("andara-ca", edge))), ns))
 
 
 def secrets(ns):

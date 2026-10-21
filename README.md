@@ -42,11 +42,15 @@ A rebuild deletes everything on the cluster. The two Secrets it keeps, `andara-d
 `.local/tls/` first, mode 0600. That directory is gitignored, and `make clean` keeps it. A Secret
 the cluster doesn't have leaves its earlier export in place. If an export fails, the rebuild stops
 before deleting anything, and `.local/tls/` holds whatever the last good export wrote.
-`scripts/cluster_secrets.py restore` puts them back. Until `platform-up` (AW-INF-054) runs it, a
-rebuild ends by listing the steps it doesn't do yet.
+A rebuild ends with `make platform-up`, which restores the CA root before it applies the private CA,
+then lists the steps later stories own.
 
-With more than one kind cluster, `make kind-load` and `make kind-platform` need
-`KIND_CLUSTER=<name>`.
+`make platform-up` installs and reconciles the platform at `deploy/platform/versions.yaml`'s pins:
+cert-manager, the ClusterIssuers, Traefik, Strimzi and Argo CD (AW-INF-054). The `letsencrypt`
+issuers need `CLOUDFLARE_API_TOKEN` in `.local/box.env`; without it they're skipped, and the run
+says so.
+
+With more than one kind cluster, `make kind-load` needs `KIND_CLUSTER=<name>`.
 
 ## Where things are
 

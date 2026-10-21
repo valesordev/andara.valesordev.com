@@ -74,7 +74,10 @@ admin:
 # true over loopback, and plausibly over the tailnet's IPv6 address. On 2026-10-02 Brian's
 # walk-through got 403 that way, while the same box over the tailnet's IPv4 address arrived as
 # 100.79.240.98 (#305).
-  allowedCIDRs: ["10.0.0.0/8", "192.168.0.0/16", "100.64.0.0/10", "172.16.0.0/12"]
+# Loopback (127.0.0.0/8): websecure trusts the PROXY protocol from the kind network's gateway
+# (AW-INF-054), so a CLI on the workstation, through nginx, arrives as 127.0.0.1. 172.16.0.0/12 stays
+# until AW-INF-066 removes it, after the CI PROXY test and the rebuild's resolution check pass.
+  allowedCIDRs: ["10.0.0.0/8", "192.168.0.0/16", "100.64.0.0/10", "172.16.0.0/12", "127.0.0.0/8"]
 
 secrets:
   tokenKey:

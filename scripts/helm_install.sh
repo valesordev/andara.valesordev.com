@@ -16,10 +16,10 @@
 # testdata/content/valid (contentVolume.render), as compose reads a directory, until
 # AW-SRV-012 serves content from the store. prod has neither yet; its deploy path is AW-INF-007.
 #
-# Every environment (AW-INF-006): the private CA is bootstrapped ahead of the chart and
-# its certificate exported for `andara-cli`, because a chart that renders a Certificate
-# from an issuer that does not exist yet waits ten minutes and then fails on a pod that
-# cannot mount its Secret.
+# Every environment (AW-INF-006): the issuers are checked Ready ahead of the chart and the
+# private CA exported for `andara-cli`, because a chart that renders a Certificate from an
+# issuer that does not exist yet waits ten minutes and then fails on a pod that cannot mount
+# its Secret.
 set -euo pipefail
 
 ENVNAME="${1:?usage: helm_install.sh <env> <image> <tag> [image_set] [tag_set]}"
@@ -47,9 +47,6 @@ if kubectl get crd applications.argoproj.io >/dev/null 2>&1 \
   exit 1
 fi
 
-kubectl get namespace "$NS" >/dev/null 2>&1 || kubectl create namespace "$NS" >/dev/null
-echo "helm-install: namespace $NS"
-
 # dev and prod run the sim and the Account store on their namespace's Kafka (AW-INF-014
 # AC-7). Without it the pod would crash-loop on an unreachable broker for the full --wait,
 # so the release is not touched until the broker is Ready.
@@ -62,21 +59,32 @@ if [[ "$ENVNAME" != "local" ]]; then
 fi
 
 # The platform the chart is written for: the cluster's Traefik owns :443 (AC-8) and
-# cert-manager issues every certificate. Neither is installed here — `make kind-platform`
-# does that for a fresh kind cluster — but both are checked, because the failure mode
-# otherwise is an Ingress nobody serves and a Certificate nobody signs.
+# cert-manager issues every certificate. `make platform-up` installs both and the ClusterIssuers
+# (AW-INF-054); nothing here applies them, because an apply of andara-ca.yaml before platform-up's
+# CA root restore mints a new root. The failure mode otherwise is an Ingress nobody serves and a
+# Certificate nobody signs, so each is checked.
 kubectl get ingressclass traefik >/dev/null 2>&1 \
-  || { echo "make: helm-install: no IngressClass 'traefik' — run \`make kind-platform\` on a fresh cluster" >&2; exit 1; }
+  || { echo "make: helm-install: no IngressClass 'traefik'; run \`make platform-up\`" >&2; exit 1; }
 kubectl get crd clusterissuers.cert-manager.io >/dev/null 2>&1 \
-  || { echo "make: helm-install: cert-manager CRDs absent — run \`make kind-platform\` on a fresh cluster" >&2; exit 1; }
+  || { echo "make: helm-install: cert-manager CRDs absent; run \`make platform-up\`" >&2; exit 1; }
 
-# The private CA (cluster-scoped, shared by every environment on the cluster). Applied
-# every run, waited on every run: idempotent, and a fresh cluster gets a Ready issuer
-# before the chart asks it for anything.
-kubectl apply -f deploy/k8s/cert-manager/andara-ca.yaml >/dev/null
-kubectl -n cert-manager wait --for=condition=Ready certificate/andara-ca --timeout=120s >/dev/null
-kubectl wait --for=condition=Ready clusterissuer/andara-ca --timeout=60s >/dev/null
-echo "helm-install: clusterissuer andara-ca is ready"
+# The issuers this environment needs: the private CA for the server certificate's second leg,
+# always, and tls.issuer for the edge.
+EDGE_ISSUER="$("${PY:-python3}" - "$VALUES" <<'PYEOF'
+import sys, yaml
+print(((yaml.safe_load(open(sys.argv[1])) or {}).get("tls") or {}).get("issuer") or "andara-ca")
+PYEOF
+)"
+for issuer in andara-ca $([[ "$EDGE_ISSUER" != andara-ca ]] && echo "$EDGE_ISSUER"); do
+  ready="$(kubectl get clusterissuer "$issuer" \
+    -o jsonpath='{.status.conditions[?(@.type=="Ready")].status}' 2>/dev/null || true)"
+  [[ "$ready" == "True" ]] \
+    || { echo "make: helm-install: ClusterIssuer $issuer is not Ready; run \`make platform-up\`" >&2; exit 1; }
+  echo "helm-install: clusterissuer $issuer is ready"
+done
+
+kubectl get namespace "$NS" >/dev/null 2>&1 || kubectl create namespace "$NS" >/dev/null
+echo "helm-install: namespace $NS"
 
 # Environments whose content comes from ConfigMaps (server.content.source: dir) and whose
 # token key and first operator this script provisions. dev leaves this list when

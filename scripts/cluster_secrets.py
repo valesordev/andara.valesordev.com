@@ -20,7 +20,8 @@ clean` keeps .local/tls/.
 `restore` reapplies them, dropping the fields the old cluster assigned (resourceVersion, uid,
 creationTimestamp, managedFields, ownerReferences) and keeping the annotations, so cert-manager's
 issuer-name, issuer-kind and certificate-name survive. Every target namespace is checked before
-anything is applied. Where restore sits in the platform's order is AW-INF-054's call.
+anything is applied. `make platform-up` restores the CA root (cert-manager/andara-ca-tls) after
+cert-manager's namespace exists and before the first apply of andara-ca.yaml (AW-INF-054).
 
 Both print each Secret's file mode and, for a certificate, its serial and notBefore: public values,
 never the key. AW-INF-066 records them before and after a rebuild.
@@ -177,11 +178,14 @@ def clean(secret):
     return out
 
 
-def restore(context=CONTEXT, tls_dir=None, say=default_say):
-    """Reapply every exported Secret. Returns the number restored."""
+def restore(context=CONTEXT, tls_dir=None, say=default_say, namespaces=None):
+    """Reapply every exported Secret, or only those in namespaces when given. Returns the number
+    restored. platform-up restores cert-manager's alone: andara-dev doesn't exist yet when it runs."""
     tls_dir = tls_dir or TLS_DIR
     found = []
     for ns, name in SECRETS:
+        if namespaces is not None and ns not in namespaces:
+            continue
         path = file_for(name, tls_dir)
         if os.path.exists(path):
             with open(path) as f:

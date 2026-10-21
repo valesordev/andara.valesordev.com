@@ -32,7 +32,7 @@ IMAGE       ?= andara-server
 # Where CI publishes the server image and dev/prod pull it from (AW-INF-013).
 REGISTRY_IMAGE := ghcr.io/valesordev/andara-server
 TAG         ?= dev
-# The kind cluster kind-load and kind-platform use. Unset, it's the only cluster there is; with two
+# The kind cluster kind-load uses. Unset, it's the only cluster there is; with two
 # or more (andara beside solo7) they exit 2 naming them rather than guess (AW-INF-052).
 KIND_CLUSTER ?=
 KIND        ?= kind
@@ -61,7 +61,7 @@ HAS_GO := $(shell find . -name '*.go' -not -path './.git/*' -not -path './bin/*'
         proto proto-check adr \
         k8s-dry check-targets clean build build-info goldens \
         values-schema values-schema-check helm-test image image-publish image-check cli-release cli-release-check cli-release-publish kind-load helm-install measure-tick stack-smoke stack-play stack-linkdead stack-recover stack-recover-mismatch \
-        kind-platform cluster-up cluster-down cluster-rebuild stream-soak content-grammar-check observe-check observe-unavailable gcx-config gcx-check gcx-only-check scripts-test kafka-operator kafka-install kafka-broker-bounce \
+        platform-up platform-check cluster-up cluster-down cluster-rebuild stream-soak content-grammar-check observe-check observe-unavailable gcx-config gcx-check gcx-only-check scripts-test kafka-install kafka-broker-bounce \
         argocd-install argocd-status argocd-ui argocd-recover argocd-uninstall world-reset content-seed env-destroy env-recover \
         objectstore-install projector-stop projector-start projector-rebuild server-stop server-start core-versions-check \
         builder-reference builder-reference-check guide-check \
@@ -136,7 +136,7 @@ CHECK_TARGETS := fmt-check vet lint test proto-check schemas-check \
                  values-schema-check k8s-dry helm-test \
                  license-check content-grammar-check content-conformance scripts-test \
                  core-versions-check builder-reference-check guide-check \
-                 tf-fmt-check tf-validate tf-test tf-workflow-check gcx-only-check
+                 tf-fmt-check tf-validate tf-test tf-workflow-check gcx-only-check platform-check
 
 ## check: fmt, vet, lint, test, proto, manifests — what CI runs
 check: $(CHECK_TARGETS)
@@ -377,10 +377,14 @@ stack-recover-mismatch: build
 stack-projector-check: build
 	@$(SCRIPTS)/stack_projector_check.sh
 
-## kind-platform: install Traefik and cert-manager into a fresh kind cluster the way the box has them — KIND_CLUSTER=<name>, required when there is more than one
-kind-platform:
-	@cluster="$$($(PY) $(SCRIPTS)/cluster.py kind-cluster "$(KIND_CLUSTER)" "$(KIND)")"
-	$(SCRIPTS)/kind_platform.sh "$$cluster"
+## platform-up: install and reconcile the platform at deploy/platform/versions.yaml's pins — [PROFILE=box|ci] [ANDARA_KUBE_CONTEXT=kind-andara] [REQUIRE_LETSENCRYPT=1]; the letsencrypt issuers need CLOUDFLARE_API_TOKEN, from .local/box.env (AW-INF-054)
+# PROFILE defaults to box here, not to the compose profile `full` above.
+platform-up:
+	@$(PY) $(SCRIPTS)/platform_up.py up "$(if $(filter command line,$(origin PROFILE)),$(PROFILE),box)"
+
+## platform-check: versions.yaml is valid, and no script or workflow pins a platform item outside it (AW-INF-054)
+platform-check:
+	@$(PY) $(SCRIPTS)/platform_up.py check
 
 ## cluster-up: create the kind cluster `andara` (context kind-andara) from deploy/kind/cluster.yaml, edge on 127.0.0.1:8080 and :8443; idempotent (AW-INF-052)
 cluster-up:
@@ -390,13 +394,9 @@ cluster-up:
 cluster-down:
 	@$(PY) $(SCRIPTS)/cluster.py down "$(CONFIRM)"
 
-## cluster-rebuild: export the certificate Secrets to .local/tls/, delete `andara`, create it again — CONFIRM=andara
+## cluster-rebuild: export the certificate Secrets to .local/tls/, delete `andara`, create it again, then platform-up (which restores the CA root) — CONFIRM=andara
 cluster-rebuild:
 	@$(PY) $(SCRIPTS)/cluster.py rebuild "$(CONFIRM)"
-
-## kafka-operator: install the Strimzi operator (1.2.0) into namespace strimzi, watching andara-dev and andara-prod — once per cluster (AW-INF-014)
-kafka-operator:
-	@PY=$(PY) $(SCRIPTS)/kafka.sh operator
 
 ## kafka-install: Apache Kafka `andara-log` (3 brokers, KRaft) in andara-<env>, then the topics from deploy/kafka/topics.yaml — ENV=<dev|prod> (AW-INF-014)
 kafka-install:

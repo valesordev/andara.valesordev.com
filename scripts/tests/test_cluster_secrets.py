@@ -203,6 +203,16 @@ class Restore(Base):
         self.assertEqual([line.split()[0] for line in self.lines],
                          ["cert-manager/andara-ca-tls", "andara-dev/andara-edge-tls"])
 
+    def test_restore_of_one_namespace_never_touches_another(self):
+        """platform-up restores the CA root before andara-dev exists (AW-INF-054)."""
+        self.exported(secret("cert-manager", "andara-ca-tls", annotations=CM_ANNOTATIONS),
+                      secret("andara-dev", "andara-edge-tls"))
+        c = self.use(Cluster(namespaces=("cert-manager",)))
+        n = cluster_secrets.restore(tls_dir=self.tls, say=self.lines.append, namespaces=("cert-manager",))
+        self.assertEqual(n, 1)
+        self.assertEqual([s["metadata"]["name"] for s in c.applied], ["andara-ca-tls"])
+        self.assertFalse([call for call in c.calls if "andara-dev" in call], c.calls)
+
     def test_nothing_exported_is_nothing_to_restore(self):
         c = self.use(Cluster())
         self.assertEqual(self.restore(), 0)

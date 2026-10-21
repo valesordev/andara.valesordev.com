@@ -377,5 +377,109 @@ class HelmInstallRefusal(unittest.TestCase):
             self.assertEqual(p.stderr.strip().count("\n"), 0, p.stderr)
 
 
+
+def stub_bin(d, log, tools):
+    """Shell stubs on PATH that log every call to log; tools maps a name to its body."""
+    for tool, body in tools.items():
+        p = os.path.join(d, tool)
+        with open(p, "w") as f:
+            f.write('#!/bin/sh\necho "%s $*" >> "%s"\n%s\n' % (tool, log, body))
+        os.chmod(p, os.stat(p).st_mode | stat.S_IEXEC)
+    return dict(os.environ, PATH=d + os.pathsep + os.environ["PATH"])
+
+
+def calls(log):
+    if not os.path.exists(log):
+        return []
+    with open(log) as f:
+        return f.read().splitlines()
+
+
+class IssuerRefusal(unittest.TestCase):
+    """AW-INF-054 AC-13: with andara-ca absent, helm-install and argocd-install exit 1 naming `make
+    platform-up`, and apply nothing under deploy/k8s/cert-manager/."""
+
+    # Traefik and cert-manager's CRDs are there; no ClusterIssuer is, so the Ready read prints nothing.
+    KUBECTL = 'case "$*" in "get crd applications.argoproj.io") exit 1;; esac\nexit 0'
+
+    def test_helm_install_refuses_and_applies_nothing(self):
+        with tempfile.TemporaryDirectory() as d:
+            log = os.path.join(d, "calls")
+            env = stub_bin(d, log, {"kubectl": self.KUBECTL, "helm": "exit 0"})
+            p = subprocess.run([os.path.join(SCRIPTS, "helm_install.sh"), "local", "andara-server", "dev", "", ""],
+                               capture_output=True, text=True, env=env)
+            self.assertEqual(p.returncode, 1, p.stderr)
+            self.assertIn("ClusterIssuer andara-ca is not Ready; run `make platform-up`", p.stderr)
+            made = calls(log)
+            self.assertFalse([c for c in made if " apply " in c or " create " in c or "cert-manager/" in c], made)
+            self.assertFalse([c for c in made if c.startswith("helm ")], made)
+
+    def test_helm_install_checks_the_edge_issuer_too(self):
+        """dev's edge is letsencrypt: andara-ca Ready isn't enough."""
+        kubectl = ('case "$*" in "get crd applications.argoproj.io") exit 1;;\n'
+                   '  *"kafka andara-log"*) echo True;;\n'
+                   '  *"clusterissuer andara-ca"*) echo True;;\nesac\nexit 0')
+        with tempfile.TemporaryDirectory() as d:
+            log = os.path.join(d, "calls")
+            env = stub_bin(d, log, {"kubectl": kubectl, "helm": "exit 0"})
+            p = subprocess.run([os.path.join(SCRIPTS, "helm_install.sh"), "dev", "andara-server", "dev", "", ""],
+                               capture_output=True, text=True, env=env)
+            self.assertEqual(p.returncode, 1, p.stderr)
+            self.assertIn("ClusterIssuer letsencrypt is not Ready; run `make platform-up`", p.stderr)
+            self.assertFalse([c for c in calls(log) if " apply " in c or "create namespace" in c])
+
+    def test_argocd_install_refuses_and_applies_nothing(self):
+        c = Cluster()
+        mod = with_cluster(load_argocd(), c)
+        code, _, err = quiet(mod.preconditions, "andara-dev")
+        self.assertEqual(code, 1)
+        self.assertIn("ClusterIssuer andara-ca is not Ready; run `make platform-up`", err)
+        self.assertEqual(c.made("apply"), [])
+        self.assertFalse([a for a, _ in c.calls if any("k8s/cert-manager" in str(x) for x in a)])
+
+    def test_argocd_install_wants_dev_s_edge_issuer(self):
+        c = Cluster()
+        mod = with_cluster(load_argocd(), c)
+        ready = {"status": {"conditions": [{"type": "Ready", "status": "True"}]}}
+        mod.kubectl_json = lambda *a: ready if a[-1] == "andara-ca" else None
+        code, _, err = quiet(mod.preconditions, "andara-dev")
+        self.assertEqual(code, 1)
+        self.assertIn("ClusterIssuer letsencrypt is not Ready", err)
+
+
+class KafkaOperator(unittest.TestCase):
+    """AW-INF-054 AC-5: kafka-install never installs Strimzi, and refuses a namespace it doesn't watch."""
+
+    def run_install(self, watching):
+        d = tempfile.mkdtemp()
+        self.addCleanup(lambda: subprocess.run(["rm", "-rf", d]))
+        log = os.path.join(d, "calls")
+        values = json.dumps({"watchNamespaces": watching}) if watching else ""
+        helm = 'case "$1" in get) [ -n \'%s\' ] && echo \'%s\' && exit 0; exit 1;; esac\nexit 0' % (values, values)
+        env = stub_bin(d, log, {"helm": helm, "kubectl": "exit 0"})
+        p = subprocess.run([os.path.join(SCRIPTS, "kafka.sh"), "install", "dev"], capture_output=True, text=True, env=env)
+        return p, calls(log)
+
+    def test_an_operator_watching_andara_shared_refuses_dev(self):
+        p, made = self.run_install(["andara-shared"])
+        self.assertEqual(p.returncode, 1)
+        self.assertIn("Strimzi watches andara-shared, not andara-dev", p.stderr)
+        self.assertFalse([c for c in made if c.startswith("helm upgrade") or c.startswith("helm install") or " apply " in c], made)
+
+    def test_no_operator_names_platform_up(self):
+        p, made = self.run_install(None)
+        self.assertEqual(p.returncode, 1)
+        self.assertIn("run `make platform-up`", p.stderr)
+        self.assertFalse([c for c in made if c.startswith("helm upgrade") or " apply " in c], made)
+
+    def test_no_install_path_carries_another_watch_list(self):
+        """AC-5's grep: kafka-operator and kafka.sh's WATCHED list are gone."""
+        for path in ("Makefile", os.path.join("scripts", "kafka.sh")):
+            with open(os.path.join(REPO, path)) as f:
+                text = f.read()
+            self.assertNotIn("kafka-operator", text, path)
+            self.assertNotIn("WATCHED=", text, path)
+
+
 if __name__ == "__main__":
     unittest.main()
