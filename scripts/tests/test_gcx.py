@@ -264,6 +264,71 @@ class Run(FakeGcx):
         self.assertNotIn(TOKEN, p.stdout + p.stderr, "a token only the config holds is redacted too")
 
 
+class Check(FakeGcx):
+    """make gcx-check STACK=<stack>: one stack's read token reads its rule groups (AW-INF-076's rotation check)."""
+
+    def env_for(self, name, **extra):
+        return dict(self.serve(name)["env"], ANDARA_BOX_ENV=os.path.join(self.tmp, "no-box.env"), **extra)
+
+    def test_reads_the_named_stack_with_its_token(self):
+        env = self.env_for("alert_rules_list.json", GRAFANA_SOLO7DEV_READ_TOKEN="dev", GRAFANA_SOLO7_READ_TOKEN=TOKEN)
+        n = gcx.check("solo7", env)
+        self.assertEqual(n, len(gcx.normalise(fixture("alert_rules_list.json"))))
+        argv = self.calls()[-1]["argv"]
+        self.assertEqual(argv[argv.index("--context") + 1], "solo7")
+        self.assertIn("rules", argv)
+        import yaml
+        with open(self.env["GCX_CONFIG"]) as f:
+            self.assertEqual(yaml.safe_load(f)["stacks"]["solo7"]["grafana"]["token"], TOKEN)
+
+    def test_a_refused_token_raises(self):
+        env = self.env_for("metrics_query_vector_empty.json", GRAFANA_SOLO7_READ_TOKEN=TOKEN, FAKE_GCX_EXIT="1")
+        with self.assertRaises(gcx.GcxError):
+            gcx.check("solo7", env)
+
+    def test_counts_every_group(self):
+        two = os.path.join(self.tmp, "two.json")
+        doc = fixture("alert_rules_list.json")
+        groups = gcx.normalise(doc)
+        with open(two, "w") as f:
+            json.dump(groups + [dict(groups[0], name="second")], f)
+        env = dict(self.env, FAKE_GCX_FIXTURE=two, ANDARA_BOX_ENV=os.path.join(self.tmp, "no-box.env"),
+                   GRAFANA_SOLO7_READ_TOKEN=TOKEN)
+        self.assertEqual(gcx.check("solo7", env), 2)
+
+    def script(self, env):
+        """`gcx.py check solo7` as make runs it, against the fake gcx."""
+        code = ("import sys; sys.path.insert(0, %r); import gcx\n"
+                "gcx.GCX = %r\n"
+                "sys.exit(gcx.main(['check', 'solo7']))\n" % (os.path.join(REPO, "scripts"), self.bin))
+        return subprocess.run([sys.executable, "-c", code], capture_output=True, text=True, env=env)
+
+    def test_script_exit_codes(self):
+        ok = self.script(self.env_for("alert_rules_list.json", GRAFANA_SOLO7_READ_TOKEN=TOKEN))
+        self.assertEqual(ok.returncode, 0, ok.stderr)
+        self.assertIn("gcx-check: solo7 ok:", ok.stdout)
+        leak = os.path.join(self.tmp, "leak")
+        with open(leak, "w") as f:
+            f.write("Error: Request failed with status 401 | %s\n" % TOKEN)
+        refused = self.script(self.env_for("metrics_query_vector_empty.json", GRAFANA_SOLO7_READ_TOKEN=TOKEN,
+                                           FAKE_GCX_EXIT="1", FAKE_GCX_STDERR=leak))
+        self.assertEqual(refused.returncode, 1, "a refused token is never reported as read")
+        self.assertIn("401", refused.stderr)
+        self.assertNotIn(TOKEN, refused.stdout + refused.stderr)
+        unset = self.script(self.env_for("alert_rules_list.json"))
+        self.assertEqual(unset.returncode, 3)
+        self.assertIn("GRAFANA_SOLO7_READ_TOKEN", unset.stderr)
+
+    def test_the_named_stacks_token_unset_exits_3(self):
+        # The other stack's token being set must not stand in for it.
+        env = self.env_for("alert_rules_list.json", GRAFANA_SOLO7DEV_READ_TOKEN="dev")
+        with self.assertRaises(grafana_stack.Exit) as e:
+            gcx.check("solo7", env)
+        self.assertEqual(e.exception.code, 3)
+        self.assertIn("GRAFANA_SOLO7_READ_TOKEN", str(e.exception))
+        self.assertEqual(os.path.exists(self.argv_log), False, "gcx is not run without the token")
+
+
 class Config(unittest.TestCase):
     """AC-7: make gcx-config."""
 
@@ -319,6 +384,12 @@ class Config(unittest.TestCase):
         p = subprocess.run(["make", "-s", "-C", REPO, "gcx-config"], capture_output=True, text=True, env=env)
         self.assertNotEqual(p.returncode, 0)
         self.assertIn("gcx-config: no read token set", p.stderr)
+
+    def test_script_usage_exits_2(self):
+        for argv in (["check"], ["check", "nope"], ["check", "solo7", "x"], ["bogus"]):
+            p = subprocess.run([sys.executable, os.path.join(REPO, "scripts", "gcx.py")] + argv,
+                               capture_output=True, text=True, env=dict(os.environ, **self.base))
+            self.assertEqual(p.returncode, 2, argv)
 
     def test_default_path_is_gitignored(self):
         p = subprocess.run(["git", "-C", REPO, "check-ignore", "-q", ".local/gcx.yaml"])

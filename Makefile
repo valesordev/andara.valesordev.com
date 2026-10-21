@@ -61,12 +61,12 @@ HAS_GO := $(shell find . -name '*.go' -not -path './.git/*' -not -path './bin/*'
         proto proto-check adr \
         k8s-dry check-targets clean build build-info goldens \
         values-schema values-schema-check helm-test image image-publish image-check cli-release cli-release-check cli-release-publish kind-load helm-install measure-tick stack-smoke stack-play stack-linkdead stack-recover stack-recover-mismatch \
-        kind-platform cluster-up cluster-down cluster-rebuild stream-soak content-grammar-check observe-check observe-unavailable gcx-config gcx-only-check scripts-test kafka-operator kafka-install kafka-broker-bounce \
+        kind-platform cluster-up cluster-down cluster-rebuild stream-soak content-grammar-check observe-check observe-unavailable gcx-config gcx-check gcx-only-check scripts-test kafka-operator kafka-install kafka-broker-bounce \
         argocd-install argocd-status argocd-ui argocd-recover argocd-uninstall world-reset content-seed env-destroy env-recover \
         objectstore-install projector-stop projector-start projector-rebuild server-stop server-start core-versions-check \
         builder-reference builder-reference-check guide-check \
         stack-boundary-lost cli-offline-check stack-projector-check recovery-timing recovery-timing-previous recovery-timing-summary startup-budget-check alerts-sync alerts-diff update-agents \
-        tf-plan tf-apply tf-unlock tf-test-alert tf-test-alert-clean tf-fmt-check tf-validate tf-test tf-lock tf-bootstrap-gcp tf-drift tf-plan-show tf-workflow-check tf-ci-environments tf-plan-key tf-replan
+        tf-plan tf-apply tf-unlock tf-test-alert tf-test-alert-clean tf-fmt-check tf-validate tf-test tf-lock tf-bootstrap-gcp tf-drift tf-plan-show tf-workflow-check tf-ci-environments tf-plan-key tf-replan tf-credentials-check
 
 ## help: print this target list
 help:
@@ -527,10 +527,14 @@ tf-replan:
 tf-plan-key:
 	@$(PY) $(SCRIPTS)/tf_ci.py plan-key $(if $(filter 1,$(ROTATE)),--rotate)
 
-## tf-workflow-check: actionlint the terraform workflow, then check its credential, sink and concurrency rules (AW-INF-068 AC-9)
+## tf-credentials-check: list each hand-made Grafana Cloud credential's expiry from deploy/terraform/grafana/credentials.yaml; exits 1 when one is within its warn_days (default 14) or expired, or the file is unreadable; no network (AW-INF-076)
+tf-credentials-check:
+	@$(PY) $(SCRIPTS)/tf_credentials.py
+
+## tf-workflow-check: actionlint the terraform and credentials workflows, then check terraform's credential, sink and concurrency rules (AW-INF-068 AC-9)
 tf-workflow-check:
 	@if ! command -v actionlint >/dev/null 2>&1; then echo "make: tf-workflow-check: actionlint not found (run \`make bootstrap\`)" >&2; exit 1; fi
-	actionlint .github/workflows/terraform.yaml
+	actionlint .github/workflows/terraform.yaml .github/workflows/credentials.yaml
 	$(PY) $(SCRIPTS)/tf_workflow_check.py
 
 ## tf-lock: re-pin the grafana provider hashes in every root's .terraform.lock.hcl, for linux and darwin on amd64 and arm64
@@ -548,6 +552,10 @@ observe-check:
 ## gcx-config: write $GCX_CONFIG (default .local/gcx.yaml, or $RUNNER_TEMP/gcx.yaml in CI; mode 0600) with one gcx context per stack whose GRAFANA_<STACK>_READ_TOKEN is set; exits 3 with none (AW-INF-075)
 gcx-config:
 	@$(PY) $(SCRIPTS)/gcx.py config
+
+## gcx-check: read STACK's rule groups with its read token, the check after rotating GRAFANA_<STACK>_READ_TOKEN; exits 1 when gcx is refused, 3 when the token is unset — STACK=<solo7dev|solo7> (AW-INF-076)
+gcx-check:
+	@$(PY) $(SCRIPTS)/gcx.py check "$(STACK)"
 
 ## gcx-only-check: fail if a script, the Makefile or a workflow calls a Grafana query or alerting API other than through gcx (AW-INF-075)
 gcx-only-check:
