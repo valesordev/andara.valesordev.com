@@ -190,8 +190,8 @@ contract pins and asserts it. The ingress never queries a broker config for this
   SASL is on (ADR-0011) every connection authenticates and a degrade-and-rebuild re-authenticates. That is up to
   64 clients per server, times the servers, times two environments on the shared brokers of ADR-0013 (which names
   connection exhaustion as not prevented): about 128 connections per server per environment, which byte-rate
-  `KafkaUser` quotas do not bind. **No Kafka connection budget exists today**; SRE records the broker's limit and this
-  figure in the broker contract's capacity section (a request on `AW-INF-038`), and the figure is accepted subject to it. The buffer bound stays producer-wide.
+  `KafkaUser` quotas do not bind. The connection budget, and its one backstop (`max.connections: 1000` per broker),
+  are in `broker-contract.md`, Capacity (2026-10-21, `AW-INF-038`); the figure is accepted subject to it. The buffer bound stays producer-wide.
   (Ratified 2026-10-10, `AW-SRV-052`.)
 - **The produce error is read from the wire by a read-only tap**, because franz-go v1.20 has no hook that sees a
   produce response. The tap wraps **all of the client's connections** through `kgo.Dialer` (metadata, `ApiVersions` and

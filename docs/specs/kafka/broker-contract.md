@@ -1,10 +1,12 @@
 # Kafka broker contract
 
 > **Status: decided 2026-10-08, `AW-INF-005`; amended 2026-10-21 for `ADR-0013`'s shared broker (`AW-INF-038`).**
-> Enforced by `make broker-assert` (`AW-INF-038`). Topics, replication factor, `min.insync.replicas` and
-> `unclean.leader.election.enable` are declared in `deploy/kafka/topics.yaml`. The broker settings
-> (`auto.create.topics.enable=false` among them) are declared in `deploy/k8s/kafka/kafka.yaml`. This document says
-> what each setting is *for*, so that nobody relaxes one without knowing which claim it carries.
+> Enforced by `make broker-assert` once `AW-INF-038` lands. Topics, replication factor, `min.insync.replicas` and
+> `unclean.leader.election.enable` are declared in `deploy/kafka/topics.yaml`. The broker settings are declared
+> in `deploy/k8s/kafka/kafka.yaml`, except `replica.lag.time.max.ms`, which rests on Kafka's default (30000), and
+> `max.connections`, which AW-INF-038 adds. This document says what each setting is *for*, so that nobody relaxes
+> one without knowing which claim it carries. The shared broker below is the target of AW-INF-055, which is not
+> built yet.
 
 ADR-0002 makes Kafka the ordering authority for the World, so Kafka availability bounds World
 availability and Kafka durability bounds what we can promise a player about an acknowledged Command.
@@ -25,9 +27,10 @@ therefore cluster-wide, and an environment owns only its topics.
 | topics | `local.<name>`, RF 1, `min.insync.replicas` 1, bounded retention (below) | `dev.<name>`, RF 3, `min.insync.replicas` 2 | `<name>` (unprefixed), RF 3, `min.insync.replicas` 2 |
 
 `local` is not a rehearsal of `dev`'s durability: its topics have no replication. It shares `dev`'s brokers,
-disk and failure domain, and the bounds below limit what it can do to them (`ADR-0013` decision 4). Until
-2026-10-21, `local` was a compose Redpanda with no `unclean.leader.election.enable` and no
-`replica.lag.time.max.ms`, and the check skipped both. On the shared broker, both apply to every environment.
+disk and failure domain, and the bounds below limit what it can do to them (`ADR-0013` decision 4). From
+AW-INF-055 on, both `unclean.leader.election.enable` and `replica.lag.time.max.ms` apply to every environment.
+Until AW-INF-067 retires compose, its Redpanda (`BROKER=compose`) still serves `local` (`ADR-0013` amendment 23),
+outside this contract. It is not asserted, and its auto-create stays on (`--mode=dev-container`).
 
 ## Settings
 
@@ -35,20 +38,23 @@ disk and failure domain, and the bounds below limit what it can do to them (`ADR
 |---|---|---|
 | `default.replication.factor` | broker: 3; `local.` topics declare 1 | RPO. A topic declared in `topics.yaml` states its own; the default catches a topic created outside it. |
 | `min.insync.replicas` | broker default 2; `local.` topics declare 1; `dev.` and prod topics 2 | RPO. `acks=all` waits for the ISR, and an ISR of one makes `acks=all` mean `acks=1`. At 2 of 3, one broker can fail with writes continuing, and two cannot. |
-| `unclean.leader.election.enable` | `false` everywhere it exists | RPO. With it `true`, an out-of-sync replica can lead and silently truncate acknowledged records. This is the setting people miss. |
+| `unclean.leader.election.enable` | `false` | RPO. With it `true`, an out-of-sync replica can lead and silently truncate acknowledged records. This is the setting people miss. |
 | `replica.lag.time.max.ms` | `<= 60000` (Kafka default 30000) | Detection. The time the broker takes to drop a dead follower from the ISR. Metadata shows a full ISR until then while a survivor-led Partition refuses writes, so it bounds how long the ingress's probe is blind (`client-contract.md`, leaving the state). The cap must stay at or below the 90 s floor of `ingress.degraded_hold` (`client-contract.md`, leaving the state): raising it is a contract change to both. |
 | `auto.create.topics.enable` | `false` | Order. A typo in a topic name must fail, not create a topic with default partitions and a default key mapping. |
 | per-topic `partitions` | `topics.yaml` | Order. Permanent for keyed topics: repartitioning changes the key-to-Partition mapping and reorders history. |
 | per-topic `retention.ms`, `cleanup.policy` | `topics.yaml`; see Retention | Replay window. |
-| `local.` topics' `retention.bytes`, `retention.ms` | 64 MiB per partition (67108864), at most 7 days | Isolation. `dev`'s `andara.commands.v1` is infinite on a 20Gi PVC per broker. A `local` soak must not fill the disk `dev`'s RPO depends on (`ADR-0013` decision 4). |
+| `local.` `delete` topics' `retention.bytes`, `retention.ms`, `segment.bytes`, `segment.ms` | `topics.yaml`'s `local` values; today 64 MiB (67108864) and 7 days (`ADR-0013` decision 4, AW-INF-055 measures them), with `segment.bytes` at most a quarter of `retention.bytes` (16 MiB) and `segment.ms` at most 1 day | Isolation. `dev`'s `andara.commands.v1` is infinite on a 20Gi PVC per broker, and a `local` soak must not fill the disk `dev`'s RPO depends on. Retention deletes only closed segments, so with Kafka's default 1 GiB segment a partition would grow to about 1 GiB before 64 MiB bites. With 16 MiB segments, a partition holds at most about 80 MiB. Across `local.`'s 222 partitions on 3 brokers, that is at most about 6 GiB per broker. `local.`'s compacted topics are bounded by their key count, not by these values. `make shared-check`'s 80% threshold is the residual (AW-INF-055). |
 | `max.connections` | at most 1000 per broker | Availability. A backstop against file-descriptor exhaustion taking a shared broker down for both environments, not a budget (see Capacity). |
 | rack awareness | none on the box; required off it | Recorded, not enforced. Three replicas on one box share one disk (see below). |
 
 `make broker-assert ENV=<local|dev>` fails on any deviation in the broker rows (`default.replication.factor`,
 `min.insync.replicas`'s broker default, `unclean.leader.election.enable`, `replica.lag.time.max.ms`,
 `auto.create.topics.enable`, `max.connections`) and on any of the environment's topics that differs from
-`topics.yaml`, or from `local.`'s retention bounds. `ENV` selects the topics, not the brokers. With `ENV=local`,
-it prints a warning for RF 1 and `min.insync.replicas` 1 and exits `0`, because that is the contract for `local`.
+`topics.yaml`, or from `local.`'s retention and segment bounds. `ENV` selects the topics, not the brokers. With
+`ENV=local`, it prints one warning line for RF 1 and `min.insync.replicas` 1 and exits `0`, because that is the
+contract for `local`. Broker settings are read with Kafka's Admin API (`DescribeConfigs` on the broker resource),
+not through `rpk`, which reads Redpanda's admin API and returns nothing for Kafka (`scripts/topics.py`). A broker
+row missing from the response is a deviation, not agreement.
 
 ## Capacity
 
@@ -56,22 +62,31 @@ it prints a warning for RF 1 and `min.insync.replicas` 1 and exits `0`, because 
 budget unenforced. This section states the budget and the one backstop.
 
 - **Partitions:** 222 per environment, 444 on the shared brokers, and 888 replicas (666 for `dev` at RF 3, 222 for
-  `local` at RF 1) on 3 brokers (`ADR-0013` decision 4).
+  `local` at RF 1) on 3 brokers (`ADR-0013` decision 4). Kafka's internal topics (`__consumer_offsets`, 50 at
+  RF 3), the registry's `_schemas` and the integration suite's `it<nonce>.` topics come on top.
 - **Connections, demand:** the server holds about 128 connections per environment (64 per-Partition clients,
   about two each: bootstrap plus the leader, `client-contract.md`). Tickloop, the record log, content and the
   projector add a handful, so the total is about **140 per environment, 280 on the shared brokers**, spread over 3
-  brokers. SASL adds a handshake per connection, not a connection.
+  brokers. SASL adds a handshake per connection, not a connection. The schema registry, the toolbox and the
+  integration suite's `it` listener add a few more, not counted here.
 - **Connections, limit:** `max.connections: 1000` per broker. That is about 3.5× the worst case of all 280 landing
   on one broker. It doesn't divide the budget between environments: a runaway `local` client could still take
   connections `dev` needs. But it stops the runaway at a limit the broker survives, where today the broker's
-  file-descriptor limit would take it down for both. Kafka's `max.connections.per.ip` is not set, because pod IPs
-  on kind are neither stable nor per-environment.
-- **No per-environment connection quota.** KIP-612's `connection_creation_rate` is a quota on an IP entity, not on
-  a user, and Strimzi's `KafkaUser.spec.quotas` (byte rates, request percentage, controller mutation rate) has no
-  connection field (`[verify 038]`). So `local`'s isolation stays its byte-rate quotas (`ADR-0013` decision 4,
-  `AW-INF-056`).
-- **What reports it:** `make shared-check` reports PVC usage today (AW-INF-055). A live connection count per
-  broker, and per principal once SASL is on (AW-INF-056), is the measurement that would justify lowering the limit.
+  file-descriptor limit would take it down for both. It counts every client listener, the `it` listener
+  included. Inter-broker connections are exempt (KIP-402). Kafka's `max.connections.per.ip` is not set, because pod
+  IPs on kind are neither stable nor per-environment.
+- **No per-principal connection cap exists.**
+  - KIP-612's `connection_creation_rate` is a quota on the `ips` entity only. Combining it with a user is an
+    invalid request, and it bounds a rate, not a count.
+  - Strimzi's `KafkaUser.spec.quotas` has byte rates, a request percentage and a controller mutation rate, and no
+    connection field.
+
+  A per-listener cap (`maxConnections` on a Strimzi listener) could divide the budget, at the cost of one listener
+  per environment, each admitted by its own namespace label. It isn't taken now, because 280 against 1000 leaves no
+  pressure to divide. `local`'s isolation stays its byte-rate quotas (`ADR-0013` decision 4, `AW-INF-056`).
+- **What reports it:** `make shared-check` will report PVC usage (AW-INF-055). A live connection count per broker
+  and per listener (`socket-server-metrics` `connection-count`, which `kafka.yaml`'s metrics `allowList` doesn't
+  keep today) is the measurement that would justify lowering the limit.
 
 ## What a green check on the box does not prove
 
