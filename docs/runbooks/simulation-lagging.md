@@ -20,9 +20,16 @@ so lag falls only when ticks finish under their interval again.
 curl -s http://<server>:8080/metrics | grep -E '^andara_(simulation_lag_seconds|tick_overruns_total|ticks_total|tick_deferred_records|tick_input_starved_total) '
 ```
 
-Or the dashboard: `andara-tick-health`, panels *Simulation lag*, *Tick duration p50/p99*,
-*Overruns*, *Consumer lag by partition*, *Deferred records*. Lag rising with overruns is the loop
-being slow; lag rising without overruns is the loop being *stalled* — see the last row below.
+Or the dashboard: `andara-tick-health` (*Andara — tick health and log lag*, folder `Andara` in
+`solo7dev`, for `local` and `dev`; `solo7`'s copy for `prod` arrives with AW-INF-078). Pick the
+*Environment*, then the *Namespace*. `local` has two, and the first listed is CI's `andara-ci`, so
+pick `andara-local` for the kind cluster. During a CI run, `andara-local` also shows CI's lifecycle
+job, which runs on cluster `ci` (ADR-0014 A3). The panels to read are *Simulation lag*, *Tick
+duration — p50 / p99 against the 50 ms Tick Budget*, *Tick overruns and input starvation*,
+*Per-partition consumer lag* and *Deferred records and checkpoint age*. `make dashboard-check
+ENV=<env>` says whether every panel has data for that environment. Lag rising with overruns is
+the loop being slow; lag rising without overruns is the loop being *stalled* — see the last row
+below.
 
 ## Diagnose, in this order
 

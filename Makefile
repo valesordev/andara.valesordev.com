@@ -61,7 +61,7 @@ HAS_GO := $(shell find . -name '*.go' -not -path './.git/*' -not -path './bin/*'
         proto proto-check adr \
         k8s-dry check-targets clean build build-info goldens \
         values-schema values-schema-check helm-test image image-publish image-check cli-release cli-release-check cli-release-publish kind-load helm-install measure-tick stack-smoke stack-play stack-linkdead stack-recover stack-recover-mismatch \
-        platform-up platform-check kube-context-check cluster-up cluster-down cluster-rebuild stream-soak content-grammar-check observe-check observe-unavailable gcx-config gcx-check gcx-only-check scripts-test kafka-install kafka-broker-bounce \
+        platform-up platform-check kube-context-check cluster-up cluster-down cluster-rebuild stream-soak content-grammar-check observe-check dashboard-check observe-unavailable gcx-config gcx-check gcx-only-check scripts-test kafka-install kafka-broker-bounce \
         argocd-install argocd-status argocd-ui argocd-recover argocd-uninstall world-reset content-seed env-destroy env-recover \
         objectstore-install projector-stop projector-start projector-rebuild server-stop server-start core-versions-check \
         builder-reference builder-reference-check guide-check \
@@ -512,7 +512,7 @@ tf-fmt-check:
 tf-validate:
 	@$(PY) $(SCRIPTS)/tf.py validate
 
-## tf-test: terraform test every root against its committed terraform.tfvars, mock provider: policy routes, endpoints (AW-INF-046 AC-6, AC-10, AC-11)
+## tf-test: terraform test every root against its committed terraform.tfvars, mock provider: policy routes, endpoints (AW-INF-046 AC-6, AC-10, AC-11); then a copy with tick-health.json broken each way the module's preconditions refuse (AW-INF-049 AC-2)
 tf-test:
 	@$(PY) $(SCRIPTS)/tf.py test
 
@@ -558,6 +558,10 @@ tf-bootstrap-gcp:
 ## observe-check: ask ENV's Grafana Cloud stack, through gcx, whether andara-<env>'s metrics, logs and traces arrived; KEEP_LIST=1 checks every series the rules and the dashboard name instead (GRAFANA_<STACK>_READ_TOKEN from the environment or .local/box.env; exits 3 without it) — ENV=<local|dev|staging|prod> (AW-INF-075)
 observe-check:
 	@$(PY) $(SCRIPTS)/observe_check.py "$(ENV)" $(if $(filter 1,$(KEEP_LIST)),--keep-list)
+
+## dashboard-check: evaluate every tick-health panel query for environment=ENV, namespace=andara-<env> in ENV's stack through gcx, polled to DEADLINE (default 300 s), and check the environment variable's options; exits 1 naming a panel with no series, 3 without GRAFANA_<STACK>_READ_TOKEN — ENV=<local|dev|staging|prod> (AW-INF-049)
+dashboard-check:
+	@$(PY) $(SCRIPTS)/dashboard_check.py "$(ENV)"
 
 ## gcx-config: write $GCX_CONFIG (default .local/gcx.yaml, or $RUNNER_TEMP/gcx.yaml in CI; mode 0600) with one gcx context per stack whose GRAFANA_<STACK>_READ_TOKEN is set; exits 3 with none (AW-INF-075)
 gcx-config:

@@ -388,17 +388,6 @@ jobs:
           done
           echo "trace $TRACE never became retrievable" >&2; exit 1
 
-      - name: the dashboard is provisioned, not clicked together
-        run: |
-          set -euo pipefail
-          curl -sf "http://localhost:${ANDARA_DASHBOARD_PORT:-3000}/api/dashboards/uid/andara-tick-health" \
-            | python3 -c "
-          import json, sys
-          d = json.load(sys.stdin)['dashboard']
-          assert len(d['panels']) >= 6, d['panels']
-          print(d['title'], '-', len(d['panels']), 'panels')
-          "
-
       # AW-SRV-026 AC-4: an outage past the 60 s delivery timeout loses a Tick Boundary Record.
       # The server exits 5 once, compose's `restart: on-failure` brings it back, it recovers to
       # the last delivered boundary, and a second, full recovery reads the topic back gapless.

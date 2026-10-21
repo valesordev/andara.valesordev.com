@@ -9,14 +9,63 @@
   "version": 1,
   "refresh": "5s",
   "time": { "from": "now-30m", "to": "now" },
-  "templating": { "list": [] },
+  "templating": {
+    "list": [
+      {
+        "name": "ds",
+        "label": "Data source",
+        "type": "datasource",
+        "query": "prometheus",
+        "current": { "text": "grafanacloud-prom", "value": "grafanacloud-prom" },
+        "hide": 0
+      },
+      {
+        "name": "environment",
+        "label": "Environment",
+        "type": "query",
+        "datasource": { "type": "prometheus", "uid": "${ds}" },
+        "definition": "label_values(up{job=\"andara-server\", environment!=\"unknown\"}, environment)",
+        "query": {
+          "qryType": 1,
+          "query": "label_values(up{job=\"andara-server\", environment!=\"unknown\"}, environment)",
+          "refId": "PrometheusVariableQueryEditor-VariableQuery"
+        },
+        "refresh": 1,
+        "sort": 1,
+        "multi": false,
+        "includeAll": false,
+        "current": {},
+        "options": [],
+        "hide": 0
+      },
+      {
+        "name": "namespace",
+        "label": "Namespace",
+        "type": "query",
+        "datasource": { "type": "prometheus", "uid": "${ds}" },
+        "definition": "label_values(up{job=\"andara-server\", environment=\"$environment\"}, namespace)",
+        "query": {
+          "qryType": 1,
+          "query": "label_values(up{job=\"andara-server\", environment=\"$environment\"}, namespace)",
+          "refId": "PrometheusVariableQueryEditor-VariableQuery"
+        },
+        "refresh": 1,
+        "sort": 1,
+        "multi": false,
+        "includeAll": false,
+        "current": {},
+        "options": [],
+        "hide": 0
+      }
+    ]
+  },
   "panels": [
     {
       "id": 1,
       "type": "timeseries",
       "title": "Tick duration — p50 / p99 against the 50 ms Tick Budget",
       "description": "ADR-0008: 100 ms tick interval, 50 ms budget. The SLO is 99.9% of ticks inside the budget over 28 days (docs/specs/slo/tick-health.md).",
-      "datasource": { "type": "prometheus", "uid": "andara-prometheus" },
+      "datasource": { "type": "prometheus", "uid": "${ds}" },
       "gridPos": { "h": 9, "w": 12, "x": 0, "y": 0 },
       "fieldConfig": {
         "defaults": {
@@ -36,12 +85,12 @@
       "targets": [
         {
           "refId": "A",
-          "expr": "histogram_quantile(0.50, sum(rate(andara_tick_duration_seconds_bucket[1m])) by (le))",
+          "expr": "histogram_quantile(0.50, sum(rate(andara_tick_duration_seconds_bucket{environment=\"$environment\", namespace=\"$namespace\"}[1m])) by (le))",
           "legendFormat": "p50"
         },
         {
           "refId": "B",
-          "expr": "histogram_quantile(0.99, sum(rate(andara_tick_duration_seconds_bucket[1m])) by (le))",
+          "expr": "histogram_quantile(0.99, sum(rate(andara_tick_duration_seconds_bucket{environment=\"$environment\", namespace=\"$namespace\"}[1m])) by (le))",
           "legendFormat": "p99"
         },
         {
@@ -56,7 +105,7 @@
       "type": "timeseries",
       "title": "Simulation lag",
       "description": "The player-visible symptom, and the only tick metric with an alert on it (SimulationLagging). Overrun count is a cause and is deliberately not alerted.",
-      "datasource": { "type": "prometheus", "uid": "andara-prometheus" },
+      "datasource": { "type": "prometheus", "uid": "${ds}" },
       "gridPos": { "h": 9, "w": 12, "x": 12, "y": 0 },
       "fieldConfig": {
         "defaults": {
@@ -73,7 +122,7 @@
         "overrides": []
       },
       "targets": [
-        { "refId": "A", "expr": "andara_simulation_lag_seconds", "legendFormat": "lag" }
+        { "refId": "A", "expr": "andara_simulation_lag_seconds{environment=\"$environment\", namespace=\"$namespace\"}", "legendFormat": "lag" }
       ]
     },
     {
@@ -81,23 +130,23 @@
       "type": "timeseries",
       "title": "Tick overruns and input starvation",
       "description": "Ticks that exceeded the budget, and ticks that applied nothing because the log was unavailable. Both are causes; they diagnose the lag panel rather than page on their own.",
-      "datasource": { "type": "prometheus", "uid": "andara-prometheus" },
+      "datasource": { "type": "prometheus", "uid": "${ds}" },
       "gridPos": { "h": 8, "w": 12, "x": 0, "y": 9 },
       "fieldConfig": { "defaults": { "unit": "short" }, "overrides": [] },
       "targets": [
         {
           "refId": "A",
-          "expr": "rate(andara_tick_overruns_total[1m])",
+          "expr": "rate(andara_tick_overruns_total{environment=\"$environment\", namespace=\"$namespace\"}[1m])",
           "legendFormat": "overruns/s"
         },
         {
           "refId": "B",
-          "expr": "rate(andara_tick_input_starved_total[1m])",
+          "expr": "rate(andara_tick_input_starved_total{environment=\"$environment\", namespace=\"$namespace\"}[1m])",
           "legendFormat": "input starved/s"
         },
         {
           "refId": "C",
-          "expr": "rate(andara_ticks_total[1m])",
+          "expr": "rate(andara_ticks_total{environment=\"$environment\", namespace=\"$namespace\"}[1m])",
           "legendFormat": "ticks/s (expect 10)"
         }
       ]
@@ -107,17 +156,12 @@
       "type": "timeseries",
       "title": "Per-partition consumer lag",
       "description": "andara_consumer_lag has a bounded cardinality of 64 — one series per partition of andara.commands.v1, and the partition count is permanent (ADR-0002).",
-      "datasource": { "type": "prometheus", "uid": "andara-prometheus" },
+      "datasource": { "type": "prometheus", "uid": "${ds}" },
       "gridPos": { "h": 8, "w": 12, "x": 12, "y": 9 },
       "fieldConfig": { "defaults": { "unit": "short" }, "overrides": [] },
       "options": { "legend": { "showLegend": false } },
       "targets": [
-        { "refId": "A", "expr": "andara_consumer_lag", "legendFormat": "p{{partition}}" },
-        {
-          "refId": "B",
-          "expr": "sum(redpanda_kafka_consumer_group_lag_sum) by (redpanda_group)",
-          "legendFormat": "broker view: {{redpanda_group}}"
-        }
+        { "refId": "A", "expr": "andara_consumer_lag{environment=\"$environment\", namespace=\"$namespace\"}", "legendFormat": "p{{partition}}" }
       ]
     },
     {
@@ -125,12 +169,12 @@
       "type": "timeseries",
       "title": "Deferred records and checkpoint age",
       "description": "Backlog beyond max_per_tick, and how much re-apply a restart would cost right now.",
-      "datasource": { "type": "prometheus", "uid": "andara-prometheus" },
+      "datasource": { "type": "prometheus", "uid": "${ds}" },
       "gridPos": { "h": 8, "w": 12, "x": 0, "y": 17 },
       "fieldConfig": { "defaults": { "unit": "short" }, "overrides": [] },
       "targets": [
-        { "refId": "A", "expr": "andara_tick_deferred_records", "legendFormat": "deferred records" },
-        { "refId": "B", "expr": "andara_checkpoint_age_ticks", "legendFormat": "checkpoint age (ticks)" }
+        { "refId": "A", "expr": "andara_tick_deferred_records{environment=\"$environment\", namespace=\"$namespace\"}", "legendFormat": "deferred records" },
+        { "refId": "B", "expr": "andara_checkpoint_age_ticks{environment=\"$environment\", namespace=\"$namespace\"}", "legendFormat": "checkpoint age (ticks)" }
       ]
     },
     {
@@ -138,11 +182,11 @@
       "type": "table",
       "title": "Build and content version",
       "description": "ADR-0004 decoupled content from code, so reproducing a bug requires naming both. One series per deployed build.",
-      "datasource": { "type": "prometheus", "uid": "andara-prometheus" },
+      "datasource": { "type": "prometheus", "uid": "${ds}" },
       "gridPos": { "h": 8, "w": 12, "x": 12, "y": 17 },
       "options": { "showHeader": true },
       "targets": [
-        { "refId": "A", "expr": "andara_build_info", "instant": true, "format": "table" }
+        { "refId": "A", "expr": "andara_build_info{environment=\"$environment\", namespace=\"$namespace\"}", "instant": true, "format": "table" }
       ]
     },
     {
@@ -150,7 +194,7 @@
       "type": "timeseries",
       "title": "Cross-Zone handoffs: in transit, retries, stale arrivals",
       "description": "Ships with AW-SRV-028, so it has no data before that server runs. Handoffs in transit above 0 is ordinary traffic; above 0 for minutes with retries/s rising is the broker or the target Zone's Partition (docs/runbooks/simulation-lagging.md, Diagnose step 7). Stale arrivals are retries, or older arrivals, that the target consumed and acknowledged without placing anything; a rise alongside the retries means they are not settling.",
-      "datasource": { "type": "prometheus", "uid": "andara-prometheus" },
+      "datasource": { "type": "prometheus", "uid": "${ds}" },
       "gridPos": { "h": 8, "w": 12, "x": 0, "y": 25 },
       "fieldConfig": {
         "defaults": { "unit": "short" },
@@ -166,9 +210,9 @@
         ]
       },
       "targets": [
-        { "refId": "A", "expr": "andara_handoffs_in_transit", "legendFormat": "in transit" },
-        { "refId": "B", "expr": "rate(andara_handoff_retries_total[5m])", "legendFormat": "retries/s" },
-        { "refId": "C", "expr": "rate(andara_handoff_stale_arrivals_total[5m])", "legendFormat": "stale arrivals/s" }
+        { "refId": "A", "expr": "andara_handoffs_in_transit{environment=\"$environment\", namespace=\"$namespace\"}", "legendFormat": "in transit" },
+        { "refId": "B", "expr": "rate(andara_handoff_retries_total{environment=\"$environment\", namespace=\"$namespace\"}[5m])", "legendFormat": "retries/s" },
+        { "refId": "C", "expr": "rate(andara_handoff_stale_arrivals_total{environment=\"$environment\", namespace=\"$namespace\"}[5m])", "legendFormat": "stale arrivals/s" }
       ]
     },
     {
@@ -176,7 +220,7 @@
       "type": "timeseries",
       "title": "Handoff marks (Placed), against the runbook thresholds",
       "description": "Ships with AW-SRV-028. One mark per Entity that has arrived in a Zone by handoff, summed over Zones; nothing prunes them, so this only rises while the World runs. The lines are the runbook's two thresholds, both unmeasured: 25,000 is where to start measuring and plan pruning, 100,000 is pruning before the next release (docs/runbooks/simulation-lagging.md, The handoff marks).",
-      "datasource": { "type": "prometheus", "uid": "andara-prometheus" },
+      "datasource": { "type": "prometheus", "uid": "${ds}" },
       "gridPos": { "h": 8, "w": 12, "x": 12, "y": 25 },
       "fieldConfig": {
         "defaults": {
@@ -195,7 +239,7 @@
       },
       "options": { "legend": { "showLegend": false } },
       "targets": [
-        { "refId": "A", "expr": "andara_handoff_placed_entries", "legendFormat": "marks" }
+        { "refId": "A", "expr": "andara_handoff_placed_entries{environment=\"$environment\", namespace=\"$namespace\"}", "legendFormat": "marks" }
       ]
     }
   ]

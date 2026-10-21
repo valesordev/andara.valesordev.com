@@ -35,7 +35,10 @@ in a throwaway root (deploy/terraform/grafana/test-alert, local state under
 test-alert-clean destroys it.
 
 fmt-check, validate and test need no credential and no backend: they run in a data directory
-of their own (.terraform/check) with `-backend=false`, against the committed lock file.
+of their own (.terraform/check) with `-backend=false`, against the committed lock file. test also
+copies the tree to a temporary directory and breaks deploy/grafana/dashboards/tick-health.json one
+way at a time (DASHBOARD_BREAKS); solo7dev's tests must fail on each, naming the module's
+precondition (AW-INF-049 AC-2).
 
 Exit codes: 0 ok; 1 a Terraform, API, lock or assertion failure; 2 usage; 3 a credential unset.
 """
@@ -397,6 +400,138 @@ def cmd_test(env):
         say("test %s" % root)
         rc, out = run(["test"], root_dir(root), tenv)
         checked("test " + root, rc, out)
+    return dashboard_breaks(env)
+
+
+# AC-2's other half (AW-INF-049): the module's preconditions refuse a broken tick-health.json. Each entry
+# breaks the committed source one way, and solo7dev's tests must then fail with the precondition's message.
+DASHBOARD = os.path.join(REPO, "deploy", "grafana", "dashboards", "tick-health.json")
+FILTER = ('environment="$environment"', 'namespace="$namespace"')
+
+
+def _drop_variable(name):
+    def f(d):
+        d["templating"]["list"] = [v for v in d["templating"]["list"] if v["name"] != name]
+    return f
+
+
+def _first_target(d):
+    return next(t for p in d["panels"] for t in p.get("targets", []) if "{" in t["expr"])
+
+
+def _fixed_ds(d):
+    d["panels"][0]["datasource"]["uid"] = "grafanacloud-prom"
+
+
+def _unfilter(matcher):
+    def f(d):
+        t = _first_target(d)
+        t["expr"] = re.sub(r",?\s*" + re.escape(matcher) + r",?\s*", "", t["expr"])
+    return f
+
+
+def _bare_metric(d):
+    t = _first_target(d)
+    t["expr"] = re.sub(r"\{[^}]*\}", "", t["expr"])
+
+
+def _suffix_label(d):
+    t = _first_target(d)
+    t["expr"] = t["expr"].replace(FILTER[0], "kube_" + FILTER[0])
+
+
+def _bare_up(d):
+    d["panels"][-1]["targets"][0]["expr"] = "up"
+
+
+DASHBOARD_BREAKS = (
+    ("no ds variable", _drop_variable("ds"), "lacks the variable(s) ds"),
+    ("no environment variable", _drop_variable("environment"), "lacks the variable(s) environment"),
+    ("no namespace variable", _drop_variable("namespace"), "lacks the variable(s) namespace"),
+    ("a panel with a fixed datasource", _fixed_ds, "must use the datasource"),
+    ("a query without environment", _unfilter(FILTER[0]), "read a series without"),
+    ("a query without namespace", _unfilter(FILTER[1]), "read a series without"),
+    ("a query with a bare metric name", _bare_metric, "read a series without"),
+    ("a label that only ends in environment", _suffix_label, "read a series without"),
+    ("a bare metric name without an underscore", _bare_up, "read a series without"),
+    ("a matcher hidden in a single-quoted value", lambda d: _set_first(
+        d, "andara_ticks_total{namespace=\"$namespace\", job=',%s,'}" % FILTER[0]), "read a series without"),
+    # A quote of one kind inside a string of another must not pair with the next string (pre-PR review).
+    ("a matcher hidden after a quote inside a double-quoted value", lambda d: _set_first(
+        d, "andara_ticks_total{a!=\"'\", b!=',%s,%s,'}" % FILTER), "read a series without"),
+    ("a bare metric between double quotes inside single-quoted strings", lambda d: _set_first(
+        d, "label_replace(vector(1),'a','\"','b','') or andara_ticks_total or label_replace(vector(1),'a','\"','b','')"),
+     "read a series without"),
+    ("a row panel", lambda d: d["panels"].append({"type": "row", "title": "r", "panels": []}), "row panel(s)"),
+)
+
+SELECTOR = "{%s, %s}" % FILTER
+
+
+def _set_first(d, expr):
+    _first_target(d)["expr"] = expr
+
+
+# Valid PromQL the preconditions must still accept (pre-PR review: each was once refused).
+DASHBOARD_ACCEPTS = (
+    ("an offset", lambda d: _set_first(d, "andara_ticks_total%s offset 5m" % SELECTOR)),
+    ("a number in scientific notation", lambda d: _set_first(d, "andara_simulation_lag_seconds%s * 1e3" % SELECTOR)),
+    ("an upper-case grouping clause", lambda d: _set_first(
+        d, "sum(rate(andara_ticks_total%s[1m])) BY (zone_id)" % SELECTOR)),
+    ("single-quoted function arguments", lambda d: _set_first(
+        d, "label_replace(andara_build_info%s, 'v', '$1', 'version', '(.*)')" % SELECTOR)),
+    ("atan2", lambda d: _set_first(d, "andara_ticks_total%s atan2 andara_tick_overruns_total%s" % (SELECTOR, SELECTOR))),
+    ("an upper-case keyword", lambda d: _set_first(
+        d, "andara_ticks_total%s AND andara_tick_overruns_total%s" % (SELECTOR, SELECTOR))),
+)
+
+
+def dashboard_breaks(env, breaks=DASHBOARD_BREAKS, accepts=DASHBOARD_ACCEPTS):
+    """Run solo7dev's tests against a copy of the tree with each break applied; each must fail as named.
+    Then each accept: valid PromQL the tests must pass."""
+    with open(DASHBOARD) as f:
+        source = f.read()
+    with tempfile.TemporaryDirectory(prefix="tf-dashboard-") as tmp:
+        tf_copy = os.path.join(tmp, os.path.relpath(TF_DIR, REPO))
+        shutil.copytree(TF_DIR, tf_copy, ignore=shutil.ignore_patterns(".terraform"))
+        # Every other file a root may read (tf_policy's allow-list): the rules, once AW-INF-047 reads them.
+        alerts = os.path.join(REPO, "deploy", "helm", "andara", "files", "alerts.yaml")
+        os.makedirs(os.path.join(tmp, os.path.dirname(os.path.relpath(alerts, REPO))))
+        shutil.copy(alerts, os.path.join(tmp, os.path.relpath(alerts, REPO)))
+        dash = os.path.join(tmp, os.path.relpath(DASHBOARD, REPO))
+        os.makedirs(os.path.dirname(dash))
+        root = os.path.join(tf_copy, "stacks", "solo7dev")
+        tenv = child_env(env, data_dir=os.path.join(tmp, ".terraform"))
+        with open(dash, "w") as f:
+            f.write(source)
+        say("init a copy of solo7dev for the dashboard checks (no backend)")
+        rc, out = run(["init", "-input=false", "-backend=false", "-lockfile=readonly"], root, tenv, capture=True)
+        if rc:
+            sys.stdout.write(out)
+        checked("init the dashboard copy", rc, out)
+        for what, breaker, message in breaks:
+            d = json.loads(source)
+            breaker(d)
+            with open(dash, "w") as f:
+                json.dump(d, f)
+            rc, out = run(["test"], root, tenv, capture=True)
+            # Terraform wraps a long message across lines, each behind the diagnostic's box drawing.
+            plain = " ".join(re.sub(r"[│╷╵]", " ", ANSI.sub("", out)).split())
+            if rc == 0 or message not in plain:
+                sys.stdout.write(out)
+                raise Exit(1, "tick-health.json with %s: tf-test %s, want a failure naming %r (AW-INF-049 AC-2)"
+                              % (what, "passed" if rc == 0 else "failed for another reason", message))
+            say("dashboard: %s is refused" % what)
+        for what, accept in accepts:
+            d = json.loads(source)
+            accept(d)
+            with open(dash, "w") as f:
+                json.dump(d, f)
+            rc, out = run(["test"], root, tenv, capture=True)
+            if rc:
+                sys.stdout.write(out)
+                raise Exit(1, "tick-health.json with %s: tf-test failed, want a pass (AW-INF-049 AC-2)" % what)
+            say("dashboard: %s is accepted" % what)
     return 0
 
 

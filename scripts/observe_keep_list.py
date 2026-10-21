@@ -48,8 +48,8 @@ import gcx  # noqa: E402
 
 REPO = os.path.dirname(HERE)
 ALERTS = os.path.join(REPO, "deploy", "helm", "andara", "files", "alerts.yaml")
-# AW-INF-049 moves the dashboard to deploy/grafana/dashboards/ and changes this one constant.
-DASHBOARD = os.path.join(REPO, "deploy", "compose", "grafana", "dashboards", "tick-health.json")
+# The source Terraform deploys to both stacks (ADR-0012 decision 11, AW-INF-049).
+DASHBOARD = os.path.join(REPO, "deploy", "grafana", "dashboards", "tick-health.json")
 # AW-INF-051's Fleet `keep` pipeline: the allow-list the fault-only names must appear in.
 KEEP_PIPELINE = os.path.join(REPO, "deploy", "terraform", "grafana", "pipelines", "keep.alloy")
 
@@ -57,9 +57,9 @@ FAULT_ONLY = ("kube_pod_container_status_last_terminated_exitcode", "andara_reco
 PLATFORM_SERIES = ("certmanager_", "traefik_")
 # ADR-0012 decision 9: the only environment values, and unknown, which only the stamp pipeline sets.
 ENVIRONMENTS = ("local", "dev", "staging", "prod", "unknown")
-# Broker series the compose dashboard reads. AW-INF-051's `keep` allow-list drops them by design (drills
-# read them from the broker), and AW-INF-049's rewrite of the dashboard removes them. Reported, not
-# queried; a rule may never name one (a unit test).
+# Broker series the compose dashboard read. The keep-list drops them by design (drills read them from
+# the broker), and AW-INF-049's rewrite of the dashboard removed them. Reported, not queried; a rule
+# may never name one, and since AW-INF-049 neither may the dashboard (unit tests).
 NOT_SHIPPED = ("redpanda_",)
 SINCE = "10m"
 

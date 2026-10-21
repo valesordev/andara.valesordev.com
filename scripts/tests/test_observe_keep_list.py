@@ -243,8 +243,12 @@ class KeepList(unittest.TestCase):
         self.assertIn("unknown guard skipped", out.getvalue())
 
     def test_not_shipped_is_reported_not_queried(self):
+        # The dashboard no longer reads one (AW-INF-049), so the name is added here.
         store = Store(healthy())
-        code, out = run(store)
+        out = io.StringIO()
+        with contextlib.redirect_stdout(out):
+            kl.run("dev", "solo7dev", q=store, names=kl.source_names() | {"redpanda_kafka_consumer_group_lag_sum"})
+        out = out.getvalue()
         self.assertIn("not-shipped    redpanda_kafka_consumer_group_lag_sum", out)
         self.assertFalse([s for _, s in store.selectors if "redpanda_" in s])
 

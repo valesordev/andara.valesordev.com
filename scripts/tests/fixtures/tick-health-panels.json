@@ -1,0 +1,59 @@
+{
+  "_comment": "AW-INF-049 AC-5: each panel's title and the metric names it plots, recorded from deploy/compose/grafana/dashboards/tick-health.json at 3817b16, before the move. scripts/tests/test_dashboard.py compares the source against it.",
+  "panels": [
+    {
+      "title": "Tick duration — p50 / p99 against the 50 ms Tick Budget",
+      "metrics": [
+        "andara_tick_duration_seconds_bucket"
+      ]
+    },
+    {
+      "title": "Simulation lag",
+      "metrics": [
+        "andara_simulation_lag_seconds"
+      ]
+    },
+    {
+      "title": "Tick overruns and input starvation",
+      "metrics": [
+        "andara_tick_input_starved_total",
+        "andara_tick_overruns_total",
+        "andara_ticks_total"
+      ]
+    },
+    {
+      "title": "Per-partition consumer lag",
+      "metrics": [
+        "andara_consumer_lag",
+        "redpanda_kafka_consumer_group_lag_sum"
+      ]
+    },
+    {
+      "title": "Deferred records and checkpoint age",
+      "metrics": [
+        "andara_checkpoint_age_ticks",
+        "andara_tick_deferred_records"
+      ]
+    },
+    {
+      "title": "Build and content version",
+      "metrics": [
+        "andara_build_info"
+      ]
+    },
+    {
+      "title": "Cross-Zone handoffs: in transit, retries, stale arrivals",
+      "metrics": [
+        "andara_handoff_retries_total",
+        "andara_handoff_stale_arrivals_total",
+        "andara_handoffs_in_transit"
+      ]
+    },
+    {
+      "title": "Handoff marks (Placed), against the runbook thresholds",
+      "metrics": [
+        "andara_handoff_placed_entries"
+      ]
+    }
+  ]
+}

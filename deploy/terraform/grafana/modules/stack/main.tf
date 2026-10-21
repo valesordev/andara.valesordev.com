@@ -1,6 +1,6 @@
 # One stack's contact points and notification policy tree (ADR-0012 decision 10).
-# Rules (AW-INF-047), the dashboard (AW-INF-049) and Fleet pipelines (AW-INF-051) join
-# this module in their own stories.
+# The folder and dashboard are in dashboard.tf (AW-INF-049). Rules (AW-INF-047) and Fleet
+# pipelines (AW-INF-051) join this module in their own stories.
 
 locals {
   # solo7dev posts to #andaras-world-dev, solo7 to #andaras-world.
