@@ -117,7 +117,7 @@ inside `andara-shared`, belong to Fleet.
 | pod logs, every namespace listed below | chart | `podLogsViaLoki`, `namespaces`: `[andara-local, andara-dev, andara-shared]` on the box, `[andara-local, andara-ci]` in CI | logs of a pod are Kubernetes-level data, including a broker's. **The server's logs are owned here, from stderr**, because stderr also holds what is written before the OTLP exporter starts (a boot failure). |
 | the server's OTLP log records (`AW-SRV-024`) | dropped at the `receiver` | `applicationObservability.logs` with a filter that drops every record | The server sends logs and traces to one `otlp_endpoint`, and nothing switches only the logs off. Shipping both would double the server's log volume with duplicates. The receiver accepts the records, so the exporter reports no failure, and drops them. A server switch for the log export is an implementation story PM may write. Nothing waits on it. |
 | cert-manager | chart | `integrations.cert-manager` | the chart has the integration |
-| Traefik | chart | `annotationAutodiscovery` on Traefik's pod annotations | platform edge, standard scrape; `[verify 065]` that the pinned Traefik chart annotates its pods, else an `extraConfig` scrape on the same collector |
+| Traefik | chart | `annotationAutodiscovery` on Traefik's pod annotations | platform edge, standard scrape; `[verify 065]` that the pinned Traefik chart annotates its pods, else an `extraConfig` scrape on the same collector. *Amended 2026-10-21 (A2):* its pods carry `k8s.grafana.com/job: traefik`, so `job="traefik"`. |
 | Kafka brokers (`andara-log`, the Strimzi Metrics Reporter on `:9404`) | **Fleet** | `shared-kafka` | Brian's direction: outside the chart's standard scope, changed without a chart upgrade |
 | Postgres | **Fleet** | `shared-postgres` (later) | Brian's direction ("database observability"), even though the chart has a `postgresql` integration. Nothing is deployed until `AW-SRV-018` has a binary (`ADR-0013` decision 3); the story that deploys Postgres writes the pipeline. |
 | Schema registry (Karapace), versitygw, Redis | **Fleet**, when shipped | none yet | nothing reads their series today (`ADR-0012` decision 13: unread series are not shipped), and Redis has no binary. The first rule or dashboard panel that reads one adds its pipeline in its own story. |
@@ -218,7 +218,7 @@ applied by `make platform-up`. They don't appear in Grafana Cloud's Fleet pages,
 |---|---|
 | `andara-local`, `andara-ci` | `local` |
 | `andara-dev` | `dev` |
-| `andara-shared` (Kafka through Fleet; the brokers' pod logs and kube-state-metrics rows through the chart) | `unknown`. A shared service serves both environments, so a label can't name one. `ADR-0013` amendment 15 stands: the first alert on a shared service reopens decision 9, and a rule derives the environment from the topic prefix, the consumer group or the bucket. `observe-check KEEP_LIST=1` still excludes `namespace="andara-shared"` from the guard. |
+| `andara-shared` (Kafka through Fleet; the brokers' pod logs through the chart. *Amended 2026-10-21 (A1):* its kube-state-metrics rows aren't kept) | `unknown`. A shared service serves both environments, so a label can't name one. `ADR-0013` amendment 15 stands: the first alert on a shared service reopens decision 9, and a rule derives the environment from the topic prefix, the consumer group or the bucket. `observe-check KEEP_LIST=1` still excludes `namespace="andara-shared"` from the guard. |
 | any other namespace (`kube-system`, `observability`, `cert-manager`, Traefik's) | `unknown`; `certmanager_*` and `traefik_*` remain `PLATFORM_SERIES`, whose environment the rules derive (`ADR-0012` decision 1) |
 
 - **`cluster`:** the destinations' `clusterLabels: [cluster]` with `cluster.name: andara`. The chart's default also
@@ -232,6 +232,7 @@ applied by `make platform-up`. They don't appear in Grafana Cloud's Fleet pages,
 - **Chart:** `deploy/platform/collectors/keep-list.yaml` is the allow-list, as metric names, each with the rule,
   dashboard panel or drill that reads it. It is rendered into a final `keep` rule on `solo7dev-metrics`, after the
   stamp. Because the receiver delivers there too, the rule applies to forwarded Fleet series as well.
+  *Amended 2026-10-21 (A1):* a `kube_` name is kept only from the namespaces `environments.yaml` maps.
   - Each feature's own `metricsTuning.useDefaultAllowList` is **`false`**, so the destination is the **one** filter.
     With the defaults on, kube-state-metrics' list silently drops two keep-list series, which is how `AW-INF-009`'s
     keep-list check failed on 4.5.0.
@@ -284,7 +285,7 @@ it bounds the scrape, not the shipment.
 **Against the limit:** the Grafana Cloud free tier allows **10,000 active metric series** per stack (`[verify 065]`
 against `solo7dev`'s usage page, the record moves from `AW-INF-051` to `AW-INF-065`, its one owner). The shared
 services add at most 80. The chart side is the same set decision 15 planned, so the split moves no series.
-`AW-INF-065` records the total per `environment` beside the limit, the record that `ADR-0012`'s revisit trigger
+`AW-INF-065` records the total per `environment` beside the limit (the box's alone: CI ships nothing, amendment A3), the record that `ADR-0012`'s revisit trigger
 ("`solo7dev` exceeds the free tier's active-series limit twice in a month") measures. Logs: shipping the brokers' pod logs is new volume against the free tier's log allowance, and
 `AW-INF-065` records the first week's ingest.
 
@@ -292,8 +293,9 @@ services add at most 80. The chart side is the same set decision 15 planned, so 
 
 - **What runs:**
   - CI's kind job installs the same chart at the same pin with `values.yaml` and `values-ci.yaml` (`make platform-up
-    PROFILE=ci`), when the job holds `solo7dev`'s telemetry token.
-  - Without the token (a fork), it installs anyway with the `grafana-telemetry` Secret empty, so the collectors
+    PROFILE=ci`). *Amended 2026-10-21 (A3):* CI never holds `solo7dev`'s telemetry token, so this is always the
+    run below. The original read "when the job holds `solo7dev`'s telemetry token".
+  - Without the token, it installs anyway with the `grafana-telemetry` Secret empty, so the collectors
     ship nothing. Only the Grafana Cloud assertions are skipped, with a notice (`ADR-0012` decision 14, `ADR-0013`'s
     Agreement). That run is where `[verify 065]` item 6 is observed.
   - There is no `fleet` collector and no Fleet registration (decision 15's reason stands: ephemeral collectors would
@@ -311,8 +313,8 @@ services add at most 80. The chart side is the same set decision 15 planned, so 
 - **What remains Terraform's** (per stack root, `solo7dev` now and `solo7` in `AW-INF-078`):
   - the Fleet pipelines (`shared-kafka`, later `shared-postgres` and any service pipeline);
   - the Fleet provider, its tokens and `tf.py`'s composition of them, from `AW-INF-051` scope items 1 and 2;
-  - decision 15's `tf_policy.py` rules for pipeline sources, minus the `replace()`/`__PLACEHOLDER__` allowance,
-    which no source uses now;
+  - decision 15's `tf_policy.py` rules for pipeline sources. *Corrected 2026-10-21 (A4):* the original said
+    "minus the `replace()`/`__PLACEHOLDER__` allowance". `tf_policy.py` never had one, and it gains none;
   - everything else in `ADR-0012` (rules, contact points, policy trees, dashboards, IRM).
 - **Not Terraform's:** the chart, its values, the stamp, the guard, the chart's keep-list, the collectors and the
   telemetry Secret. Those belong to `make platform-up`.
@@ -436,8 +438,8 @@ deployed (§1).
 - **Upgrading the chart is a platform change with a wide reach.** 4.x renamed collectors once already
   (`UPGRADING.md`: named instances became a map). The pin and the offline render tests (§7) catch a values break
   at `make check`, not at the rebuild.
-- **The `__PLACEHOLDER__` and `replace()` machinery decision 15 designed is not built.** `tf_policy.py`'s allowance
-  for it is removed, not left dormant.
+- **The `__PLACEHOLDER__` and `replace()` machinery decision 15 designed is not built.** `tf_policy.py` never
+  had an allowance for it and gains none (corrected 2026-10-21, A4).
 - **Foreclosed:** a Fleet pipeline that exports to Grafana Cloud directly, unless the fallback in `[verify 065]` item 1
   is taken by amendment; and per-feature `metricsTuning` as a second filter.
 
@@ -452,3 +454,53 @@ deployed (§1).
   exceed the free tier's log allowance in a month: cut the shared services' logs to `warn` and above first.
 - The first alert on a shared-service series: reopen `ADR-0012` decision 9 for its environment value (`ADR-0013`
   amendment 15).
+- A CI job needs a Grafana Cloud assertion (A3): it ships under an environment of its own, by an amendment to
+  `ADR-0012` decision 9, which the rules and the guard exclude. Or it gets a stack of its own.
+
+## Amendments
+
+**2026-10-21, SRE's observability review (`AW-INF-079`).** SRE reviewed the ADR as merged in #600, and three of
+its findings are decided here. A4 corrects a false statement.
+
+- **A1. `kube_*` series are kept only from the environments' namespaces.** Without this, §5's keep rule filters by
+  name alone. So `kube_pod_container_status_restarts_total`, `…_ready`, `…_last_terminated_exitcode` and
+  `kube_deployment_spec_replicas` would ship for every pod in `kube-system`, `observability`, `cert-manager`,
+  `traefik`, `argocd`, `strimzi` and `andara-shared`. Every rule that reads them selects an Andara workload
+  (`container="server", pod=~"andara-[0-9]+"`, or `deployment="andara-projector-state"`), and decision 13 says
+  unread series aren't shipped.
+  - **The rule:** the `keep` rule on `solo7dev-metrics` keeps a name with the prefix `kube_` only where
+    `namespace` is a key of `environments.yaml` (today `andara-local`, `andara-ci`, `andara-dev`, `andara-staging`,
+    `andara-prod`). The regex is rendered from that file, so the table still lives in one place.
+  - **The test:** §7's render test asserts the regex equals `environments.yaml`'s keys.
+  - **Effect:** `andara-shared`'s brokers get no `kube_*` rows. Their pod logs are still shipped. The first rule on
+    a broker pod's state widens the prefix rule in its own change.
+- **A2. Traefik's `job` is `traefik`.** Traefik's pods carry no `k8s.grafana.com/job`, so autodiscovery would give
+  them the chart's default job. §5's `owner` test and `KEEP_LIST=1` key some checks by job. The platform's Traefik
+  values set the pod annotation `k8s.grafana.com/job: traefik` (`AW-INF-065`). `IngressErrorRateHigh` doesn't select
+  on `job`, so no rule changes.
+- **A3. CI ships nothing to `solo7dev`.** §7 shipped CI's series whenever the job held the token. Those series would
+  carry `environment="local"` and `namespace="andara-local"` (or `andara-ci`, also `local`), the same labels as the
+  box's `andara-local`, differing only in `cluster`. The rules aggregate `by (environment, namespace)`, so:
+  - **a CI run would join the box's `local` alerts**, and a CI server stopping would read as the box's `local`
+    server stopping;
+  - **it would satisfy `AndaraServerUnavailable`'s guard** (§9) during any CI run, so a dead box `metrics`
+    collector would page "server unavailable" for `andara-dev`, the misattribution §9 removes for Fleet;
+  - **each run's new `pod` and `instance` values would churn** into the active-series record, about 100 series a
+    run.
+
+  Excluding `cluster="ci"` in the guard fixes only the second. So **CI's kind jobs never hold
+  `GRAFANA_SOLO7DEV_TELEMETRY_TOKEN`**, and every CI run is the empty-Secret run: the chart is installed and
+  `[verify 065]` item 6 is observed, but nothing ships. No workflow asserts on Grafana Cloud today. `AW-INF-061`'s
+  trace round-trip ("a `gcx` read on `solo7dev` where secrets exist") is dropped from CI, and the box's
+  `make observe-check` is that check. The parity tests of §7 are unchanged, and AW-INF-065's active-series record
+  counts the box alone. Revisit-when gains the case of a CI job that needs a Grafana Cloud assertion.
+- **A4. Correction to §8 and the Consequences.** They said `tf_policy.py`'s `replace()`/`__PLACEHOLDER__` allowance
+  is removed. `scripts/tf_policy.py` has no such allowance (its only `replace` is a path separator), so nothing is
+  removed. It gains none.
+
+**Not decided here:** SRE's note 4. The `receiver` is a single point, and no rule watches it (Consequences). The
+telemetry-freshness rule is the fix. It belongs with `AW-INF-047`'s rule set and needs its own SLO line, and SRE
+raises it with PM.
+
+**Ripple:** `AW-INF-065` (A1's rule and test; A2's annotation; A3's reason for the CI line it already has) and
+`AW-INF-061` (A3: the trace round-trip). `AW-INF-047`'s guard is unchanged.
