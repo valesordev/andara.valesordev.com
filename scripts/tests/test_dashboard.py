@@ -126,6 +126,8 @@ class FakeGcx:
 
     def metrics_labels(self, ctx, label, match=None):
         self.label_calls.append((ctx, label, match))
+        if self.options and isinstance(self.options[0], (list, tuple)):
+            return list(self.options.pop(0) if len(self.options) > 1 else self.options[0])
         return list(self.options)
 
 
@@ -174,10 +176,18 @@ class DashboardCheck(unittest.TestCase):
             self.assertIn('environment="dev", namespace="andara-dev"', expr)
             self.assertNotIn("$", expr)
 
-    def test_local_reads_the_kind_clusters_namespace(self):
+    def test_local_reads_the_kind_clusters_namespace_on_the_box_cluster(self):
+        """ADR-0014 A3: CI's lifecycle job ships andara-local too, on cluster ci; a box check adds cluster="andara"."""
         fake = FakeGcx()
         run_main(fake, argv=("local",))
-        self.assertTrue(all('namespace="andara-local"' in e for _, e in fake.queries))
+        self.assertTrue(fake.queries)
+        for _, e in fake.queries:
+            self.assertIn('namespace="andara-local", cluster="andara"', e)
+
+    def test_dev_does_not_select_on_cluster(self):
+        fake = FakeGcx()
+        run_main(fake)
+        self.assertFalse([e for _, e in fake.queries if "cluster=" in e])
 
     def test_every_series_reading_target_is_queried_and_vector_is_not(self):
         fake = FakeGcx()
@@ -226,6 +236,12 @@ class DashboardCheck(unittest.TestCase):
         code, out = run_main(FakeGcx(options=("dev", "local", "prod")))
         self.assertEqual(code, 1)
         self.assertIn("FAIL options: solo7dev carries prod", out)
+
+    def test_options_are_polled_until_env_appears(self):
+        fake = FakeGcx(options=[("local",), ("local",), ("dev", "local")])
+        code, out = run_main(fake)
+        self.assertEqual(code, 0, out)
+        self.assertEqual(len(fake.label_calls), 3)
 
     def test_env_missing_from_the_options_fails(self):
         code, out = run_main(FakeGcx(options=("local",)))

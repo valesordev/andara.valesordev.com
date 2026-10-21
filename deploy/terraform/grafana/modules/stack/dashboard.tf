@@ -12,19 +12,37 @@ locals {
   # Every panel reads through the ds variable, never a fixed data source.
   dashboard_fixed_ds = [for p in local.dashboard.panels : p.title if try(p.datasource.uid, "") != "$${ds}"]
 
-  # Every selector in every query carries both labels, and no metric name is read without one.
-  # A query with no series in it (the Tick Budget line, vector(0.05)) has nothing to filter.
-  # Grafana's $environment and $namespace are plain text to Terraform: only "$${" interpolates.
-  dashboard_unfiltered = distinct(flatten([
-    for p in local.dashboard.panels : [
-      for t in try(p.targets, []) : p.title
-      if anytrue([
-        for s in regexall("\\{[^}]*\\}", t.expr) :
-        !strcontains(s, "environment=\"$environment\"") || !strcontains(s, "namespace=\"$namespace\"")
-        ]) || length(regexall("[a-z][a-z0-9]*_[a-z0-9_]*[^a-z0-9_{(]",
-      format("%s ", replace(t.expr, "/\\{[^}]*\\}/", "{}")))) > 0
-    ]
-  ]))
+  # Every selector in every query carries both labels as whole matchers, and no metric name is read
+  # without a selector. A query with no series in it (the Tick Budget line, vector(0.05)) has nothing
+  # to filter. Grafana's $environment and $namespace are plain text to Terraform: only "$${" interpolates.
+  dashboard_targets = flatten([
+    for p in local.dashboard.panels : [for t in try(p.targets, []) : { title = p.title, expr = t.expr }]
+  ])
+  dashboard_matchers = ["environment=\"\\$environment\"", "namespace=\"\\$namespace\""]
+  promql_keywords    = ["and", "or", "unless", "by", "without", "on", "ignoring", "group_left", "group_right", "bool", "offset", "inf", "nan"]
+
+  # What is left of a query outside its selectors: selectors emptied, then string literals, ranges and
+  # grouping clauses removed, so every remaining name is a function call, a selector's metric or bare.
+  dashboard_outside = [
+    for t in local.dashboard_targets : replace(replace(replace(replace(replace(t.expr,
+      "/\\{[^}]*\\}/", "{}"),
+      "/\"(?:[^\"\\\\]|\\\\.)*\"/", "\"\""),
+      "/\\[[^\\]]*\\]/", ""),
+      "/\\b(?:by|without|on|ignoring|group_left|group_right)\\s*\\([^)]*\\)/", " "),
+    "/\\s+([{(])/", "$1")
+  ]
+
+  dashboard_unfiltered = distinct([
+    for i, t in local.dashboard_targets : t.title
+    if anytrue([
+      for s in regexall("\\{[^}]*\\}", t.expr) : anytrue([
+        for m in local.dashboard_matchers : length(regexall("[{,]\\s*${m}\\s*[,}]", s)) == 0
+      ])
+      ]) || anytrue([
+      for n in regexall("[A-Za-z_:][A-Za-z0-9_:]*[{(]?", local.dashboard_outside[i]) :
+      !endswith(n, "{") && !endswith(n, "(") && !contains(local.promql_keywords, n)
+    ])
+  ])
 }
 
 resource "grafana_folder" "andara" {

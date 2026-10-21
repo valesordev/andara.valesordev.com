@@ -8,14 +8,15 @@ Reads deploy/grafana/dashboards/tick-health.json, the source Terraform deploys t
 (ADR-0012 decision 11), and evaluates every panel query that reads a series against ENV's stack
 (scripts/grafana_stack.py: local, dev, staging → solo7dev; prod → solo7) through gcx
 (scripts/gcx.py), with the dashboard's variables filled in: $environment=ENV and
-$namespace=andara-<env>. Each query must return a series. The queries are polled together until
+$namespace=andara-<env>, plus cluster="andara" for ENV=local (ADR-0014 A3: CI also ships
+andara-local, on cluster ci). Each query must return a series. The queries are polled together until
 each has, or until DEADLINE (seconds, default 300) passes (docs/specs/testing/live-assertions.md).
 A query that reads no series, such as the Tick Budget line `vector(0.05)`, is listed and not
 queried.
 
 Then the environment variable's options, as the dashboard lists them (AC-4): its label_values
 query through `gcx metrics labels`. They must include ENV and hold only the environments ENV's
-stack carries (solo7dev: local, dev, staging; solo7: prod).
+stack carries (solo7dev: local, dev, staging; solo7: prod), polled to the same DEADLINE.
 
 Credentials: GRAFANA_<STACK>_READ_TOKEN for ENV's stack, from the environment or .local/box.env.
 
@@ -66,10 +67,17 @@ def targets(d):
             for p in d["panels"] for t in p.get("targets", []) if "expr" in t]
 
 
-def fill(expr, env, ns):
-    """expr with the dashboard's variables as Grafana would substitute them for ENV."""
-    return (expr.replace("$environment", env).replace("$namespace", ns)
+def fill(expr, env, ns, extra=""):
+    """expr with the dashboard's variables as Grafana would substitute them for ENV; extra follows the namespace."""
+    return (expr.replace('namespace="$namespace"', 'namespace="%s"%s' % (ns, extra))
+            .replace("$environment", env).replace("$namespace", ns)
             .replace("$__rate_interval", "5m").replace("$__interval", "1m"))
+
+
+def box_matcher(env):
+    """ADR-0014 A3: CI's lifecycle job also ships andara-local into solo7dev, on cluster ci. A box ENV=local
+    check selects the box's cluster, so CI's series can't stand in for it."""
+    return ', cluster="andara"' if env == "local" else ""
 
 
 def label_values(query):
@@ -88,7 +96,7 @@ def check_queries(env, ctx, deadline, q=gcx):
         if not names_in(expr):
             say("--     %s [%s] %s: reads no series, not queried" % (title, ref, expr))
             continue
-        pending.append((title, ref, fill(expr, env, ns)))
+        pending.append((title, ref, fill(expr, env, ns, box_matcher(env))))
     end = time.monotonic() + deadline
     while True:
         left = []
@@ -107,17 +115,22 @@ def check_queries(env, ctx, deadline, q=gcx):
     return sorted({title for title, _, _ in pending})
 
 
-def check_options(env, ctx, stack, q=gcx):
-    """AC-4: the environment variable's options in ENV's stack; the problems found."""
+def check_options(env, ctx, stack, deadline, q=gcx):
+    """AC-4: the environment variable's options in ENV's stack, polled to the deadline; the problems left."""
     label, match = label_values(variable_query(variables(load())["environment"]))
-    options = sorted(q.metrics_labels(ctx, label, match=match))
+    end = time.monotonic() + deadline
+    while True:
+        options = sorted(q.metrics_labels(ctx, label, match=match))
+        problems = []
+        if env not in options:
+            problems.append("%s is not an option" % env)
+        foreign = [o for o in options if o not in STACK_ENVIRONMENTS[stack]]
+        if foreign:
+            problems.append("%s carries %s, which is not one of its environments" % (stack, ", ".join(foreign)))
+        if not problems or time.monotonic() >= end:
+            break
+        time.sleep(POLL)
     say("environment options in %s: %s" % (stack, ", ".join(options) or "—"))
-    problems = []
-    if env not in options:
-        problems.append("%s is not an option" % env)
-    foreign = [o for o in options if o not in STACK_ENVIRONMENTS[stack]]
-    if foreign:
-        problems.append("%s carries %s, which is not one of its environments" % (stack, ", ".join(foreign)))
     return problems
 
 
@@ -132,7 +145,7 @@ def main(argv, q=gcx):
         raise grafana_stack.Exit(2, "DEADLINE=%s is not a whole number of seconds" % os.environ["DEADLINE"])
     q.write_config()
     absent = check_queries(env, stack, deadline, q=q)
-    problems = check_options(env, stack, stack, q=q)
+    problems = check_options(env, stack, stack, deadline, q=q)
     for p in problems:
         say("FAIL options: " + p)
     if absent:

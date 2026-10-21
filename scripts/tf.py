@@ -435,6 +435,15 @@ def _bare_metric(d):
     t["expr"] = re.sub(r"\{[^}]*\}", "", t["expr"])
 
 
+def _suffix_label(d):
+    t = _first_target(d)
+    t["expr"] = t["expr"].replace(FILTER[0], "kube_" + FILTER[0])
+
+
+def _bare_up(d):
+    d["panels"][-1]["targets"][0]["expr"] = "up"
+
+
 DASHBOARD_BREAKS = (
     ("no ds variable", _drop_variable("ds"), "lacks the variable(s) ds"),
     ("no environment variable", _drop_variable("environment"), "lacks the variable(s) environment"),
@@ -443,6 +452,8 @@ DASHBOARD_BREAKS = (
     ("a query without environment", _unfilter(FILTER[0]), "read a series without"),
     ("a query without namespace", _unfilter(FILTER[1]), "read a series without"),
     ("a query with a bare metric name", _bare_metric, "read a series without"),
+    ("a label that only ends in environment", _suffix_label, "read a series without"),
+    ("a bare metric name without an underscore", _bare_up, "read a series without"),
 )
 
 
@@ -453,6 +464,10 @@ def dashboard_breaks(env, breaks=DASHBOARD_BREAKS):
     with tempfile.TemporaryDirectory(prefix="tf-dashboard-") as tmp:
         tf_copy = os.path.join(tmp, os.path.relpath(TF_DIR, REPO))
         shutil.copytree(TF_DIR, tf_copy, ignore=shutil.ignore_patterns(".terraform"))
+        # Every other file a root may read (tf_policy's allow-list): the rules, once AW-INF-047 reads them.
+        alerts = os.path.join(REPO, "deploy", "helm", "andara", "files", "alerts.yaml")
+        os.makedirs(os.path.join(tmp, os.path.dirname(os.path.relpath(alerts, REPO))))
+        shutil.copy(alerts, os.path.join(tmp, os.path.relpath(alerts, REPO)))
         dash = os.path.join(tmp, os.path.relpath(DASHBOARD, REPO))
         os.makedirs(os.path.dirname(dash))
         root = os.path.join(tf_copy, "stacks", "solo7dev")

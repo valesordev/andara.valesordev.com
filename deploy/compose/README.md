@@ -24,7 +24,7 @@ make down VOLUMES=1      # stop and reset to an empty log
 | Prometheus | 9090 | Scrapes the server, the collector, and Redpanda. |
 | Tempo | — | Trace backend. Reached through Grafana. |
 | Loki | 3100 | The log sink you grep by Session correlation ID. |
-| Grafana | 3000 | Provisioned dashboard and datasources, from files in this directory. |
+| Grafana | 3000 | Provisioned datasources, from files in this directory. The tick-health dashboard is in Grafana Cloud since AW-INF-049 (`deploy/grafana/dashboards/`). |
 | andara-server | 8443 (gRPC/TLS, not listening yet), 8080 (health, metrics, loopback) | Started once `cmd/andara-server` has Go sources. Local stack uses `content.source=dir` with `testdata/content/valid` until AW-SRV-012. |
 
 CLAUDE.md §8 requires instrumentation verified against a real backend rather than merely
@@ -109,7 +109,7 @@ constraints` after the broker is already healthy. The compose file raises `nofil
 **Consumer-lag metrics are off by default.** Redpanda computes
 `redpanda_kafka_consumer_group_lag_*` only when `enable_consumer_group_metrics` includes
 `consumer_lag`. That setting is in the declaration under `broker.local` and is applied at
-`make up`. Without it the dashboard's lag panel is silently empty.
+`make up`. No dashboard reads them since AW-INF-049; the broker drills query them directly.
 
 ## Where the local broker and the production broker differ
 

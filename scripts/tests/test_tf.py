@@ -370,6 +370,12 @@ class DashboardBreaksTest(NoBoxEnv):
         self.assertEqual(self.breaks(fake), 0)
         self.assertEqual([c[0] for c in fake.calls], ["init"] + ["test"] * len(tf.DASHBOARD_BREAKS))
 
+    def test_the_breaks_cover_the_reviewed_bypasses(self):
+        """A label matched as a substring of another, and a bare name without an underscore (pre-PR review)."""
+        names = [w for w, _, _ in tf.DASHBOARD_BREAKS]
+        self.assertIn("a label that only ends in environment", names)
+        self.assertIn("a bare metric name without an underscore", names)
+
     def test_each_break_changes_the_committed_source(self):
         with open(tf.DASHBOARD) as f:
             source = f.read()
