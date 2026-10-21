@@ -133,6 +133,26 @@ class Helper(Workdir):
         self.assertIn("ANDARA_KUBE_CONTEXT=kind-ci", str(e.exception))
 
 
+# A lone & (not &&, >&, &>): the command before it runs in the background.
+BACKGROUND = re.compile(r"(?<![&>])&(?![&>])")
+
+
+def background_findings(name, text):
+    """Lines that background kube_kubectl or kube_helm (whose $! would be a subshell), or call
+    kube_kubectl_exec anywhere but in the background. Continued lines are joined, comments dropped."""
+    out = []
+    for n, line in kube_check.logical(text.splitlines()):
+        code = kube_check.strip_comment(line)
+        for m in re.finditer(r"\b(coproc\s+)?kube_(kubectl_exec|kubectl|helm)\b", code):
+            rest = code[m.end():]
+            end = re.search(r"\|\||&&|;|\|(?!\|)", rest)
+            seg = rest[:end.start()] if end else rest
+            bg = bool(BACKGROUND.search(seg)) or bool(m.group(1))
+            if (m.group(2) == "kubectl_exec") != bg:
+                out.append("%s:%d" % (name, n))
+    return out
+
+
 class ShellHelper(Workdir):
     """scripts/kube.sh, the shell twin."""
 
@@ -156,7 +176,8 @@ class ShellHelper(Workdir):
         pidfile = os.path.join(self.d, "pid")
         sleeper = os.path.join(self.bin, "kubectl")
         with open(sleeper, "w") as f:
-            f.write('#!/bin/sh\necho $$ > "%s"\nexec sleep 30\n' % pidfile)
+            # The sleep holds no pipe of the test's, so a regression fails at once, not after 30 s.
+            f.write('#!/bin/sh\necho $$ > "%s"\nexec sleep 30 >/dev/null 2>&1 </dev/null\n' % pidfile)
         p = self.sh('kube_kubectl_exec -n x port-forward pod/a 1:1 &\npf=$!\n'
                     'for _ in $(seq 50); do [ -s "%s" ] && break; sleep 0.1; done\n'
                     'kill "$pf"; echo "$pf"\n' % pidfile)
@@ -164,16 +185,38 @@ class ShellHelper(Workdir):
         with open(pidfile) as f:
             self.assertEqual(f.read().strip(), p.stdout.strip())
 
+    def test_a_foreground_exec_refuses_and_the_script_goes_on(self):
+        p = self.sh("kube_kubectl_exec get pods; echo \"rc=$?\"\necho after\n")
+        self.assertEqual(p.stdout.split(), ["rc=2", "after"], p.stderr)
+        self.assertIn("only for a backgrounded call", p.stderr)
+        self.assertEqual(self.calls(), [])
+
+    def test_the_background_guard(self):
+        bad = ['kube_kubectl -n x port-forward a 1:1 >/dev/null 2>&1 &',
+               'kube_kubectl -n x port-forward a 1:1 2>&1 & pf=$!',
+               'kube_kubectl -n x port-forward a 1:1 & # traefik',
+               'kube_kubectl -n x \\\n  port-forward a 1:1 &',
+               'coproc kube_kubectl -n x port-forward a 1:1',
+               'kube_kubectl_exec get pods || true']
+        good = ['kube_kubectl get x >/dev/null &&\n  true',
+                'kube_kubectl get x >/dev/null 2>&1 || kube_kubectl create x',
+                'kube_kubectl_exec -n x port-forward a 1:1 >"$W/pf.log" 2>&1 &',
+                'kube_kubectl get x &>/dev/null']
+        for text in bad:
+            with self.subTest(bad=text):
+                self.assertTrue(background_findings("t.sh", text), text)
+        for text in good:
+            with self.subTest(good=text):
+                self.assertEqual(background_findings("t.sh", text), [], text)
+
     def test_no_script_backgrounds_the_function(self):
         sdir = os.path.join(REPO, "scripts")
         found = []
         for name in sorted(os.listdir(sdir)):
-            if name.endswith(".sh"):
+            if name.endswith(".sh") and name != "kube.sh":  # kube.sh defines them
                 with open(os.path.join(sdir, name)) as f:
-                    for n, line in enumerate(f, 1):
-                        if re.search(r"\bkube_(kubectl|helm)\b[^#]*&\s*$", line):
-                            found.append("%s:%d" % (name, n))
-        self.assertEqual(found, [], "background with kube_kubectl_exec, whose $! is kubectl's")
+                    found += background_findings(name, f.read())
+        self.assertEqual(found, [], "background with kube_kubectl_exec, whose $! is kubectl's, and only that")
 
     def test_a_missing_context_exits_3_before_any_call(self):
         p = self.sh("kube_require t\nkube_kubectl get pods\n", "kind-nope")
