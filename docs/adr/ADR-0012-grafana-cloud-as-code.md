@@ -630,7 +630,7 @@ can hide a real page.
    from `solo7` with `make alerts-delete` (a target `AW-INF-047` adds to `alerts_sync.py`, using the existing
    ruler write key, which Brian exports by hand as `MIMIR_API_KEY_WRITE`; it is not in `.local/box.env`; it is
    run by hand, once, and the key is given to no CI job beyond what `alerts` holds today);  (ii-b) a merge sets `is_paused = false` for `solo7dev`: the ruler no longer evaluates `dev`, nothing else sends to `solo7dev`, and with `required_environments = []` no absence rule fires for environments that have not arrived; (iii) the rebuild
-   completes and the Fleet-managed collectors ship `local` and `dev` to `solo7dev` with `environment="local"` and `"dev"` (decision 15's `stamp` pipeline); (iv) `make observe-check
+   completes and the Fleet-managed collectors ship `local` and `dev` to `solo7dev` with `environment="local"` and `"dev"` (decision 15's `stamp` pipeline; *2026-10-21, `ADR-0014`:* the `k8s-monitoring` chart's collectors and its destinations' stamp); (iv) `make observe-check
    ENV=local --keep-list` and `ENV=dev --keep-list` (decision 13) pass; (v) a merge sets `required_environments = ["dev"]` in
    `solo7dev`'s tfvars, which adds the `dev` absence line to `AndaraServerUnavailable`; (vi) `make
    observe-unavailable ENV=dev` fires and clears the alert through `gcx`, and `stack-recover-mismatch` asserts
@@ -894,7 +894,9 @@ step (so their ignored-`ENV` caveat goes away).
 > the chart. The keep-list's allow-list is `deploy/platform/collectors/keep-list.yaml`, enforced at the chart's
 > metrics destination. "The collection pipelines are files … rendered with the stack endpoints" and "the allow-list
 > is read from the in-repo pipeline source" no longer hold. The keep-list table, the checks and the order stand,
-> with order step 1's pipelines read as `shared-kafka` (`ADR-0014` §5, §10).
+> with order step 1's pipelines read as `shared-kafka` (`ADR-0014` §5, §10). Below, read "the `scrape` pipeline's
+> annotation discovery" as the chart's `annotationAutodiscovery`, "the `stamp` pipeline's final rule" as the
+> destinations' guard (`ADR-0014` §4), and "the `keep` pipeline's allow-list" as `keep-list.yaml`.
 
 Until 2026-10-10 the cluster and its `k8s-monitoring` release belonged to a separate repo, and this decision was
 a contract this repo wrote for it. Now one repo owns both the rules and the thing that feeds them.
