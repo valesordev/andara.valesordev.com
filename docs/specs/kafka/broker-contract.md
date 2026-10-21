@@ -1,10 +1,10 @@
 # Kafka broker contract
 
-> **Status: decided 2026-10-08, `AW-INF-005`.** Enforced by `make broker-assert` (SRE, `AW-INF-005`'s
-> enforcement child). Topics, replication factor, `min.insync.replicas` and `unclean.leader.election.enable` are declared in
-> `deploy/kafka/topics.yaml`. `auto.create.topics.enable=false` is **not declared anywhere today**: the
-> enforcement child sets it in the Strimzi and compose broker config. This document says what each setting is
-> *for*, so that nobody relaxes one without knowing which claim it carries.
+> **Status: decided 2026-10-08, `AW-INF-005`; amended 2026-10-21 for `ADR-0013`'s shared broker (`AW-INF-038`).**
+> Enforced by `make broker-assert` (`AW-INF-038`). Topics, replication factor, `min.insync.replicas` and
+> `unclean.leader.election.enable` are declared in `deploy/kafka/topics.yaml`. The broker settings
+> (`auto.create.topics.enable=false` among them) are declared in `deploy/k8s/kafka/kafka.yaml`. This document says
+> what each setting is *for*, so that nobody relaxes one without knowing which claim it carries.
 
 ADR-0002 makes Kafka the ordering authority for the World, so Kafka availability bounds World
 availability and Kafka durability bounds what we can promise a player about an acknowledged Command.
@@ -16,40 +16,75 @@ happened.
 
 ## Environments
 
+*Amended 2026-10-21 (`ADR-0013` decisions 3 and 4).* `local` and `dev` share one broker set. Broker settings are
+therefore cluster-wide, and an environment owns only its topics.
+
 | | `local` | `dev` | `prod` |
 |---|---|---|---|
-| broker software | Redpanda, 1 broker | Apache Kafka under Strimzi, 3 brokers | same as `dev` |
-| where | compose | kind box (`AW-INF-014`) | kind box |
+| brokers | the shared `andara-log` in `andara-shared`: Apache Kafka under Strimzi, 3 combined KRaft nodes (AW-INF-055) | the same brokers | its own cluster, the same settings; no environment today (2026-10-19) |
+| topics | `local.<name>`, RF 1, `min.insync.replicas` 1, bounded retention (below) | `dev.<name>`, RF 3, `min.insync.replicas` 2 | `<name>` (unprefixed), RF 3, `min.insync.replicas` 2 |
 
-`local` is not a rehearsal of `dev`. It has no `unclean.leader.election.enable` (Raft cannot elect a
-leader missing committed records) and no replication.
+`local` is not a rehearsal of `dev`'s durability: its topics have no replication. It shares `dev`'s brokers,
+disk and failure domain, and the bounds below limit what it can do to them (`ADR-0013` decision 4). Until
+2026-10-21, `local` was a compose Redpanda with no `unclean.leader.election.enable` and no
+`replica.lag.time.max.ms`, and the check skipped both. On the shared broker, both apply to every environment.
 
 ## Settings
 
 | Setting | `local` / `dev` / `prod` | Claim it carries |
 |---|---|---|
-| `default.replication.factor` | 1 / 3 / 3 | RPO. A topic declared in `topics.yaml` states its own; the default catches a topic created outside it. |
-| `min.insync.replicas` | 1 / 2 / 2 | RPO. `acks=all` waits for the ISR, and an ISR of one makes `acks=all` mean `acks=1`. At 2 of 3, one broker can fail with writes continuing, and two cannot. |
+| `default.replication.factor` | broker: 3; `local.` topics declare 1 | RPO. A topic declared in `topics.yaml` states its own; the default catches a topic created outside it. |
+| `min.insync.replicas` | broker default 2; `local.` topics declare 1; `dev.` and prod topics 2 | RPO. `acks=all` waits for the ISR, and an ISR of one makes `acks=all` mean `acks=1`. At 2 of 3, one broker can fail with writes continuing, and two cannot. |
 | `unclean.leader.election.enable` | `false` everywhere it exists | RPO. With it `true`, an out-of-sync replica can lead and silently truncate acknowledged records. This is the setting people miss. |
-| `replica.lag.time.max.ms` | `<= 60000` (Kafka default 30000) | Detection. The time the broker takes to drop a dead follower from the ISR. Metadata shows a full ISR until then while a survivor-led Partition refuses writes, so it bounds how long the ingress's probe is blind (`client-contract.md`, leaving the state). The cap must stay at or below the 90 s floor of `ingress.degraded_hold` (`client-contract.md`, leaving the state): raising it is a contract change to both. Absent on Redpanda; skipped on `local`. |
+| `replica.lag.time.max.ms` | `<= 60000` (Kafka default 30000) | Detection. The time the broker takes to drop a dead follower from the ISR. Metadata shows a full ISR until then while a survivor-led Partition refuses writes, so it bounds how long the ingress's probe is blind (`client-contract.md`, leaving the state). The cap must stay at or below the 90 s floor of `ingress.degraded_hold` (`client-contract.md`, leaving the state): raising it is a contract change to both. |
 | `auto.create.topics.enable` | `false` | Order. A typo in a topic name must fail, not create a topic with default partitions and a default key mapping. |
 | per-topic `partitions` | `topics.yaml` | Order. Permanent for keyed topics: repartitioning changes the key-to-Partition mapping and reorders history. |
 | per-topic `retention.ms`, `cleanup.policy` | `topics.yaml`; see Retention | Replay window. |
+| `local.` topics' `retention.bytes`, `retention.ms` | 64 MiB per partition (67108864), at most 7 days | Isolation. `dev`'s `andara.commands.v1` is infinite on a 20Gi PVC per broker. A `local` soak must not fill the disk `dev`'s RPO depends on (`ADR-0013` decision 4). |
+| `max.connections` | at most 1000 per broker | Availability. A backstop against file-descriptor exhaustion taking a shared broker down for both environments, not a budget (see Capacity). |
 | rack awareness | none on the box; required off it | Recorded, not enforced. Three replicas on one box share one disk (see below). |
 
-`make broker-assert` fails on any deviation in the first five rows, `default.replication.factor` through `auto.create.topics.enable` (on `local`, `unclean.leader.election.enable` and `replica.lag.time.max.ms` are skipped, because the properties do not exist on Redpanda) and on any topic that differs from
-`topics.yaml`. On `local` it prints a warning for RF 1 and `min.insync.replicas` 1 and exits `0`, because
-that is the contract for `local`.
+`make broker-assert ENV=<local|dev>` fails on any deviation in the broker rows (`default.replication.factor`,
+`min.insync.replicas`'s broker default, `unclean.leader.election.enable`, `replica.lag.time.max.ms`,
+`auto.create.topics.enable`, `max.connections`) and on any of the environment's topics that differs from
+`topics.yaml`, or from `local.`'s retention bounds. `ENV` selects the topics, not the brokers. With `ENV=local`,
+it prints a warning for RF 1 and `min.insync.replicas` 1 and exits `0`, because that is the contract for `local`.
+
+## Capacity
+
+*Added 2026-10-21 (`AW-INF-038`; SRE's figures, 2026-10-11).* `ADR-0013` leaves the partition and connection
+budget unenforced. This section states the budget and the one backstop.
+
+- **Partitions:** 222 per environment, 444 on the shared brokers, and 888 replicas (666 for `dev` at RF 3, 222 for
+  `local` at RF 1) on 3 brokers (`ADR-0013` decision 4).
+- **Connections, demand:** the server holds about 128 connections per environment (64 per-Partition clients,
+  about two each: bootstrap plus the leader, `client-contract.md`). Tickloop, the record log, content and the
+  projector add a handful, so the total is about **140 per environment, 280 on the shared brokers**, spread over 3
+  brokers. SASL adds a handshake per connection, not a connection.
+- **Connections, limit:** `max.connections: 1000` per broker. That is about 3.5× the worst case of all 280 landing
+  on one broker. It doesn't divide the budget between environments: a runaway `local` client could still take
+  connections `dev` needs. But it stops the runaway at a limit the broker survives, where today the broker's
+  file-descriptor limit would take it down for both. Kafka's `max.connections.per.ip` is not set, because pod IPs
+  on kind are neither stable nor per-environment.
+- **No per-environment connection quota.** KIP-612's `connection_creation_rate` is a quota on an IP entity, not on
+  a user, and Strimzi's `KafkaUser.spec.quotas` (byte rates, request percentage, controller mutation rate) has no
+  connection field (`[verify 038]`). So `local`'s isolation stays its byte-rate quotas (`ADR-0013` decision 4,
+  `AW-INF-056`).
+- **What reports it:** `make shared-check` reports PVC usage today (AW-INF-055). A live connection count per
+  broker, and per principal once SASL is on (AW-INF-056), is the measurement that would justify lowering the limit.
 
 ## What a green check on the box does not prove
 
-`dev` and `prod` are three brokers on one kind box, one disk (`AW-INF-003`). The settings are correct for a
+`dev`'s and `local`'s topics are on three brokers on one kind box, one disk (`AW-INF-003`); a prod cluster is the same shape until it has its own failure domains. The settings are correct for a
 real cluster and cannot protect against the disk they share. A rehearsal that kills brokers proves
 broker-failure semantics and cannot prove disk-failure semantics. ADR-0002's first "revisit when" is
 this: the zero-RPO claim in `docs/specs/slo/recovery.md` is, until the cluster has independent failure
 domains, a claim about one machine.
 
 ## Retention
+
+Topic names below are without the environment prefix (`dev.`; unprefixed for prod). On `local.` topics, the
+Settings row's bounds override every value here.
 
 | Topic | Retention | Decision |
 |---|---|---|
