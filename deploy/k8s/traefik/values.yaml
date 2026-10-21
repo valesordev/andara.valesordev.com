@@ -1,5 +1,7 @@
-# Traefik as the box has it (helm chart traefik/traefik 41.4.0, Traefik v3.7), for
-# `make kind-platform` to reproduce on a fresh cluster (AW-INF-006). The parts the chart
+# Traefik's values for `make platform-up` (AW-INF-054), at the chart version pinned in
+# deploy/platform/versions.yaml. platform-up adds one value per machine, never committed:
+# ports.websecure.proxyProtocol.trustedIPs, the kind network's IPv4 gateway as a /32 (ADR-0013
+# decision 11). The web entrypoint trusts no PROXY header. The parts the chart (AW-INF-006)
 # depends on: hostPort :80/:443 on the ingress-ready node, `traefik` as the default
 # IngressClass, the CRD provider (ServersTransport, Middleware), Prometheus metrics with
 # router and service labels (the IngressErrorRateHigh alert reads them), JSON access logs.

@@ -4,9 +4,9 @@
 
 # Apache Kafka on the box for dev and prod, via Strimzi (AW-INF-014).
 #
-#   kafka.sh operator          make kafka-operator: Strimzi into `strimzi`, once per cluster
-#   kafka.sh install <env>     make kafka-install: operator, namespace, deploy/k8s/kafka/*.yaml,
-#                              wait Ready, then deploy/kafka/topics.yaml through topics.py
+#   kafka.sh install <env>     make kafka-install: namespace, deploy/k8s/kafka/*.yaml, wait Ready,
+#                              then deploy/kafka/topics.yaml through topics.py. The Strimzi operator
+#                              is `make platform-up`'s (AW-INF-054), and must watch the namespace.
 #   kafka.sh bounce <env>      make kafka-broker-bounce: lose one broker, prove the server never
 #                              left service while it was gone (AC-5)
 #
@@ -20,9 +20,6 @@ set -euo pipefail
 REPO="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 cd "$REPO"
 
-STRIMZI_VERSION="1.2.0"                   # Kafka 4.3.1, KRaft only, CRD API v1
-STRIMZI_REPO="https://strimzi.io/charts/"
-WATCHED=(andara-dev andara-prod)
 KAFKA="andara-log"
 PY="${PY:-python3}"
 
@@ -47,51 +44,26 @@ ensure_ns() {
   kubectl get namespace "$1" >/dev/null 2>&1 || kubectl create namespace "$1" >/dev/null
 }
 
-operator() {
-  need helm kubectl
-  # The chart binds the operator into each watched namespace, so they must exist first.
-  # `wns`, local: bash scoping is dynamic, and a bare `ns` here overwrote install()'s, which
-  # on 2026-09-24 applied dev's install to andara-prod.
-  local wns have
-  for wns in "${WATCHED[@]}"; do ensure_ns "$wns"; done
-  have="$(helm list -n strimzi -o json 2>/dev/null \
-    | "$PY" -c 'import json,sys; r=[x for x in json.load(sys.stdin) if x["name"]=="strimzi"]; print(r[0]["chart"] if r else "")')"
-  local csv watching
-  csv="$(IFS=,; echo "${WATCHED[*]}")"
-  # A no-op only when both the chart and what it watches match: a same-version release
-  # watching other namespaces would never reconcile this Kafka, and kafka-install would
-  # time out waiting for it.
+# Strimzi is the platform's (AW-INF-054): `make platform-up` is its only installer, watching
+# andara-shared alone. An operator that doesn't watch ns would never reconcile the Kafka applied
+# there, and kafka-install would wait out its 15 minutes, so it refuses first.
+require_operator() {
+  local ns="$1" watching
   watching="$(helm get values strimzi -n strimzi -o json 2>/dev/null \
-    | "$PY" -c 'import json,sys; v=json.load(sys.stdin) or {}; print(",".join(v.get("watchNamespaces") or []))' 2>/dev/null || true)"
-  # The chart's RoleBindings live in each watched namespace, so deleting and recreating one
-  # (a rebuild of andara-dev from nothing, AW-INF-021 AC-7) removes them while the release
-  # still matches. The operator then gets 403 on every watch there, and kafka-install waits
-  # forever. So a no-op also needs every watched namespace's bindings to be present.
-  local missing=""
-  for wns in "${WATCHED[@]}"; do
-    kubectl -n "$wns" get rolebinding strimzi-cluster-operator strimzi-cluster-operator-watched \
-      strimzi-cluster-operator-entity-operator-delegation >/dev/null 2>&1 || missing+=" $wns"
-  done
-  if [[ "$have" == "strimzi-kafka-operator-$STRIMZI_VERSION" && "$watching" == "$csv" && -z "$missing" ]]; then
-    echo "kafka-operator: strimzi $STRIMZI_VERSION already installed (watching ${WATCHED[*]})"
-    return
-  fi
-  [[ -z "$missing" ]] || echo "kafka-operator: the operator's RoleBindings are missing in$missing; re-applying the chart"
-  helm upgrade --install strimzi strimzi-kafka-operator \
-    --repo "$STRIMZI_REPO" --version "$STRIMZI_VERSION" \
-    --namespace strimzi --create-namespace \
-    --set "watchNamespaces={$csv}" \
-    --wait --timeout 5m >/dev/null
-  echo "kafka-operator: strimzi $STRIMZI_VERSION in namespace strimzi, watching ${WATCHED[*]}"
+    | "$PY" -c 'import json,sys; v=json.load(sys.stdin) or {}; print(" ".join(v.get("watchNamespaces") or []))' 2>/dev/null || true)"
+  [[ -n "$watching" ]] || die install "no Strimzi release in namespace strimzi; run \`make platform-up\`"
+  [[ " $watching " == *" $ns "* ]] \
+    || die install "Strimzi watches $watching, not $ns; the shared broker in andara-shared is AW-INF-055's"
 }
 
 install() {
   local env="$1" ns
   ns="$(env_ns "$env")"
   need helm kubectl "$PY"
-  operator
+  require_operator "$ns"
   ensure_ns "$ns"
-  # Never apply to a namespace other than the one ENV names (see operator()).
+  # Never apply to a namespace other than the one ENV names. A bare `ns` in a helper once
+  # overwrote this one (bash scoping is dynamic) and applied dev's install to andara-prod.
   [[ "$ns" == "andara-$env" ]] || die install "internal error: target namespace is $ns, not andara-$env"
   kubectl -n "$ns" apply -f deploy/k8s/kafka/ >/dev/null
   echo "kafka-install: applied deploy/k8s/kafka/ to $ns; waiting for kafka/$KAFKA (first boot pulls images and forms the KRaft quorum)"
@@ -192,8 +164,7 @@ bounce() {
 
 CMD="${1:-}"
 case "$CMD" in
-  operator) operator ;;
   install) install "${2:-}" ;;
   bounce) CMD=broker-bounce; bounce "${2:-}" ;;
-  *) echo "usage: kafka.sh <operator|install|bounce> [env]" >&2; exit 2 ;;
+  *) echo "usage: kafka.sh <install|bounce> [env]" >&2; exit 2 ;;
 esac

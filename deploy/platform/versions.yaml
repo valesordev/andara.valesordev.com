@@ -1,10 +1,35 @@
 # Pinned versions of what runs the cluster `andara` (ADR-0013). `make cluster-up` reads the node
-# image; AW-INF-054 adds the platform's charts.
+# image; `make platform-up` reads the charts (AW-INF-054). This file is the only place a script or
+# workflow takes a platform version from: `make check` fails on a pin of one of these items anywhere
+# else in scripts/ or .github/workflows/ (scripts/platform_up.py check). A version change is an edit
+# here and nowhere else.
 #
 # The node image is one the pinned kind release (scripts/bootstrap.sh KIND_VERSION) lists as
 # pre-built for itself, by tag and digest: kind's release notes say the digest is what guarantees
 # an image built for that release. kubectl's minor stays within one of this image's Kubernetes
 # minor; bootstrap refuses otherwise.
+#
+# Not here: Argo CD Image Updater, which keeps its own pin in scripts/argocd.py until AW-INF-059
+# removes it, and the collectors' chart, which AW-INF-065 adds once its [verify 051] has chosen it.
 kind:
   # kind v0.33.0 release notes, "Images pre-built for this release".
   nodeImage: kindest/node:v1.36.4@sha256:099e049362a1526b2db71494e1947aae99bd16290d7c895f2b7ea312e3cbfaed
+certManager:
+  repo: https://charts.jetstack.io
+  chart: cert-manager
+  version: v1.21.1
+traefik:
+  # Traefik v3.7.
+  repo: https://traefik.github.io/charts
+  chart: traefik
+  version: 41.4.0
+strimzi:
+  # Kafka 4.3.1, KRaft only, CRD API v1.
+  repo: https://strimzi.io/charts/
+  chart: strimzi-kafka-operator
+  version: 1.2.0
+argocd:
+  # Argo CD v3.5.3.
+  repo: https://argoproj.github.io/argo-helm
+  chart: argo-cd
+  version: 10.9.2

@@ -366,10 +366,19 @@ class Down(Base):
 
 class Rebuild(Base):
 
-    def test_exports_then_deletes_then_creates(self):
+    def setUp(self):
+        super().setUp()
+        # platform-up never runs for real here: this box has a kind-andara it would install into.
+        self.platform_runs = []
+        p = mock.patch.object(cluster, "run_platform", lambda r: self.platform_runs.append(r.id))
+        p.start()
+        self.addCleanup(p.stop)
+
+    def test_exports_then_deletes_then_creates_then_platform_up(self):
         k = self.fake(Kind(clusters=("solo7", "andara")))
         order = []
         k_run = k.run
+        cluster.run_platform = lambda r: order.append("platform-up " + r.id)
 
         def run(*cmd, check=True):
             order.append(os.path.basename(cmd[0]) + " " + cmd[1])
@@ -382,9 +391,10 @@ class Rebuild(Base):
             return {"cert-manager/andara-ca-tls": "written", "andara-dev/andara-edge-tls": "absent"}
 
         cluster.rebuild(self.run_, "andara", self.free_ports(), export=export)
-        steps = [s for s in order if s.split()[0] in ("export",) or s.split()[1] in ("delete", "create")]
-        self.assertEqual(steps, ["export kind-andara", "kind delete", "kind create"])
+        steps = [s for s in order if s.split()[0] in ("export", "platform-up") or s.split()[1] in ("delete", "create")]
+        self.assertEqual(steps, ["export kind-andara", "kind delete", "kind create", "platform-up " + self.run_.id])
         self.assertIn("pending the collectors: AW-INF-065", [line.strip() for line in self.out])
+        self.assertFalse([line for line in self.out if "AW-INF-054" in line], "platform-up is no longer pending")
         self.assertEqual(self.out[-1], "rebuilt context=kind-andara")
 
     def test_a_failed_export_deletes_nothing(self):
@@ -398,6 +408,7 @@ class Rebuild(Base):
         self.assertIn("andara was not deleted", str(e.exception))
         self.assertEqual(k.made("delete"), [])
         self.assertIn("andara", k.clusters)
+        self.assertEqual(self.platform_runs, [])
 
     def test_a_missing_context_is_exit_3_and_deletes_nothing(self):
         k = self.fake(Kind(clusters=("andara",)))
@@ -487,7 +498,7 @@ class Clean(unittest.TestCase):
 
 
 class KindCluster(unittest.TestCase):
-    """AC-11: with KIND_CLUSTER unset and two clusters, kind-load and kind-platform exit 2 and load nothing."""
+    """AC-11: with KIND_CLUSTER unset and two clusters, kind-load exits 2 and loads nothing."""
 
     def setUp(self):
         self.d = tempfile.mkdtemp()
@@ -514,7 +525,7 @@ class KindCluster(unittest.TestCase):
 
     def test_two_clusters_and_no_name_loads_nothing(self):
         self.stub("solo7", "andara")
-        for target in ("kind-load", "kind-platform"):
+        for target in ("kind-load",):
             with self.subTest(target=target):
                 r = self.make(target)
                 self.assertNotEqual(r.returncode, 0)
@@ -546,3 +557,28 @@ class Ignored(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class RebuildPlatform(unittest.TestCase):
+    """run_platform carries platform-up's failures over as the rebuild's own exit codes."""
+
+    def run_with(self, exc):
+        def up(r, profile, env=None):
+            self.seen = (profile, env.get("ANDARA_KUBE_CONTEXT"))
+            if exc:
+                raise exc
+        with mock.patch.object(cluster.platform_up, "up", up):
+            cluster.run_platform(cluster.Run())
+
+    def test_runs_the_box_profile_against_kind_andara(self):
+        self.run_with(None)
+        self.assertEqual(self.seen, ("box", "kind-andara"))
+
+    def test_a_missing_credential_is_exit_3(self):
+        with self.assertRaises(cluster.Missing) as e:
+            self.run_with(cluster.platform_up.Missing("CLOUDFLARE_API_TOKEN is unset"))
+        self.assertIn("platform-up: CLOUDFLARE_API_TOKEN is unset", str(e.exception))
+
+    def test_a_failed_release_is_exit_1(self):
+        with self.assertRaises(cluster.Failed):
+            self.run_with(cluster.platform_up.Failed("traefik did not become Ready"))

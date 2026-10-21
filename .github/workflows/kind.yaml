@@ -1,6 +1,7 @@
 # Chart lifecycle on a real cluster (AW-INF-003 test plan, integration half) and the
-# edge (AW-INF-006): Traefik and cert-manager installed the way the box has them, then
-# TLS, gRPC routing, the Admin allowlist, NetworkPolicy, and the stream soak — 5 m on a
+# edge (AW-INF-006): `make platform-up PROFILE=ci` (cert-manager, andara-ca and Traefik with
+# PROXY-protocol trust, at deploy/platform/versions.yaml's pins, AW-INF-054), then TLS, gRPC
+# routing, the Admin allowlist and PROXY trust, NetworkPolicy, and the stream soak — 5 m on a
 # pull request, 60 m on the nightly schedule.
 #
 # Separate from `check` for the same reason stack.yaml is: `make check` must not need a
@@ -24,7 +25,10 @@ on:
       - "deploy/compose/Dockerfile.server"
       - "scripts/helm_install.sh"
       - "scripts/k8s_dry.sh"
-      - "scripts/kind_platform.sh"
+      - "deploy/platform/**"
+      - "scripts/platform_up.py"
+      - "scripts/cluster_secrets.py"
+      - "scripts/tf.py"
       - "scripts/stream_soak.sh"
       - "internal/smoke/soak_test.go"
       - ".github/workflows/kind.yaml"
@@ -38,7 +42,10 @@ on:
       - "deploy/compose/Dockerfile.server"
       - "scripts/helm_install.sh"
       - "scripts/k8s_dry.sh"
-      - "scripts/kind_platform.sh"
+      - "deploy/platform/**"
+      - "scripts/platform_up.py"
+      - "scripts/cluster_secrets.py"
+      - "scripts/tf.py"
       - "scripts/stream_soak.sh"
       - "internal/smoke/soak_test.go"
       - ".github/workflows/kind.yaml"
@@ -57,6 +64,13 @@ jobs:
           go-version-file: go.mod
       - name: bootstrap
         run: make bootstrap
+      # The node image is versions.yaml's, tag and digest, the box's own (AW-INF-054).
+      - name: node image from deploy/platform/versions.yaml
+        id: pins
+        run: |
+          set -euo pipefail
+          image="$(python3 -c 'import yaml; print(yaml.safe_load(open("deploy/platform/versions.yaml"))["kind"]["nodeImage"])')"
+          echo "node_image=$image" >> "$GITHUB_OUTPUT"
       - name: kind cluster
         uses: helm/kind-action@v1
         with:
@@ -64,10 +78,10 @@ jobs:
           # kind must be new enough for the node image: v1.36 nodes carry containerd
           # config v4, which the action's default kind cannot load images into.
           version: v0.33.0
-          node_image: kindest/node:v1.36.1
+          node_image: ${{ steps.pins.outputs.node_image }}
           config: deploy/kind/config.yaml
-      - name: kind-platform (traefik + cert-manager, as the box has them)
-        run: make kind-platform KIND_CLUSTER=ci
+      - name: platform-up PROFILE=ci (cert-manager, andara-ca, Traefik with PROXY trust)
+        run: make platform-up PROFILE=ci ANDARA_KUBE_CONTEXT=kind-ci
       - name: image
         run: make image
       - name: kind-load
@@ -179,7 +193,36 @@ jobs:
           # resource Helm patches old manifest → new manifest and never reads live state,
           # so an unchanged values file leaves a hand-patched Middleware as it is.
           kubectl -n $NS patch middleware andara-admin-allowlist --type merge \
-            -p '{"spec":{"ipAllowList":{"sourceRange":["10.0.0.0/8","192.168.0.0/16","172.16.0.0/12"]}}}'
+            -p '{"spec":{"ipAllowList":{"sourceRange":["10.0.0.0/8","192.168.0.0/16","172.16.0.0/12","127.0.0.0/8"]}}}'
+      # AW-INF-054. Every request from the runner reaches Traefik from the kind network's gateway,
+      # the one peer websecure trusts for the PROXY protocol, so curl can forge the client. Outside
+      # the allowlist: 403 at the edge, and the server never sees it. Inside: forwarded, and
+      # Traefik's access log names the forged client (AC-6). With no PROXY header at all, as every
+      # --resolve step above sends, the request is still accepted (AC-7).
+      - name: the edge trusts PROXY from the kind gateway, and only the allowlist passes (AW-INF-054 AC-6, AC-7)
+        run: |
+          set -euo pipefail
+          NS=andara-local
+          CA=.local/tls/cluster/local/ca.pem
+          admin() { curl -s --cacert $CA --resolve andara.local:443:127.0.0.1 "$@" -o /dev/null -w '%{http_code}' \
+            -X POST -H 'content-type: application/json' -H "authorization: Bearer $ANDARA_CI_TOKEN" \
+            https://andara.local/andara.admin.v1.Admin/GetServerInfo -d '{}'; }
+          admin_calls() { kubectl -n $NS exec andara-0 -c server -- wget -qO- http://127.0.0.1:8080/metrics \
+            | awk '/^andara_grpc_requests_total\{.*andara.admin.v1.Admin/ { s += $NF } END { print s + 0 }'; }
+          before=$(admin_calls)
+          code=$(admin --haproxy-protocol --haproxy-clientip 203.0.113.9)
+          [[ "$code" == "403" ]] || { echo "::error::a PROXY client 203.0.113.9 (outside the allowlist) got $code, not 403"; exit 1; }
+          [[ "$(admin_calls)" == "$before" ]] || { echo "::error::the server saw a request the edge refused"; exit 1; }
+          code=$(admin --haproxy-protocol --haproxy-clientip 10.1.2.3)
+          [[ "$code" == "200" ]] || { echo "::error::a PROXY client 10.1.2.3 (inside the allowlist) got $code, not 200"; exit 1; }
+          for i in $(seq 1 10); do
+            kubectl -n traefik logs deploy/traefik --since=5m | grep -q '"ClientHost":"10.1.2.3"' && break
+            sleep 1
+          done
+          kubectl -n traefik logs deploy/traefik --since=5m | grep -q '"ClientHost":"10.1.2.3"' \
+            || { echo "::error::Traefik's access log has no request from the PROXY client 10.1.2.3"; exit 1; }
+          code=$(admin)
+          [[ "$code" == "200" ]] || { echo "::error::a request with no PROXY header got $code, not 200"; exit 1; }
       - name: the server pod is unreachable from another namespace (AC-6)
         run: |
           set -euo pipefail

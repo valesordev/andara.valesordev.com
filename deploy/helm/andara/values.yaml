@@ -93,9 +93,9 @@ ingress:
 host: andara.local
 
 tls:
-  # ClusterIssuer for the edge certificate. `andara-ca` is the cluster's private CA,
-  # bootstrapped by `make helm-install` from deploy/k8s/cert-manager/; the ACME issuers
-  # already on the cluster are selectable for a public host.
+  # ClusterIssuer for the edge certificate. `andara-ca` is the cluster's private CA, and
+  # `letsencrypt` and `letsencrypt-staging` the ACME issuers for a public host; `make
+  # platform-up` applies all three from deploy/k8s/cert-manager/ (AW-INF-054).
   issuer: andara-ca
   # ClusterIssuer for the server (pod) certificate; always the private CA, because the
   # second leg is verified against it and an ACME issuer cannot sign a .svc name.

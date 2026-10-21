@@ -20,8 +20,10 @@ chart, and one `Deployment` per projector. Story: [AW-INF-003](https://github.co
 | `../../argocd/andara-dev.yaml` | the Argo CD Application that makes `dev` follow `main` (AW-INF-019) | yes |
 | `../../argocd/andara-dev-image-updater.yaml` | Image Updater: `:dev` by digest, written to the Application's `image.tag` | yes |
 | `../../argocd/argocd-values.yaml` | Argo CD's settings: annotation tracking, the Ingress health check | yes |
-| `../../k8s/cert-manager/andara-ca.yaml` | the private CA chain (cluster-scoped; applied by `make helm-install`, not by the chart) | yes |
-| `../../k8s/traefik/values.yaml` | Traefik as the box has it, for `make kind-platform` on a fresh cluster | yes |
+| `../../k8s/cert-manager/andara-ca.yaml` | the private CA chain (cluster-scoped; applied by `make platform-up` after the CA root restore, not by the chart) | yes |
+| `../../k8s/cert-manager/letsencrypt.yaml` | the `letsencrypt` and `letsencrypt-staging` ClusterIssuers, DNS-01 through Cloudflare (applied by `make platform-up` when `CLOUDFLARE_API_TOKEN` is set) | yes |
+| `../../k8s/traefik/values.yaml` | Traefik's values for `make platform-up`; the PROXY-protocol trust is added per machine | yes |
+| `../../platform/versions.yaml` | the platform's pins: kind node image, cert-manager, Traefik, Strimzi, Argo CD; the only place a script or workflow reads one from | yes, a version change is an edit here only |
 | `../../kind/config.yaml` | a kind cluster shaped like the box: `:80`/`:443` mapped, `ingress-ready` node | yes |
 
 ## Targets
@@ -33,15 +35,15 @@ chart, and one `Deployment` per projector. Story: [AW-INF-003](https://github.co
 | `make helm-test` | render-level assertions (PVC retention, no secret material, schema rejections, probes, ordinal→Partitions); in `make check` |
 | `make image [TAG=]` | build `andara-server:<tag>` from `deploy/compose/Dockerfile.server` |
 | `make image-publish` | build for linux/amd64 and push `ghcr.io/valesordev/andara-server:sha-<12 hex>` then `:dev`; what `.github/workflows/publish.yaml` runs on every merge to `main` (AW-INF-013) |
-| `make kafka-operator` | the Strimzi operator (1.2.0) into namespace `strimzi`, watching `andara-dev` and `andara-prod`; once per cluster, idempotent |
-| `make kafka-install ENV=<dev\|prod>` | Kafka `andara-log` (`deploy/k8s/kafka/`) in `andara-<env>`, waits for Ready, applies `deploy/kafka/topics.yaml` through the `rpk` toolbox |
+| `make kafka-install ENV=<dev\|prod>` | Kafka `andara-log` (`deploy/k8s/kafka/`) in `andara-<env>`, waits for Ready, applies `deploy/kafka/topics.yaml` through the `rpk` toolbox; refuses unless `platform-up`'s Strimzi watches the namespace (it watches `andara-shared` only; the shared broker is AW-INF-055's) |
 | `make kafka-broker-bounce ENV=<env>` | delete one broker; after it rejoins with every partition in sync, assert once that the server never left Ready, never logged `command log unreachable`, and refused no Submit |
 | `make image-check ENV=<env> [TAG=dev] [REGISTRY_ONLY=1]` | prove a published tag pulls anonymously (and a `sha-` tag carries its commit), then from the cluster with a throwaway `/bin/true` pod in `andara-<env>` |
 | `make kind-load [KIND_CLUSTER=]` | load the image into kind |
-| `make helm-install ENV=<env> [TAG=]` | idempotent `helm upgrade --install` into namespace `andara-<env>`; `local` installs the kind-loaded `IMAGE:TAG`, any other environment its values file's image, with `TAG=` pinning one (`scripts/helm_image_args.sh`), and a moving tag like `:dev` pinned to the digest it names now, so a rerun rolls the pod exactly when `publish` has moved it; applies and waits on the private CA first; the chart renders the content ConfigMaps from `testdata/content/valid` and `content/core/templates` (`contentVolume.render`, through symlinks under `files/`); refuses a namespace an Argo CD Application deploys; writes the CA bundle to `.local/tls/cluster/<env>/ca.pem` and prints the `andara-cli` line and the `/etc/hosts` hint |
-| `make kind-platform [KIND_CLUSTER=]` | install Traefik and cert-manager into a fresh kind cluster (skips releases that already exist — the box's are Brian's) |
+| `make helm-install ENV=<env> [TAG=]` | idempotent `helm upgrade --install` into namespace `andara-<env>`; `local` installs the kind-loaded `IMAGE:TAG`, any other environment its values file's image, with `TAG=` pinning one (`scripts/helm_image_args.sh`), and a moving tag like `:dev` pinned to the digest it names now, so a rerun rolls the pod exactly when `publish` has moved it; refuses unless the ClusterIssuers it needs (`andara-ca`, and `tls.issuer`) are Ready, and applies none of them; the chart renders the content ConfigMaps from `testdata/content/valid` and `content/core/templates` (`contentVolume.render`, through symlinks under `files/`); refuses a namespace an Argo CD Application deploys; writes the CA bundle to `.local/tls/cluster/<env>/ca.pem` and prints the `andara-cli` line and the `/etc/hosts` hint |
+| `make platform-up [PROFILE=box\|ci] [REQUIRE_LETSENCRYPT=1]` | install and reconcile the platform at `deploy/platform/versions.yaml`'s pins against `ANDARA_KUBE_CONTEXT` (default `kind-andara`): a release whose version or values differ is upgraded, one that matches prints `unchanged`. `box`: cert-manager, the CA root restore, `andara-ca`, the `letsencrypt` issuers (skipped without `CLOUDFLARE_API_TOKEN`, read from `.local/box.env`), Traefik, the namespace `andara-shared`, Strimzi watching it, Argo CD. `ci`: cert-manager, `andara-ca`, Traefik (AW-INF-054) |
+| `make platform-check` | `versions.yaml` is valid and no script or workflow pins a platform item outside it; in `make check` |
 | `make stream-soak ENV=<env> [SOAK=5m]` | hold a Subscribe through the edge for `SOAK`, renew the edge certificate mid-stream, assert Traefik counted gRPC; nightly at 60 m in CI |
-| `make argocd-install [ENV=dev]` | Argo CD (chart 10.9.2) and Image Updater (1.3.1) into `argocd`, settings from `deploy/argocd/argocd-values.yaml`; a no-op when installed as pinned. With `ENV=dev`: dev's two Secrets if absent (`ANDARA_BOOTSTRAP_OPERATOR` only then), the Application seeded with `:dev`'s digest, and `deploy/argocd/` applied (AW-INF-019) |
+| `make argocd-install [ENV=dev]` | Argo CD (at `deploy/platform/versions.yaml`'s pin) and Image Updater (1.3.1) into `argocd`, settings from `deploy/argocd/argocd-values.yaml`; a no-op when installed as pinned. With `ENV=dev`: dev's two Secrets if absent (`ANDARA_BOOTSTRAP_OPERATOR` only then), the Application seeded with `:dev`'s digest, and `deploy/argocd/` applied (AW-INF-019) |
 | `make argocd-status [ENV=dev]` | sync and health, the `main` revision synced, the image the StatefulSet runs and the commit it was built from; names `argocd-recover` when the rollout is stuck, or `make content-seed` when the server is up and waiting for its first content (AW-SRV-042); exit 1 unless `Synced`/`Healthy` |
 | `make argocd-ui` | the UI on `localhost:8090` (`ARGOCD_UI_PORT=`) by port-forward, and where the admin password is |
 | `make argocd-recover ENV=dev` | Kubernetes' forced rollback: delete an `andara` pod stuck on a build that never became Ready, once the StatefulSet's `updateRevision` is the Application's current image; refuses otherwise |
@@ -54,7 +56,21 @@ chart, and one `Deployment` per projector. Story: [AW-INF-003](https://github.co
 | `make measure-tick [DURATION=300]` | record p99 CPU and RSS into `measurements.yaml`; refuses until the server exposes `andara_tick_duration_seconds` (AW-SRV-002) |
 
 `make image && make kind-load && make helm-install ENV=local` is the whole local path on the box;
-a fresh cluster needs `kind create cluster --config deploy/kind/config.yaml && make kind-platform` first.
+a fresh cluster needs `make cluster-up && make platform-up` first.
+
+## Edge
+
+The cluster's side of the contract with the workstation `nginx` (ADR-0013 decision 11). DNS and the
+`nginx` configuration are in Brian's workstation repo; this repo changes nothing there.
+
+| Concern | The cluster side |
+|---------|------------------|
+| Ports | The kind control plane publishes 80 and 443 as `127.0.0.1:8080` and `127.0.0.1:8443` (`deploy/kind/cluster.yaml`). Host ports 80 and 443 are `nginx`'s. CI's cluster (`deploy/kind/config.yaml`) still publishes 80 and 443. |
+| TLS | `nginx` passes TLS through (`stream`, `ssl_preread` on the SNI) to `127.0.0.1:8443`. cert-manager's certificates are the only ones: `letsencrypt` for `dev`, the private CA `andara-ca` for `local`. |
+| Client address | `nginx` sends the PROXY protocol (`proxy_protocol on`). Traefik's `websecure` trusts it from the `kind` docker network's IPv4 gateway only, as a `/32` that `make platform-up` reads with `docker network inspect kind` on every run and prints (`platform: edge trusts PROXY from <cidr>`). It is never committed. `web` trusts no PROXY header, so port 80 is `nginx`'s redirect to HTTPS. A connection with no PROXY header from the gateway is still accepted, which the `--resolve` path and CI rely on. |
+| Allowlist | With the real client visible, `local` and `dev` admit `127.0.0.0/8` (a CLI on the workstation, through `nginx`). `172.16.0.0/12` stays in `local` and CI for `--resolve`, and in `dev` until AW-INF-066 removes it. |
+| Timeouts | A `Subscribe` can be silent for hours, so `nginx`'s `proxy_timeout` is long (12 h) and `proxy_connect_timeout` 10 s. |
+| Residual risk | Anything that can reach the published port arrives as the trusted gateway and can forge a PROXY header. The allowlist is a network-trust control, not authentication. |
 
 ## Contract
 

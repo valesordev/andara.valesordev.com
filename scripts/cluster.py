@@ -18,18 +18,21 @@ export from or delete any other cluster.
            nothing that targets the old cluster today is retargeted.
   down     CONFIRM=andara, then delete `andara`. No such cluster exits 0.
   rebuild  CONFIRM=andara, checked first; export the two certificate Secrets (scripts/cluster_secrets.py),
-           delete, create. It deletes only once the export accounted for every Secret, each one
-           written or absent. Restore and the platform are later stories; rebuild ends by naming them.
+           delete, create, then `make platform-up` (scripts/platform_up.py), which restores the CA root.
+           It deletes only once the export accounted for every Secret, each one written or absent. The
+           steps later stories own are named at the end.
   kind-cluster [NAME]
-           print the kind cluster kind-load and kind-platform use: NAME when given, else the only
+           print the kind cluster kind-load uses: NAME when given, else the only
            cluster there is. Two or more and no NAME exits 2 naming them; guessing the first line of
            `kind get clusters` would silently become `andara` once it exists beside solo7.
 
-Every line is `cluster: <step> run=<id>`; the last names the context.
+Every line is `cluster: <step> run=<id>` (a rebuild's platform-up lines are `platform: …` with the
+same run id); the last names the context.
 
-Exit: 0 ok · 1 a runtime failure (a port in use, kind failed, the export failed, no kind cluster for
-kind-cluster) · 2 usage (a missing or wrong CONFIRM, an ambiguous KIND_CLUSTER) · 3 a prerequisite
-missing (Docker, bin/kind, bin/kubectl, or the context kind-andara when rebuild exports).
+Exit: 0 ok · 1 a runtime failure (a port in use, kind failed, the export failed, platform-up failed, no
+kind cluster for kind-cluster) · 2 usage (a missing or wrong CONFIRM, an ambiguous KIND_CLUSTER) · 3 a
+prerequisite missing (Docker, bin/kind, bin/kubectl, the context kind-andara when rebuild exports, or
+a credential platform-up requires).
 """
 import json
 import os
@@ -44,6 +47,7 @@ import uuid
 import yaml
 
 import cluster_secrets
+import platform_up
 
 REPO = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 NAME = "andara"
@@ -56,7 +60,6 @@ PORTS = [("ANDARA_HTTP_PORT", 8080), ("ANDARA_GRPC_PORT", 8443)]
 WAIT = "5m"
 # The steps a rebuild doesn't do yet. Each story that lands one replaces its line with the call.
 NOT_YET = [
-    "platform-up (Traefik, cert-manager, Strimzi, Argo CD) and the certificate restore: AW-INF-054",
     "shared-up (Kafka, object store in andara-shared): AW-INF-055, AW-INF-058",
     "the schema registry: AW-INF-057",
     "the collectors: AW-INF-065",
@@ -254,6 +257,18 @@ def down(r, confirm):
     r.say("deleted context=%s" % CONTEXT)
 
 
+def run_platform(r):
+    """`make platform-up` on the new cluster, its exit status carried over."""
+    p = platform_up.Run()
+    p.id = r.id
+    try:
+        platform_up.up(p, "box", env=dict(os.environ, ANDARA_KUBE_CONTEXT=CONTEXT))
+    except platform_up.Missing as e:
+        raise Missing("platform-up: %s" % p.redact(str(e)))
+    except (platform_up.Failed, platform_up.Usage) as e:
+        raise Failed("platform-up: %s" % p.redact(str(e)))
+
+
 def rebuild(r, confirm, ports=None, export=cluster_secrets.export):
     check_confirm(confirm)
     kind, _ = prerequisites()
@@ -273,6 +288,7 @@ def rebuild(r, confirm, ports=None, export=cluster_secrets.export):
     else:
         r.say("no cluster %s; skipping the export and the delete" % NAME)
     up(r, ports)
+    run_platform(r)
     r.say("not yet part of the rebuild, run by hand or by its story once it lands:")
     for step in NOT_YET:
         r.say("  pending " + step)
@@ -280,7 +296,7 @@ def rebuild(r, confirm, ports=None, export=cluster_secrets.export):
 
 
 def kind_cluster(name, kind="kind"):
-    """The cluster kind-load and kind-platform target (printed on stdout)."""
+    """The cluster kind-load targets (printed on stdout)."""
     if name:
         return name
     found = clusters(kind)

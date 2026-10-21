@@ -46,10 +46,10 @@ for e in "${envs[@]}"; do
     | sed "s/^/k8s-dry [$e]: /"
 done
 
-# The CA bootstrap `make helm-install` applies ahead of the chart is a manifest too.
+# The ClusterIssuers `make platform-up` applies (the private CA and the two ACME issuers) are manifests too.
 kubeconform -strict -summary -kubernetes-version "$KUBE_VERSION" \
   -schema-location default -schema-location "$CRD_SCHEMAS" \
-  deploy/k8s/cert-manager/andara-ca.yaml | sed "s/^/k8s-dry [cert-manager]: /"
+  deploy/k8s/cert-manager/*.yaml | sed "s/^/k8s-dry [cert-manager]: /"
 
 # The broker `make kafka-install` applies per namespace (AW-INF-014): Strimzi's
 # kafka.strimzi.io/v1 schemas from the same catalog.
