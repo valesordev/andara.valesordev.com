@@ -32,9 +32,9 @@ IMAGE       ?= andara-server
 # Where CI publishes the server image and dev/prod pull it from (AW-INF-013).
 REGISTRY_IMAGE := ghcr.io/valesordev/andara-server
 TAG         ?= dev
-# The kind cluster kind-load uses. Unset, it's the only cluster there is; with two
-# or more (andara beside solo7) they exit 2 naming them rather than guess (AW-INF-052).
-KIND_CLUSTER ?=
+# kubectl, helm and kind act on the cluster ANDARA_KUBE_CONTEXT names, default kind-andara, read
+# from the environment by scripts/kube.py and scripts/kube.sh (AW-INF-053). kind's cluster is the
+# context without its kind- prefix.
 KIND        ?= kind
 DURATION    ?= 300
 SOAK        ?= 5m
@@ -61,7 +61,7 @@ HAS_GO := $(shell find . -name '*.go' -not -path './.git/*' -not -path './bin/*'
         proto proto-check adr \
         k8s-dry check-targets clean build build-info goldens \
         values-schema values-schema-check helm-test image image-publish image-check cli-release cli-release-check cli-release-publish kind-load helm-install measure-tick stack-smoke stack-play stack-linkdead stack-recover stack-recover-mismatch \
-        platform-up platform-check cluster-up cluster-down cluster-rebuild stream-soak content-grammar-check observe-check observe-unavailable gcx-config gcx-check gcx-only-check scripts-test kafka-install kafka-broker-bounce \
+        platform-up platform-check kube-context-check cluster-up cluster-down cluster-rebuild stream-soak content-grammar-check observe-check observe-unavailable gcx-config gcx-check gcx-only-check scripts-test kafka-install kafka-broker-bounce \
         argocd-install argocd-status argocd-ui argocd-recover argocd-uninstall world-reset content-seed env-destroy env-recover \
         objectstore-install projector-stop projector-start projector-rebuild server-stop server-start core-versions-check \
         builder-reference builder-reference-check guide-check \
@@ -136,7 +136,8 @@ CHECK_TARGETS := fmt-check vet lint test proto-check schemas-check \
                  values-schema-check k8s-dry helm-test \
                  license-check content-grammar-check content-conformance scripts-test \
                  core-versions-check builder-reference-check guide-check \
-                 tf-fmt-check tf-validate tf-test tf-workflow-check gcx-only-check platform-check
+                 tf-fmt-check tf-validate tf-test tf-workflow-check gcx-only-check platform-check \
+                 kube-context-check
 
 ## check: fmt, vet, lint, test, proto, manifests — what CI runs
 check: $(CHECK_TARGETS)
@@ -246,8 +247,13 @@ proto-check:
 	@$(SCRIPTS)/proto.sh check
 
 ## scripts-test: unit tests for the Python tooling under scripts/ (scripts/tests)
+# Against a copy of a fixture kubeconfig whose current-context is some-other, never the developer's
+# own, and with ANDARA_KUBE_CONTEXT unset (AW-INF-053).
 scripts-test:
-	@$(PY) -m unittest discover -s $(SCRIPTS)/tests
+	@kubeconfig="$$(mktemp)"
+	trap 'rm -f "$$kubeconfig"' EXIT
+	cp $(SCRIPTS)/tests/fixtures/kubeconfig "$$kubeconfig"
+	KUBECONFIG="$$kubeconfig" env -u ANDARA_KUBE_CONTEXT $(PY) -m unittest discover -s $(SCRIPTS)/tests
 
 ## builder-reference: regenerate the Builder's Guide reference tables from andara-cli content reference
 builder-reference:
@@ -335,9 +341,9 @@ cli-release-check:
 cli-release-publish:
 	@$(SCRIPTS)/cli_release_publish.sh "$(CLI_TAG)"
 
-## kind-load: load the built image into the kind cluster — KIND_CLUSTER=<name>, required when there is more than one
+## kind-load: load the built image into the kind cluster ANDARA_KUBE_CONTEXT names (default kind-andara, so `andara`)
 kind-load:
-	@cluster="$$($(PY) $(SCRIPTS)/cluster.py kind-cluster "$(KIND_CLUSTER)" "$(KIND)")"
+	@cluster="$$($(PY) $(SCRIPTS)/kube.py kind-name)"
 	$(KIND) load docker-image $(IMAGE):$(TAG) --name "$$cluster"
 	echo "kind-load: $(IMAGE):$(TAG) -> kind/$$cluster"
 
@@ -385,6 +391,10 @@ platform-up:
 ## platform-check: versions.yaml is valid, and no script or workflow pins a platform item outside it (AW-INF-054)
 platform-check:
 	@$(PY) $(SCRIPTS)/platform_up.py check
+
+## kube-context-check: every kubectl, helm and kind call in scripts/, the Makefile and the workflows names ANDARA_KUBE_CONTEXT's cluster, and none moves current-context (AW-INF-053)
+kube-context-check:
+	@$(PY) $(SCRIPTS)/kube_check.py
 
 ## cluster-up: create the kind cluster `andara` (context kind-andara) from deploy/kind/cluster.yaml, edge on 127.0.0.1:8080 and :8443; idempotent (AW-INF-052)
 cluster-up:

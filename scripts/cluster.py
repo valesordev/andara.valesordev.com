@@ -21,16 +21,16 @@ export from or delete any other cluster.
            delete, create, then `make platform-up` (scripts/platform_up.py), which restores the CA root.
            It deletes only once the export accounted for every Secret, each one written or absent. The
            steps later stories own are named at the end.
-  kind-cluster [NAME]
-           print the kind cluster kind-load uses: NAME when given, else the only
-           cluster there is. Two or more and no NAME exits 2 naming them; guessing the first line of
-           `kind get clusters` would silently become `andara` once it exists beside solo7.
+
+All three act on `andara` and no other cluster: ANDARA_KUBE_CONTEXT set to anything but kind-andara
+exits 2 before anything runs (AW-INF-053), so `ANDARA_KUBE_CONTEXT=kind-ci make cluster-down` is
+refused, never reinterpreted. `make kind-load` takes its cluster from the variable (scripts/kube.py).
 
 Every line is `cluster: <step> run=<id>` (a rebuild's platform-up lines are `platform: …` with the
 same run id); the last names the context.
 
-Exit: 0 ok · 1 a runtime failure (a port in use, kind failed, the export failed, platform-up failed, no
-kind cluster for kind-cluster) · 2 usage (a missing or wrong CONFIRM, an ambiguous KIND_CLUSTER) · 3 a
+Exit: 0 ok · 1 a runtime failure (a port in use, kind failed, the export failed, platform-up failed) ·
+2 usage (a missing or wrong CONFIRM, or ANDARA_KUBE_CONTEXT naming another cluster) · 3 a
 prerequisite missing (Docker, bin/kind, bin/kubectl, the context kind-andara when rebuild exports, or
 a credential platform-up requires).
 """
@@ -47,11 +47,12 @@ import uuid
 import yaml
 
 import cluster_secrets
+import kube
 import platform_up
 
 REPO = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 NAME = "andara"
-CONTEXT = "kind-" + NAME
+CONTEXT = kube.DEFAULT
 CONFIG = os.path.join(REPO, "deploy", "kind", "cluster.yaml")
 VERSIONS = os.path.join(REPO, "deploy", "platform", "versions.yaml")
 BIN = os.path.join(REPO, "bin")
@@ -97,10 +98,10 @@ def tool(name):
 
 def prerequisites():
     """bin/kind, bin/kubectl and Docker, in that order of what to fix first."""
-    kind, kubectl = tool("kind"), tool("kubectl")
+    kind_bin, kubectl_bin = tool("kind"), tool("kubectl")
     if shutil.which("docker") is None:
         raise Missing("Docker not found; kind runs its nodes as Docker containers, so install Docker")
-    return kind, kubectl
+    return kind_bin, kubectl_bin
 
 
 def run(*cmd, check=True):
@@ -113,8 +114,8 @@ def run(*cmd, check=True):
     return p
 
 
-def clusters(kind):
-    out = run(kind, "get", "clusters").stdout
+def clusters(kind_bin):
+    out = run(kind_bin, "get", "clusters").stdout
     return [line.strip() for line in out.splitlines() if line.strip() and not line.startswith("No kind clusters")]
 
 
@@ -178,7 +179,7 @@ def complete(found):
     return all(found[kind].get(field) for kind, fields in FIELDS for field in fields)
 
 
-def merge_kubeconfig(kubectl, path):
+def merge_kubeconfig(kubectl_bin, path):
     """Copy kind-andara's cluster, user and context from kind's kubeconfig at path into the user's,
     with `kubectl config set`, which never changes current-context."""
     with open(path) as f:
@@ -187,13 +188,13 @@ def merge_kubeconfig(kubectl, path):
         raise Failed("kind's kubeconfig has no complete %s entry: %s" % (CONTEXT, sorted(k for k, v in found.items() if not v)))
     for kind, fields in FIELDS:
         for field in fields:
-            run(kubectl, "config", "set", "%s.%s.%s" % (kind, CONTEXT, field), str(found[kind][field]))
+            run(kubectl_bin, "config", "set", "%s.%s.%s" % (kind, CONTEXT, field), str(found[kind][field]))
 
 
-def context_complete(kubectl):
+def context_complete(kubectl_bin):
     """Whether the user's kubeconfig holds every field kind-andara needs. A first run that died part
     way through merge_kubeconfig can leave a context that exists but has no user."""
-    p = run(kubectl, "config", "view", "--raw", "-o", "json", check=False)
+    p = run(kubectl_bin, "config", "view", "--raw", "-o", "json", check=False)
     if p.returncode != 0:
         return False
     try:
@@ -203,9 +204,9 @@ def context_complete(kubectl):
 
 
 def up(r, ports=None):
-    kind, kubectl = prerequisites()
-    if NAME in clusters(kind):
-        if context_complete(kubectl):
+    kind_bin, kubectl_bin = prerequisites()
+    if NAME in clusters(kind_bin):
+        if context_complete(kubectl_bin):
             r.say("%s exists; nothing to do" % NAME)
         else:
             # A first run that created the cluster and failed before or during the merge. `kind export
@@ -213,12 +214,12 @@ def up(r, ports=None):
             with tempfile.TemporaryDirectory() as tmp:
                 own = os.path.join(tmp, "kubeconfig")
                 with open(own, "w") as f:
-                    f.write(run(kind, "get", "kubeconfig", "--name", NAME).stdout)
-                merge_kubeconfig(kubectl, own)
+                    f.write(run(kind_bin, "get", "kubeconfig", "--name", NAME).stdout)
+                merge_kubeconfig(kubectl_bin, own)
             r.say("%s exists; context %s was missing or incomplete, merged; current-context unchanged" % (NAME, CONTEXT))
         # An existing cluster is ready only if its nodes are: a first run may have failed in the
         # wait, or a node may have gone NotReady since.
-        wait_ready(r, kubectl)
+        wait_ready(r, kubectl_bin)
         return
     check_ports(ports)
     image = node_image()
@@ -228,17 +229,18 @@ def up(r, ports=None):
     # are copied over once the cluster exists, and the user's current-context never moves.
     with tempfile.TemporaryDirectory() as tmp:
         own = os.path.join(tmp, "kubeconfig")
-        run(kind, "create", "cluster", "--name", NAME, "--config", CONFIG, "--image", image,
+        run(kind_bin, "create", "cluster", "--name", NAME, "--config", CONFIG, "--image", image,
             "--wait", WAIT, "--kubeconfig", own)
-        merge_kubeconfig(kubectl, own)
+        merge_kubeconfig(kubectl_bin, own)
     r.say("context %s added; current-context unchanged" % CONTEXT)
-    wait_ready(r, kubectl)
+    wait_ready(r, kubectl_bin)
 
 
-def wait_ready(r, kubectl):
+def wait_ready(r, kubectl_bin):
     """Wait for every node to be Ready, then report them; a node that isn't is a failure."""
-    run(kubectl, "--context", CONTEXT, "wait", "--for=condition=Ready", "nodes", "--all", "--timeout=" + WAIT)
-    nodes = run(kubectl, "--context", CONTEXT, "get", "nodes", "--no-headers").stdout
+    run(*kube.kubectl("wait", "--for=condition=Ready", "nodes", "--all", "--timeout=" + WAIT,
+                      tool=kubectl_bin, ctx=CONTEXT))
+    nodes = run(*kube.kubectl("get", "nodes", "--no-headers", tool=kubectl_bin, ctx=CONTEXT)).stdout
     rows = [line.split() for line in nodes.splitlines() if line.strip()]
     # STATUS is the Ready condition plus flags: a cordoned node is `Ready,SchedulingDisabled`.
     ready = sum(1 for row in rows if len(row) > 1 and row[1].split(",")[0] == "Ready")
@@ -250,13 +252,20 @@ def wait_ready(r, kubectl):
 
 def down(r, confirm):
     check_confirm(confirm)
-    kind, _ = prerequisites()
-    if NAME not in clusters(kind):
+    kind_bin, _ = prerequisites()
+    if NAME not in clusters(kind_bin):
         r.say("no cluster %s; nothing to delete context=%s" % (NAME, CONTEXT))
         return
     r.say("delete %s" % NAME)
-    run(kind, "delete", "cluster", "--name", NAME)
+    run(kind_bin, "delete", "cluster", "--name", NAME)
     r.say("deleted context=%s" % CONTEXT)
+
+
+def box_only():
+    try:
+        kube.box_only()
+    except kube.WrongContext as e:
+        raise Usage(str(e))
 
 
 def run_platform(r):
@@ -273,8 +282,8 @@ def run_platform(r):
 
 def rebuild(r, confirm, ports=None, export=cluster_secrets.export):
     check_confirm(confirm)
-    kind, _ = prerequisites()
-    if NAME in clusters(kind):
+    kind_bin, _ = prerequisites()
+    if NAME in clusters(kind_bin):
         r.say("export certificate Secrets to %s" % os.path.relpath(cluster_secrets.TLS_DIR, REPO))
         try:
             result = export(context=CONTEXT, say=lambda m: r.say("export " + m))
@@ -297,26 +306,12 @@ def rebuild(r, confirm, ports=None, export=cluster_secrets.export):
     r.say("rebuilt context=%s" % CONTEXT)
 
 
-def kind_cluster(name, kind="kind"):
-    """The cluster kind-load targets (printed on stdout)."""
-    if name:
-        return name
-    found = clusters(kind)
-    if not found:
-        raise Failed("no kind cluster found (KIND_CLUSTER=<name>)")
-    if len(found) > 1:
-        raise Usage("KIND_CLUSTER is unset and there are %d kind clusters (%s); name one: KIND_CLUSTER=<name>"
-                    % (len(found), ", ".join(found)))
-    return found[0]
-
-
 def main(argv):
     cmd, args = (argv[0], argv[1:]) if argv else ("", [])
     r = Run()
     try:
-        if cmd == "kind-cluster" and len(args) <= 2:
-            print(kind_cluster(args[0] if args else "", *(args[1:] or ["kind"])))
-            return 0
+        if cmd in ("up", "down", "rebuild"):
+            box_only()
         if cmd == "up" and not args:
             up(r)
         elif cmd == "down" and len(args) <= 1:
@@ -324,7 +319,7 @@ def main(argv):
         elif cmd == "rebuild" and len(args) <= 1:
             rebuild(r, args[0] if args else "")
         else:
-            raise Usage("usage: scripts/cluster.py up | down CONFIRM | rebuild CONFIRM | kind-cluster [NAME [KIND]]")
+            raise Usage("usage: scripts/cluster.py up | down CONFIRM | rebuild CONFIRM")
     except (Failed, Usage, Missing) as e:
         print("cluster: %s run=%s" % (e, r.id), file=sys.stderr)
         return e.code

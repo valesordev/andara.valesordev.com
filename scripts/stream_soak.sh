@@ -24,10 +24,13 @@ NS="andara-${ENVNAME}"
 for tool in kubectl openssl curl; do
   command -v "$tool" >/dev/null 2>&1 || { echo "make: stream-soak: $tool not found" >&2; exit 1; }
 done
+# Every call names its cluster: ANDARA_KUBE_CONTEXT, default kind-andara (AW-INF-053).
+. scripts/kube.sh
+kube_require stream-soak
 
 HOST="$(awk '/^host:/{print $2}' "$VALUES")"
-INGRESS_NS="$(helm -n "$NS" get values andara --all -o json | "$PY" -c 'import json,sys; print(json.load(sys.stdin)["networkPolicy"]["ingressNamespace"])')"
-ISSUER="$(helm -n "$NS" get values andara --all -o json | "$PY" -c 'import json,sys; print(json.load(sys.stdin)["tls"]["issuer"])')"
+INGRESS_NS="$(kube_helm -n "$NS" get values andara --all -o json | "$PY" -c 'import json,sys; print(json.load(sys.stdin)["networkPolicy"]["ingressNamespace"])')"
+ISSUER="$(kube_helm -n "$NS" get values andara --all -o json | "$PY" -c 'import json,sys; print(json.load(sys.stdin)["tls"]["issuer"])')"
 
 # Where the edge is. ANDARA_SOAK_RESOLVE pins the dial address (curl's --resolve) so
 # neither the box nor a CI runner needs an /etc/hosts line; the default is the kind
@@ -64,13 +67,13 @@ soak=$!
 # stream open, and the next handshake presents the new serial.
 if (( secs >= 120 )); then
   sleep 30
-  old="$(kubectl -n "$NS" get secret andara-edge-tls -o jsonpath='{.data.tls\.crt}')"
+  old="$(kube_kubectl -n "$NS" get secret andara-edge-tls -o jsonpath='{.data.tls\.crt}')"
   now="$(date -u +%Y-%m-%dT%H:%M:%SZ)"
-  kubectl -n "$NS" patch certificate andara-edge --subresource=status --type=merge \
+  kube_kubectl -n "$NS" patch certificate andara-edge --subresource=status --type=merge \
     -p "{\"status\":{\"conditions\":[{\"type\":\"Issuing\",\"status\":\"True\",\"reason\":\"ManuallyTriggered\",\"message\":\"make stream-soak\",\"lastTransitionTime\":\"$now\"}]}}" >/dev/null
   echo "stream-soak: renewal of andara-edge triggered at +30s"
   for _ in $(seq 1 60); do
-    [[ "$(kubectl -n "$NS" get secret andara-edge-tls -o jsonpath='{.data.tls\.crt}')" != "$old" ]] && break
+    [[ "$(kube_kubectl -n "$NS" get secret andara-edge-tls -o jsonpath='{.data.tls\.crt}')" != "$old" ]] && break
     sleep 2
   done
   after=""
@@ -98,7 +101,7 @@ rm -f "$LOG"
 # Both legs HTTP/2: Traefik labels the inbound protocol, and gRPC to the pod cannot run
 # over anything but HTTP/2, so a non-zero grpc counter on this release's routers is the
 # whole proof. Read through a port-forward; the metrics entrypoint is not exposed.
-kubectl -n "$INGRESS_NS" port-forward deploy/traefik 19100:9100 >/dev/null 2>&1 &
+kube_kubectl_exec -n "$INGRESS_NS" port-forward deploy/traefik 19100:9100 >/dev/null 2>&1 &
 pf=$!
 trap 'kill $pf 2>/dev/null || true' EXIT
 sleep 2

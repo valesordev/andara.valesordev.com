@@ -14,10 +14,25 @@ import tempfile
 import unittest
 from contextlib import redirect_stderr, redirect_stdout
 from types import SimpleNamespace
+from unittest import mock
 
 HERE = os.path.dirname(os.path.abspath(__file__))
 SCRIPTS = os.path.dirname(HERE)
 REPO = os.path.dirname(SCRIPTS)
+sys.path.insert(0, SCRIPTS)  # argocd.py imports kube
+
+# Every call argocd.py builds names a context checked against the kubeconfig (AW-INF-053): the
+# fixture's, with ANDARA_KUBE_CONTEXT unset, whatever the shell running the tests has.
+_ENV = mock.patch.dict(os.environ, dict({k: v for k, v in os.environ.items() if k != "ANDARA_KUBE_CONTEXT"},
+                                        KUBECONFIG=os.path.join(HERE, "fixtures", "kubeconfig")), clear=True)
+
+
+def setUpModule():
+    _ENV.start()
+
+
+def tearDownModule():
+    _ENV.stop()
 
 
 def load_argocd():
@@ -357,13 +372,9 @@ class HelmInstallRefusal(unittest.TestCase):
     def test_refuses_and_touches_nothing(self):
         with tempfile.TemporaryDirectory() as d:
             log = os.path.join(d, "calls")
-            for tool, body in (("kubectl", 'case "$*" in "get crd applications.argoproj.io"|"-n argocd get application andara-dev") exit 0;; esac\nexit 0'),
-                               ("helm", "exit 0")):
-                p = os.path.join(d, tool)
-                with open(p, "w") as f:
-                    f.write('#!/bin/sh\necho "%s $*" >> "%s"\n%s\n' % (tool, log, body))
-                os.chmod(p, os.stat(p).st_mode | stat.S_IEXEC)
-            env = dict(os.environ, PATH=d + os.pathsep + os.environ["PATH"])
+            env = stub_bin(d, log, {
+                "kubectl": 'case "$*" in "get crd applications.argoproj.io"|"-n argocd get application andara-dev") exit 0;; esac\nexit 0',
+                "helm": "exit 0"})
             p = subprocess.run([os.path.join(SCRIPTS, "helm_install.sh"), "dev", "andara-server", "dev", "", ""],
                                capture_output=True, text=True, env=env)
             self.assertEqual(p.returncode, 1, p.stderr)
@@ -372,20 +383,26 @@ class HelmInstallRefusal(unittest.TestCase):
             with open(log) as f:
                 calls = f.read().splitlines()
             # The refusal is the last thing it does: the two probes, then exit.
-            self.assertEqual(calls, ["kubectl get crd applications.argoproj.io",
-                                     "kubectl -n argocd get application andara-dev"])
-            self.assertEqual(p.stderr.strip().count("\n"), 0, p.stderr)
+            self.assertEqual(calls, ["kubectl --context kind-andara get crd applications.argoproj.io",
+                                     "kubectl --context kind-andara -n argocd get application andara-dev"])
+            self.assertEqual(p.stderr.strip().splitlines()[0], "context: kind-andara")
+            self.assertEqual(len(p.stderr.strip().splitlines()), 2, p.stderr)
 
 
 
 def stub_bin(d, log, tools):
-    """Shell stubs on PATH that log every call to log; tools maps a name to its body."""
+    """Shell stubs on PATH that log every call to log, whole; tools maps a name to its body, which
+    sees the arguments after the context flag (AW-INF-053), so its patterns name the command alone."""
     for tool, body in tools.items():
         p = os.path.join(d, tool)
         with open(p, "w") as f:
-            f.write('#!/bin/sh\necho "%s $*" >> "%s"\n%s\n' % (tool, log, body))
+            f.write('#!/bin/sh\necho "%s $*" >> "%s"\n'
+                    'case "$1" in --context|--kube-context) shift 2;; esac\n%s\n' % (tool, log, body))
         os.chmod(p, os.stat(p).st_mode | stat.S_IEXEC)
-    return dict(os.environ, PATH=d + os.pathsep + os.environ["PATH"])
+    # The fixture kubeconfig and no ANDARA_KUBE_CONTEXT, whatever the caller's shell has (AW-INF-053).
+    env = {k: v for k, v in os.environ.items() if k != "ANDARA_KUBE_CONTEXT"}
+    return dict(env, PATH=d + os.pathsep + os.environ["PATH"],
+                KUBECONFIG=os.path.join(REPO, "scripts", "tests", "fixtures", "kubeconfig"))
 
 
 def calls(log):

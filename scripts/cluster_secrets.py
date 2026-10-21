@@ -27,7 +27,8 @@ Both print each Secret's file mode and, for a certificate, its serial and notBef
 never the key. AW-INF-066 records them before and after a rebuild.
 
 Exit: 0 ok (including nothing to export or restore) · 1 a kubectl read, a write or an apply failed,
-or a target namespace is missing · 2 usage · 3 kubectl is missing (run `make bootstrap`) or the kubeconfig has no context kind-andara (ADR-0013 decision 1).
+or a target namespace is missing · 2 usage · 3 kubectl is missing (run `make bootstrap`) or the kubeconfig has
+no context ANDARA_KUBE_CONTEXT names, kind-andara by default (scripts/kube.py, ADR-0013 decision 1).
 """
 import base64
 import os
@@ -37,8 +38,9 @@ import tempfile
 
 import yaml
 
+import kube
+
 REPO = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
-CONTEXT = "kind-andara"
 TLS_DIR = os.path.join(REPO, ".local", "tls")
 # (namespace, name), in the order restore applies them: the CA root before the certificate it may
 # have issued.
@@ -70,15 +72,18 @@ def kubectl_path():
 
 def require_context(context):
     """A context the kubeconfig doesn't have is a missing prerequisite, exit 3 (ADR-0013 decision 1),
-    checked once up front: kubectl words it differently per command, and matching its stderr would
-    either miss one wording or take an unreachable cluster for a missing context."""
-    p = subprocess.run([kubectl_path(), "config", "get-contexts", context], capture_output=True, text=True)
-    if p.returncode != 0:
-        raise Missing("kubeconfig context %s is missing; `make cluster-up` creates the cluster and adds it" % context)
+    checked once up front against the kubeconfig (scripts/kube.py): kubectl words it differently per
+    command, and matching its stderr would either miss one wording or take an unreachable cluster for
+    a missing context."""
+    kubectl_path()
+    try:
+        kube.require(ctx=context)
+    except kube.Missing as e:
+        raise Missing(str(e))
 
 
 def kubectl(context, *args, stdin=None):
-    return subprocess.run([kubectl_path(), "--context", context, *args], input=stdin,
+    return subprocess.run(kube.kubectl(*args, tool=kubectl_path(), ctx=context), input=stdin,
                           capture_output=True, text=True)
 
 
@@ -131,10 +136,11 @@ def write_atomic(path, text):
         raise
 
 
-def export(context=CONTEXT, tls_dir=None, say=default_say):
+def export(context=None, tls_dir=None, say=default_say):
     """Export every Secret that exists. Returns {"<ns>/<name>": "written" | "absent"}. Raises Failed
     on the first Secret it can't read or write; earlier files are already complete by then."""
     tls_dir = tls_dir or TLS_DIR
+    context = context or kube.context()
     require_context(context)
     os.makedirs(tls_dir, mode=0o700, exist_ok=True)
     result = {}
@@ -178,10 +184,11 @@ def clean(secret):
     return out
 
 
-def restore(context=CONTEXT, tls_dir=None, say=default_say, namespaces=None):
+def restore(context=None, tls_dir=None, say=default_say, namespaces=None):
     """Reapply every exported Secret, or only those in namespaces when given. Returns the number
     restored. platform-up restores cert-manager's alone: andara-dev doesn't exist yet when it runs."""
     tls_dir = tls_dir or TLS_DIR
+    context = context or kube.context()
     found = []
     for ns, name in SECRETS:
         if namespaces is not None and ns not in namespaces:

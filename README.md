@@ -50,7 +50,9 @@ cert-manager, the ClusterIssuers, Traefik, Strimzi and Argo CD (AW-INF-054). The
 issuers need `CLOUDFLARE_API_TOKEN` in `.local/box.env`; without it they're skipped, and the run
 says so.
 
-With more than one kind cluster, `make kind-load` needs `KIND_CLUSTER=<name>`.
+Every cluster target acts on `ANDARA_KUBE_CONTEXT`, default `kind-andara`, never on the
+kubeconfig's current-context, and none moves it. `make kind-load` loads into the kind cluster that
+context names. A context the kubeconfig doesn't have exits 3, naming it.
 
 ## Where things are
 

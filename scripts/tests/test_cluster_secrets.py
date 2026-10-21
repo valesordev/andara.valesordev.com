@@ -19,6 +19,21 @@ REPO = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__)
 sys.path.insert(0, os.path.join(REPO, "scripts"))
 import cluster_secrets  # noqa: E402
 
+
+# The fixture kubeconfig, with ANDARA_KUBE_CONTEXT unset, whatever the shell running the tests has
+# (AW-INF-053): these tests expect the default context, kind-andara.
+_ENV = mock.patch.dict(os.environ, dict({k: v for k, v in os.environ.items() if k != "ANDARA_KUBE_CONTEXT"},
+                                        KUBECONFIG=os.path.join(REPO, "scripts", "tests", "fixtures", "kubeconfig")),
+                       clear=True)
+
+
+def setUpModule():
+    _ENV.start()
+
+
+def tearDownModule():
+    _ENV.stop()
+
 CM_ANNOTATIONS = {
     "cert-manager.io/issuer-name": "andara-selfsigned",
     "cert-manager.io/issuer-kind": "ClusterIssuer",
@@ -261,7 +276,7 @@ class MissingContext(Base):
         for step in (self.export, self.restore):
             with self.subTest(step=step.__name__), self.assertRaises(cluster_secrets.Missing) as e:
                 step()
-            self.assertIn("context kind-andara is missing", str(e.exception))
+            self.assertIn("the kubeconfig has no context kind-andara", str(e.exception))
 
     def test_main_exits_3_through_real_kubectl(self):
         self.exported()

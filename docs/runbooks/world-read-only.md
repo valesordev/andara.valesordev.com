@@ -27,12 +27,12 @@ later. Detection takes at most the probe interval (one second), so that is the w
 
 ```
 curl -s http://<server>:8080/metrics | grep andara_ingress_degraded        # 1 while read-only
-kubectl -n andara-<env> logs statefulset/andara | grep 'command log'          # "unreachable" with the broker error; "reachable" on exit
-kubectl -n andara-<env> get kafka andara-log                                   # Strimzi's Ready condition for the cluster
-kubectl -n andara-<env> get pods -l strimzi.io/cluster=andara-log              # andara-log-broker-{0,1,2}
-kubectl -n andara-<env> exec andara-log-broker-1 -c kafka -- \
+kubectl --context kind-andara -n andara-<env> logs statefulset/andara | grep 'command log'          # "unreachable" with the broker error; "reachable" on exit
+kubectl --context kind-andara -n andara-<env> get kafka andara-log                                   # Strimzi's Ready condition for the cluster
+kubectl --context kind-andara -n andara-<env> get pods -l strimzi.io/cluster=andara-log              # andara-log-broker-{0,1,2}
+kubectl --context kind-andara -n andara-<env> exec andara-log-broker-1 -c kafka -- \
   /opt/kafka/bin/kafka-topics.sh --bootstrap-server localhost:9092 --describe --under-replicated-partitions
-kubectl -n andara-<env> exec deploy/andara-kafka-tools -- rpk topic list      # rpk, through the toolbox
+kubectl --context kind-andara -n andara-<env> exec deploy/andara-kafka-tools -- rpk topic list      # rpk, through the toolbox
 ```
 
 Locally: `make up`, `docker compose -f deploy/compose/docker-compose.yaml stop redpanda`, and the

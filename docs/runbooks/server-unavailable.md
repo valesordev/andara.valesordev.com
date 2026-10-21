@@ -17,9 +17,9 @@ players' streams have dropped and their Characters are linkdead (`AW-SRV-015`). 
 ## How to confirm
 
 ```
-kubectl -n andara-<env> get statefulset andara            # READY 0/1 confirms it
-kubectl -n andara-<env> get pod andara-0 -o wide          # Pending, CrashLoopBackOff, or absent?
-kubectl -n andara-<env> describe pod andara-0 | tail -30  # events: scheduling, image pull, probe failures
+kubectl --context kind-andara -n andara-<env> get statefulset andara            # READY 0/1 confirms it
+kubectl --context kind-andara -n andara-<env> get pod andara-0 -o wide          # Pending, CrashLoopBackOff, or absent?
+kubectl --context kind-andara -n andara-<env> describe pod andara-0 | tail -30  # events: scheduling, image pull, probe failures
 ```
 
 If the pod is `Running` and `1/1` but the alert still fires, the scrape is the problem, not the
@@ -31,7 +31,7 @@ The fastest safe action depends on what `describe` says:
 
 | Symptom | Action |
 |---------|--------|
-| Pod absent, StatefulSet present | `kubectl -n andara-<env> rollout restart statefulset/andara` |
+| Pod absent, StatefulSet present | `kubectl --context kind-andara -n andara-<env> rollout restart statefulset/andara` |
 | StatefulSet absent | `make helm-install ENV=<env>` — the snapshot claim is retained (`helm.sh/resource-policy: keep`) and reattaches by name |
 | `Pending`, volume events | the PVC is bound to a node that is gone; see "Diagnose" |
 | `CrashLoopBackOff` | this is `AndaraServerCrashLooping` — follow `server-crashlooping.md` |
@@ -44,15 +44,15 @@ The fastest safe action depends on what `describe` says:
 
 ## How to diagnose
 
-1. `kubectl -n andara-<env> logs andara-0 -c partitions` — did the init container run? It prints the
+1. `kubectl --context kind-andara -n andara-<env> logs andara-0 -c partitions` — did the init container run? It prints the
    ordinal and Partition set.
-2. `kubectl -n andara-<env> logs andara-0 -c server --previous` — the last exit reason and code
+2. `kubectl --context kind-andara -n andara-<env> logs andara-0 -c server --previous` — the last exit reason and code
    (`server-crashlooping.md`'s exit table; `2` is a Go panic, not a recovery refusal).
-3. `kubectl -n andara-<env> get pvc snapshots-andara-0` — `Bound`? If `Lost`, the PV is gone; recovery
+3. `kubectl --context kind-andara -n andara-<env> get pvc snapshots-andara-0` — `Bound`? If `Lost`, the PV is gone; recovery
    will replay from the log, which is correct and slow (ADR-0002). Set `recovery.require_snapshot=false`
    for one boot if prod has it `true`.
-4. `kubectl -n andara-<env> get events --sort-by=.lastTimestamp | tail -20`.
-5. Image: `kubectl -n andara-<env> get pod andara-0 -o jsonpath='{.spec.containers[0].image}'` — does the
+4. `kubectl --context kind-andara -n andara-<env> get events --sort-by=.lastTimestamp | tail -20`.
+5. Image: `kubectl --context kind-andara -n andara-<env> get pod andara-0 -o jsonpath='{.spec.containers[0].image}'` — does the
    tag exist in the registry? A `make deploy` with an unpublished tag lands here.
 
 ## When to escalate

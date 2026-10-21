@@ -5,6 +5,7 @@
 import os
 import sys
 import unittest
+from unittest import mock
 
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 import topics  # noqa: E402
@@ -24,11 +25,16 @@ class RpkPrefix(unittest.TestCase):
 
     def test_cluster_env_never_reaches_compose(self):
         # The defect this story fixes: with `make up` running, dev went to the laptop.
+        fixture = os.path.join(os.path.dirname(os.path.abspath(__file__)), "fixtures", "kubeconfig")
+        env = {k: v for k, v in os.environ.items() if k != "ANDARA_KUBE_CONTEXT"}
+        p = mock.patch.dict(os.environ, dict(env, KUBECONFIG=fixture), clear=True)
+        p.start()
+        self.addCleanup(p.stop)
         for env in ("dev", "prod"):
             with self.subTest(env=env):
                 p = topics.rpk_prefix(env, compose_redpanda_running=True, host_rpk=True)
                 self.assertNotIn("docker", p)
-                self.assertEqual(p[:3], ["kubectl", "-n", "andara-" + env])
+                self.assertEqual(p[:5], ["kubectl", "--context", "kind-andara", "-n", "andara-" + env])
                 self.assertIn(topics.CLUSTER_TOOLBOX, p)
                 self.assertEqual(p[-3:], ["rpk", "-X", "brokers=" + topics.CLUSTER_BOOTSTRAP])
 

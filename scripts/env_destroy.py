@@ -24,6 +24,8 @@ import subprocess
 import sys
 import time
 
+import kube
+
 ARGO_NS = "argocd"
 DELETE_DEADLINE = 600
 
@@ -42,7 +44,7 @@ class StepFailed(Exception):
 
 
 def kubectl(*args, check=True):
-    p = subprocess.run(["kubectl", *args], capture_output=True, text=True)
+    p = subprocess.run(kube.kubectl(*args), capture_output=True, text=True)
     if check and p.returncode != 0:
         raise StepFailed("kubectl %s: %s" % (" ".join(args[:4]), (p.stderr or p.stdout).strip()))
     return p
@@ -92,8 +94,8 @@ def delete_namespace(ns, deadline=DELETE_DEADLINE, sleep=time.sleep, clock=time.
     end = clock() + deadline
     while kubectl("get", "namespace", ns, check=False).returncode == 0:
         if clock() > end:
-            raise StepFailed("%s still exists after %ds; see `kubectl get namespace %s -o yaml`"
-                             % (ns, deadline, ns))
+            raise StepFailed("%s still exists after %ds; see `kubectl --context %s get namespace %s -o yaml`"
+                             % (ns, deadline, kube.context(), ns))
         sleep(2)
 
 

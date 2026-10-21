@@ -29,6 +29,8 @@ import shutil
 import subprocess
 import sys
 
+import kube
+
 REPO = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 DECL = os.path.join(REPO, "deploy", "kafka", "topics.yaml")
 COMPOSE = os.path.join(REPO, "deploy", "compose", "docker-compose.yaml")
@@ -176,8 +178,8 @@ def rpk_prefix(env, compose_redpanda_running, host_rpk):
     applied dev's declaration to the laptop's broker.
     """
     if env != "local":
-        return ["kubectl", "-n", "andara-" + env, "exec", "-i", CLUSTER_TOOLBOX, "--",
-                "rpk", "-X", "brokers=" + CLUSTER_BOOTSTRAP]
+        return kube.kubectl("-n", "andara-" + env, "exec", "-i", CLUSTER_TOOLBOX, "--",
+                            "rpk", "-X", "brokers=" + CLUSTER_BOOTSTRAP)
     if compose_redpanda_running:
         return ["docker", "compose", "-f", COMPOSE, "exec", "-T", "redpanda", "rpk"]
     if host_rpk:

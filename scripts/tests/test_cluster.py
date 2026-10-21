@@ -2,8 +2,8 @@
 # Copyright 2026 Valesor Development
 
 """make cluster-up | cluster-down | cluster-rebuild (AW-INF-052): the cluster's shape, the port check,
-the CONFIRM guard, export before delete, prerequisites, `make clean` keeping .local/tls/, and
-KIND_CLUSTER refusing to guess. Nothing here creates a cluster; the integration ACs (1, 2, 5) are the
+the CONFIRM guard, export before delete, prerequisites, `make clean` keeping .local/tls/, kind-load's
+cluster from ANDARA_KUBE_CONTEXT, and every other context refused (AW-INF-053). Nothing here creates a cluster; the integration ACs (1, 2, 5) are the
 operator's run on the box."""
 import json
 import os
@@ -23,6 +23,20 @@ REPO = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__)
 sys.path.insert(0, os.path.join(REPO, "scripts"))
 import cluster  # noqa: E402
 import cluster_secrets  # noqa: E402
+import kube  # noqa: E402
+# The fixture kubeconfig, with ANDARA_KUBE_CONTEXT unset, whatever the shell running the tests has
+# (AW-INF-053): these tests expect the default context, kind-andara.
+_ENV = mock.patch.dict(os.environ, dict({k: v for k, v in os.environ.items() if k != "ANDARA_KUBE_CONTEXT"},
+                                        KUBECONFIG=os.path.join(REPO, "scripts", "tests", "fixtures", "kubeconfig")),
+                       clear=True)
+
+
+def setUpModule():
+    _ENV.start()
+
+
+def tearDownModule():
+    _ENV.stop()
 
 
 def load(path):
@@ -497,25 +511,25 @@ class Clean(unittest.TestCase):
         self.assertFalse(os.path.exists(os.path.join(d, "bin")))
 
 
-class KindCluster(unittest.TestCase):
-    """AC-11: with KIND_CLUSTER unset and two clusters, kind-load exits 2 and loads nothing."""
+class KindLoad(unittest.TestCase):
+    """AW-INF-053: kind-load's cluster is ANDARA_KUBE_CONTEXT without its kind- prefix, and a context
+    that isn't a kind one exits 2 naming it and loads nothing (AC-9)."""
 
     def setUp(self):
         self.d = tempfile.mkdtemp()
         self.addCleanup(shutil.rmtree, self.d)
         self.log = os.path.join(self.d, "calls")
         self.kind = os.path.join(self.d, "kind")
-
-    def stub(self, *clusters):
         with open(self.kind, "w") as f:
-            f.write("#!/bin/sh\necho \"$*\" >> %s\n[ \"$1 $2\" = \"get clusters\" ] && printf '%s'\nexit 0\n"
-                    % (self.log, "".join(c + "\\n" for c in clusters)))
+            f.write("#!/bin/sh\necho \"$*\" >> %s\nexit 0\n" % self.log)
         os.chmod(self.kind, 0o755)
 
-    def make(self, target, *args):
-        env = {k: v for k, v in os.environ.items() if k != "KIND_CLUSTER"}
-        return subprocess.run(["make", "-s", "-C", REPO, target, "KIND=" + self.kind, *args],
-                              capture_output=True, text=True, env=env)
+    def make(self, context=None):
+        env = {k: v for k, v in os.environ.items() if k != "ANDARA_KUBE_CONTEXT"}
+        if context is not None:
+            env["ANDARA_KUBE_CONTEXT"] = context
+        return subprocess.run(["make", "-s", "-C", REPO, "kind-load", "KIND=" + self.kind, "IMAGE=andara-server",
+                               "TAG=t"], capture_output=True, text=True, env=env)
 
     def calls(self):
         if not os.path.exists(self.log):
@@ -523,27 +537,48 @@ class KindCluster(unittest.TestCase):
         with open(self.log) as f:
             return f.read().splitlines()
 
-    def test_two_clusters_and_no_name_loads_nothing(self):
-        self.stub("solo7", "andara")
-        for target in ("kind-load",):
-            with self.subTest(target=target):
-                r = self.make(target)
-                self.assertNotEqual(r.returncode, 0)
-                self.assertIn("there are 2 kind clusters (solo7, andara)", r.stderr)
-        self.assertEqual([c for c in self.calls() if c != "get clusters"], [])
-        self.assertEqual(cluster.main(["kind-cluster", "", self.kind]), 2)
-
-    def test_a_named_cluster_is_used(self):
-        self.stub("solo7", "andara")
-        r = self.make("kind-load", "KIND_CLUSTER=solo7", "IMAGE=andara-server", "TAG=t")
+    def test_unset_is_andara(self):
+        r = self.make()
         self.assertEqual(r.returncode, 0, r.stderr)
-        self.assertIn("load docker-image andara-server:t --name solo7", self.calls())
+        self.assertEqual(self.calls(), ["load docker-image andara-server:t --name andara"])
 
-    def test_one_cluster_is_used_unnamed(self):
-        self.stub("solo7")
-        r = self.make("kind-load", "IMAGE=andara-server", "TAG=t")
+    def test_kind_ci_is_ci(self):
+        r = self.make("kind-ci")
         self.assertEqual(r.returncode, 0, r.stderr)
-        self.assertIn("load docker-image andara-server:t --name solo7", self.calls())
+        self.assertEqual(self.calls(), ["load docker-image andara-server:t --name ci"])
+
+    def test_a_context_that_is_not_kind_loads_nothing(self):
+        r = self.make("gke_x")
+        self.assertNotEqual(r.returncode, 0)
+        self.assertIn("ANDARA_KUBE_CONTEXT=gke_x is not a kind context", r.stderr)
+        self.assertEqual(self.calls(), [])
+        with mock.patch.dict(os.environ, {"ANDARA_KUBE_CONTEXT": "gke_x"}):
+            self.assertEqual(kube.main(["kind-name"]), 2)
+
+
+class OtherContext(unittest.TestCase):
+    """AW-INF-053 AC-9: cluster-up, -down and -rebuild act on andara only, so another context is exit 2
+    before anything runs, and never reinterpreted."""
+
+    def test_refused_before_anything_runs(self):
+        with mock.patch.dict(os.environ, {"ANDARA_KUBE_CONTEXT": "kind-ci"}), \
+                mock.patch.object(cluster, "run", side_effect=AssertionError("ran something")), \
+                mock.patch.object(cluster, "prerequisites", side_effect=AssertionError("looked for tools")), \
+                mock.patch.object(cluster_secrets, "kubectl", side_effect=AssertionError("exported")):
+            for argv in (["up"], ["down", "andara"], ["rebuild", "andara"]):
+                with self.subTest(argv=argv):
+                    self.assertEqual(cluster.main(argv), 2)
+
+    def test_kind_andara_set_explicitly_is_allowed(self):
+        with mock.patch.dict(os.environ, {"ANDARA_KUBE_CONTEXT": "kind-andara"}):
+            cluster.box_only()
+
+    def test_through_make(self):
+        env = dict(os.environ, ANDARA_KUBE_CONTEXT="kind-ci")
+        r = subprocess.run(["make", "-s", "-C", REPO, "cluster-down", "CONFIRM=andara"],
+                           capture_output=True, text=True, env=env)
+        self.assertEqual(r.returncode, 2, r.stderr)
+        self.assertIn("ANDARA_KUBE_CONTEXT=kind-ci", r.stderr)
 
 
 class Ignored(unittest.TestCase):

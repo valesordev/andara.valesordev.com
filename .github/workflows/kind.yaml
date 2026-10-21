@@ -30,6 +30,8 @@ on:
       - "scripts/cluster_secrets.py"
       - "scripts/tf.py"
       - "scripts/stream_soak.sh"
+      - "scripts/kube.py"
+      - "scripts/kube.sh"
       - "internal/smoke/soak_test.go"
       - ".github/workflows/kind.yaml"
   pull_request:
@@ -47,6 +49,8 @@ on:
       - "scripts/cluster_secrets.py"
       - "scripts/tf.py"
       - "scripts/stream_soak.sh"
+      - "scripts/kube.py"
+      - "scripts/kube.sh"
       - "internal/smoke/soak_test.go"
       - ".github/workflows/kind.yaml"
   # Nightly: the 60 m soak (AW-INF-006 AC-1). A pull request runs the same soak for 5 m.
@@ -57,6 +61,10 @@ jobs:
   lifecycle:
     runs-on: ubuntu-latest
     timeout-minutes: 100
+    # Every script, target and inline call acts on CI's cluster by name, never the ambient
+    # context (AW-INF-053, ADR-0013 decision 1). kind-action names the cluster `ci`.
+    env:
+      ANDARA_KUBE_CONTEXT: kind-ci
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-go@v5
@@ -83,40 +91,40 @@ jobs:
       - name: platform-up PROFILE=ci (cert-manager, andara-ca, Traefik with PROXY trust)
         run: |
           set -euo pipefail
-          make platform-up PROFILE=ci ANDARA_KUBE_CONTEXT=kind-ci
+          make platform-up PROFILE=ci
           # AW-INF-054 AC-12: ci installs those and nothing else.
-          releases="$(helm list -A -o json | python3 -c 'import json,sys; print(" ".join(sorted(r["name"] for r in json.load(sys.stdin))))')"
+          releases="$(helm --kube-context "$ANDARA_KUBE_CONTEXT" list -A -o json | python3 -c 'import json,sys; print(" ".join(sorted(r["name"] for r in json.load(sys.stdin))))')"
           [[ "$releases" == "cert-manager traefik" ]] \
             || { echo "::error::platform-up PROFILE=ci installed '$releases', not 'cert-manager traefik'"; exit 1; }
       - name: image
         run: make image
       - name: kind-load
-        run: make kind-load KIND_CLUSTER=ci
+        run: make kind-load
       - name: helm-install
         run: make helm-install ENV=local
       - name: pod is ready because /readyz says so
         run: |
           set -euo pipefail
           NS=andara-local
-          kubectl -n $NS wait --for=condition=Ready pod/andara-0 --timeout=120s
+          kubectl --context "$ANDARA_KUBE_CONTEXT" -n $NS wait --for=condition=Ready pod/andara-0 --timeout=120s
           # Status, not body: the body is "ok" on main today and becomes a JSON phase with
           # AW-SRV-007; the probe contract is the 200, and the readiness probe is this URL.
-          kubectl -n $NS exec andara-0 -c server -- wget -S --spider http://127.0.0.1:8080/readyz 2>&1 \
+          kubectl --context "$ANDARA_KUBE_CONTEXT" -n $NS exec andara-0 -c server -- wget -S --spider http://127.0.0.1:8080/readyz 2>&1 \
             | tee /dev/stderr | grep -q 'HTTP/1.1 200'
-          kubectl -n $NS get endpointslice -l kubernetes.io/service-name=andara \
+          kubectl --context "$ANDARA_KUBE_CONTEXT" -n $NS get endpointslice -l kubernetes.io/service-name=andara \
             -o jsonpath='{.items[0].endpoints[0].conditions.ready}' | grep -q true
-          kubectl -n $NS logs andara-0 -c partitions | grep -q 'ordinal=0 replicas=1 -> 0,1,2'
+          kubectl --context "$ANDARA_KUBE_CONTEXT" -n $NS logs andara-0 -c partitions | grep -q 'ordinal=0 replicas=1 -> 0,1,2'
       - name: snapshot claim survives uninstall and is reattached
         run: |
           set -euo pipefail
           NS=andara-local
-          pv="$(kubectl -n $NS get pvc snapshots-andara-0 -o jsonpath='{.spec.volumeName}')"
+          pv="$(kubectl --context "$ANDARA_KUBE_CONTEXT" -n $NS get pvc snapshots-andara-0 -o jsonpath='{.spec.volumeName}')"
           echo "pv before: $pv"
-          helm -n $NS uninstall andara
+          helm --kube-context "$ANDARA_KUBE_CONTEXT" -n $NS uninstall andara
           sleep 5
-          kubectl -n $NS get pvc snapshots-andara-0 -o jsonpath='{.status.phase}' | grep -q Bound
+          kubectl --context "$ANDARA_KUBE_CONTEXT" -n $NS get pvc snapshots-andara-0 -o jsonpath='{.status.phase}' | grep -q Bound
           make helm-install ENV=local
-          after="$(kubectl -n $NS get pvc snapshots-andara-0 -o jsonpath='{.spec.volumeName}')"
+          after="$(kubectl --context "$ANDARA_KUBE_CONTEXT" -n $NS get pvc snapshots-andara-0 -o jsonpath='{.spec.volumeName}')"
           echo "pv after:  $after"
           [[ "$pv" == "$after" ]]
       # AW-INF-006. Everything below talks to the edge on the runner's :443, which the
@@ -125,8 +133,8 @@ jobs:
         run: |
           set -euo pipefail
           NS=andara-local
-          kubectl -n $NS get certificate andara-edge andara-server
-          ! helm -n $NS get manifest andara | grep -q 'PRIVATE KEY'
+          kubectl --context "$ANDARA_KUBE_CONTEXT" -n $NS get certificate andara-edge andara-server
+          ! helm --kube-context "$ANDARA_KUBE_CONTEXT" -n $NS get manifest andara | grep -q 'PRIVATE KEY'
       # AW-SRV-008: a Session needs a real token. The bootstrap operator `make helm-install`
       # configured authenticates through the edge; every step below carries its token.
       - name: authenticate as the bootstrap operator through the edge
@@ -179,18 +187,25 @@ jobs:
           set -euo pipefail
           NS=andara-local
           CA=.local/tls/cluster/local/ca.pem
-          kubectl -n $NS patch middleware andara-admin-allowlist --type merge \
+          kubectl --context "$ANDARA_KUBE_CONTEXT" -n $NS patch middleware andara-admin-allowlist --type merge \
             -p '{"spec":{"ipAllowList":{"sourceRange":["203.0.113.0/24"]}}}'
-          sleep 3
           # "The server logs no request": its own RPC counter for the Admin service, read
           # off the pod, does not move while the edge answers 403.
-          admin_calls() { kubectl -n $NS exec andara-0 -c server -- wget -qO- http://127.0.0.1:8080/metrics \
+          admin_calls() { kubectl --context "$ANDARA_KUBE_CONTEXT" -n $NS exec andara-0 -c server -- wget -qO- http://127.0.0.1:8080/metrics \
             | awk '/^andara_grpc_requests_total\{.*andara.admin.v1.Admin/ { s += $NF } END { print s + 0 }'; }
-          before=$(admin_calls)
-          code=$(curl -s --cacert $CA --resolve andara.local:443:127.0.0.1 -o /dev/null -w '%{http_code}' \
+          admin() { curl -s --cacert $CA --resolve andara.local:443:127.0.0.1 -o /dev/null -w '%{http_code}' \
             -X POST -H 'content-type: application/proto' \
-            https://andara.local/andara.admin.v1.Admin/GetServerInfo --data-binary '')
-          [[ "$code" == "403" ]]
+            https://andara.local/andara.admin.v1.Admin/GetServerInfo --data-binary '' || true; }
+          # Traefik reloads a Middleware asynchronously: poll to the narrowed allowlist
+          # (live-assertions rule 1), then take the counter and assert.
+          deadline=$((SECONDS + 30))
+          until [[ "$(admin)" == "403" ]]; do
+            ((SECONDS < deadline)) || { echo "::error::Admin from the runner was not 403 within 30 s of narrowing the allowlist"; exit 1; }
+            sleep 1
+          done
+          before=$(admin_calls)
+          code=$(admin)
+          [[ "$code" == "403" ]] || { echo "::error::Admin from the runner got $code, not 403"; exit 1; }
           [[ "$(admin_calls)" == "$before" ]]
           # The catch-all is unaffected.
           curl -sf --cacert $CA --resolve andara.local:443:127.0.0.1 -X POST -H 'content-type: application/json' \
@@ -198,7 +213,7 @@ jobs:
           # Put the allowlist back explicitly. `helm upgrade` would not: for a CRD-typed
           # resource Helm patches old manifest → new manifest and never reads live state,
           # so an unchanged values file leaves a hand-patched Middleware as it is.
-          kubectl -n $NS patch middleware andara-admin-allowlist --type merge \
+          kubectl --context "$ANDARA_KUBE_CONTEXT" -n $NS patch middleware andara-admin-allowlist --type merge \
             -p '{"spec":{"ipAllowList":{"sourceRange":["10.0.0.0/8","192.168.0.0/16","172.16.0.0/12","127.0.0.0/8"]}}}'
       # AW-INF-054. Every request from the runner reaches Traefik from the kind network's gateway,
       # the one peer websecure trusts for the PROXY protocol, so curl can forge the client. Outside
@@ -212,9 +227,17 @@ jobs:
           CA=.local/tls/cluster/local/ca.pem
           admin() { curl -s --cacert $CA --resolve andara.local:443:127.0.0.1 "$@" -o /dev/null -w '%{http_code}' \
             -X POST -H 'content-type: application/json' -H "authorization: Bearer $ANDARA_CI_TOKEN" \
-            https://andara.local/andara.admin.v1.Admin/GetServerInfo -d '{}'; }
-          admin_calls() { kubectl -n $NS exec andara-0 -c server -- wget -qO- http://127.0.0.1:8080/metrics \
+            https://andara.local/andara.admin.v1.Admin/GetServerInfo -d '{}' || true; }
+          admin_calls() { kubectl --context "$ANDARA_KUBE_CONTEXT" -n $NS exec andara-0 -c server -- wget -qO- http://127.0.0.1:8080/metrics \
             | awk '/^andara_grpc_requests_total\{.*andara.admin.v1.Admin/ { s += $NF } END { print s + 0 }'; }
+          # The step above narrowed the allowlist to 203.0.113.0/24 and put it back as its last
+          # command; Traefik reloads a Middleware asynchronously, so until it has, 203.0.113.9 is
+          # still allowed. Poll to the restored allowlist (live-assertions rule 1), then assert.
+          deadline=$((SECONDS + 30))
+          until code=$(admin --haproxy-protocol --haproxy-clientip 203.0.113.9); [[ "$code" == "403" ]]; do
+            ((SECONDS < deadline)) || { echo "::error::a PROXY client 203.0.113.9 (outside the allowlist) got $code, not 403, for 30 s"; exit 1; }
+            sleep 1
+          done
           before=$(admin_calls)
           code=$(admin --haproxy-protocol --haproxy-clientip 203.0.113.9)
           [[ "$code" == "403" ]] || { echo "::error::a PROXY client 203.0.113.9 (outside the allowlist) got $code, not 403"; exit 1; }
@@ -224,7 +247,7 @@ jobs:
           # Captured before grep: `grep -q` closing the pipe early would fail kubectl under pipefail.
           seen=""
           for i in $(seq 1 10); do
-            logs="$(kubectl -n traefik logs deploy/traefik --since=5m)"
+            logs="$(kubectl --context "$ANDARA_KUBE_CONTEXT" -n traefik logs deploy/traefik --since=5m)"
             if grep -q '"ClientHost":"10.1.2.3"' <<<"$logs"; then seen=1; break; fi
             sleep 1
           done
@@ -234,17 +257,17 @@ jobs:
       - name: the server pod is unreachable from another namespace (AC-6)
         run: |
           set -euo pipefail
-          POD_IP=$(kubectl -n andara-local get pod andara-0 -o jsonpath='{.status.podIP}')
-          kubectl create ns andara-probe
-          kubectl -n andara-probe run prober --image=curlimages/curl:8.10.1 --restart=Never --command -- sleep 300
-          kubectl -n andara-probe wait --for=condition=Ready pod/prober --timeout=120s
-          if kubectl -n andara-probe exec prober -- curl -sk -m 5 -o /dev/null https://$POD_IP:8443/; then
+          POD_IP=$(kubectl --context "$ANDARA_KUBE_CONTEXT" -n andara-local get pod andara-0 -o jsonpath='{.status.podIP}')
+          kubectl --context "$ANDARA_KUBE_CONTEXT" create ns andara-probe
+          kubectl --context "$ANDARA_KUBE_CONTEXT" -n andara-probe run prober --image=curlimages/curl:8.10.1 --restart=Never --command -- sleep 300
+          kubectl --context "$ANDARA_KUBE_CONTEXT" -n andara-probe wait --for=condition=Ready pod/prober --timeout=120s
+          if kubectl --context "$ANDARA_KUBE_CONTEXT" -n andara-probe exec prober -- curl -sk -m 5 -o /dev/null https://$POD_IP:8443/; then
             echo "::error::a pod in another namespace reached the server's grpc port"; exit 1
           fi
-          if kubectl -n andara-probe exec prober -- curl -s -m 5 -o /dev/null http://$POD_IP:8080/readyz; then
+          if kubectl --context "$ANDARA_KUBE_CONTEXT" -n andara-probe exec prober -- curl -s -m 5 -o /dev/null http://$POD_IP:8080/readyz; then
             echo "::error::a pod in another namespace reached the server's http port"; exit 1
           fi
-          kubectl delete ns andara-probe --wait=false
+          kubectl --context "$ANDARA_KUBE_CONTEXT" delete ns andara-probe --wait=false
       - name: stream soak through the edge, renewal mid-stream (AC-1, AC-3)
         run: make stream-soak ENV=local SOAK=${{ github.event_name == 'schedule' && '60m' || '5m' }}
       # AW-INF-019, the install and render half. The follow-main loop needs `publish` and
@@ -254,9 +277,9 @@ jobs:
         run: |
           set -euo pipefail
           make argocd-install
-          before="$(helm list -n argocd -o json | python3 -c 'import json,sys; print(sorted((r["name"], r["revision"]) for r in json.load(sys.stdin)))')"
+          before="$(helm --kube-context "$ANDARA_KUBE_CONTEXT" list -n argocd -o json | python3 -c 'import json,sys; print(sorted((r["name"], r["revision"]) for r in json.load(sys.stdin)))')"
           make argocd-install | tee /tmp/second.txt
-          after="$(helm list -n argocd -o json | python3 -c 'import json,sys; print(sorted((r["name"], r["revision"]) for r in json.load(sys.stdin)))')"
+          after="$(helm --kube-context "$ANDARA_KUBE_CONTEXT" list -n argocd -o json | python3 -c 'import json,sys; print(sorted((r["name"], r["revision"]) for r in json.load(sys.stdin)))')"
           [ "$before" = "$after" ] || { echo "::error::the second argocd-install changed a release: $before -> $after"; exit 1; }
           [ "$(grep -c 'already installed' /tmp/second.txt)" = 2 ]
       # The committed Application, pointed at this commit with local's values (no broker,
@@ -271,8 +294,8 @@ jobs:
           REVISION: ${{ github.sha }}
         run: |
           set -euo pipefail
-          uid="$(kubectl -n andara-local get pod andara-0 -o jsonpath='{.metadata.uid}')"
-          python3 - "$REVISION" <<'PY' | kubectl apply -f -
+          uid="$(kubectl --context "$ANDARA_KUBE_CONTEXT" -n andara-local get pod andara-0 -o jsonpath='{.metadata.uid}')"
+          python3 - "$REVISION" <<'PY' | kubectl --context "$ANDARA_KUBE_CONTEXT" apply -f -
           import json, sys, yaml
           app = yaml.safe_load(open("deploy/argocd/andara-dev.yaml"))
           app["metadata"]["name"] = "andara-ci"
@@ -282,24 +305,24 @@ jobs:
           print(json.dumps(app))
           PY
           for i in $(seq 1 120); do
-            s="$(kubectl -n argocd get application andara-ci -o jsonpath='{.status.sync.status} {.status.health.status}')"
+            s="$(kubectl --context "$ANDARA_KUBE_CONTEXT" -n argocd get application andara-ci -o jsonpath='{.status.sync.status} {.status.health.status}')"
             [ "$s" = "Synced Healthy" ] && break
             sleep 5
           done
-          kubectl -n argocd get application andara-ci -o jsonpath='{.status.sync.status} {.status.health.status} {.status.sync.revision}{"\n"}'
+          kubectl --context "$ANDARA_KUBE_CONTEXT" -n argocd get application andara-ci -o jsonpath='{.status.sync.status} {.status.health.status} {.status.sync.revision}{"\n"}'
           [ "$s" = "Synced Healthy" ] || { echo "::error::andara-ci is '$s' after 10 minutes"; exit 1; }
-          [ "$(kubectl -n andara-local get pod andara-0 -o jsonpath='{.metadata.uid}')" = "$uid" ] \
+          [ "$(kubectl --context "$ANDARA_KUBE_CONTEXT" -n andara-local get pod andara-0 -o jsonpath='{.metadata.uid}')" = "$uid" ] \
             || { echo "::error::the adoption rolled andara-0"; exit 1; }
       - name: dump on failure
         if: failure()
         run: |
-          kubectl -n andara-local describe pod andara-0 || true
-          kubectl -n andara-local logs andara-0 --all-containers || true
-          kubectl -n andara-local get certificate,ingress,middleware,serverstransport -o wide || true
-          kubectl -n traefik logs deploy/traefik --tail=200 || true
-          kubectl -n argocd get application -o yaml || true
-          helm -n argocd status argocd || true
-          kubectl -n argocd get pods,jobs -o wide || true
-          kubectl -n argocd describe pods | tail -120 || true
-          kubectl -n argocd get events --sort-by=.lastTimestamp | tail -60 || true
-          kubectl describe nodes | sed -n '/Allocated resources/,/Events/p' || true
+          kubectl --context "$ANDARA_KUBE_CONTEXT" -n andara-local describe pod andara-0 || true
+          kubectl --context "$ANDARA_KUBE_CONTEXT" -n andara-local logs andara-0 --all-containers || true
+          kubectl --context "$ANDARA_KUBE_CONTEXT" -n andara-local get certificate,ingress,middleware,serverstransport -o wide || true
+          kubectl --context "$ANDARA_KUBE_CONTEXT" -n traefik logs deploy/traefik --tail=200 || true
+          kubectl --context "$ANDARA_KUBE_CONTEXT" -n argocd get application -o yaml || true
+          helm --kube-context "$ANDARA_KUBE_CONTEXT" -n argocd status argocd || true
+          kubectl --context "$ANDARA_KUBE_CONTEXT" -n argocd get pods,jobs -o wide || true
+          kubectl --context "$ANDARA_KUBE_CONTEXT" -n argocd describe pods | tail -120 || true
+          kubectl --context "$ANDARA_KUBE_CONTEXT" -n argocd get events --sort-by=.lastTimestamp | tail -60 || true
+          kubectl --context "$ANDARA_KUBE_CONTEXT" describe nodes | sed -n '/Allocated resources/,/Events/p' || true

@@ -13,12 +13,12 @@ despawns anyone who reconnected. It is worse than a clean outage, because it loo
 ## How to confirm
 
 ```
-kubectl -n andara-<env> get pod andara-0                      # RESTARTS column
-kubectl -n andara-<env> logs andara-0 -c server --previous | tail -40
+kubectl --context kind-andara -n andara-<env> get pod andara-0                      # RESTARTS column
+kubectl --context kind-andara -n andara-<env> logs andara-0 -c server --previous | tail -40
 ```
 
 The last log line before exit names the reason; the exit code is in
-`kubectl describe pod andara-0` under `Last State`.
+`kubectl --context kind-andara describe pod andara-0` under `Last State`.
 
 ## How to mitigate
 
@@ -51,7 +51,7 @@ Then, by exit code. A refused recovery has a code of its own (`AW-SRV-007`, `AW-
 | Exit | Meaning | Action |
 |-----:|---------|--------|
 | `1` | the boot failed. The last `error` line names the step: `content core not published`, a content finding `content store unavailable during …`, `accounts`, `tick loop`, or another | **By the line and its `detail`, in this order.** (a) **A dial, ping or timeout against the brokers, on any step**: it's the broker, not the values file. A broker outage fails each boot at its first broker call, usually content or `accounts`, not the tick loop. `world-read-only.md` covers the broker. If it began as a lost boundary, the first crash's log has `tick boundary lost; exiting into recovery` (the `5` row; the log backend, since `--previous` keeps only the last). A `tick loop` detail saying the log `could not be read to tell whether` it predates AW-SRV-012 is this case too. (b) **`tick loop` with `the command log predates AW-SRV-012`**: the log can't be recovered, and only a fresh log fixes it. On `dev`, `make world-reset ENV=dev CONFIRM=andara-dev`; locally, `make down VOLUMES=1`; on `prod` the reset is refused, so keep the World down and escalate. A reset discards the World **and every Account**, so confirm with Brian first. This wins over (c) when both phrases appear. (c) **A recovery refusal** (`recovery: state hash mismatch`, `recovery restore mismatch`, an incomplete round) **is not this row**: it has its own exit, `6`, `7` or `8` in the next table, and `recovery-state-mismatch.md`. Never delete topics or the snapshot volume. (d) **A `tick boundary gap` or an `offset gap`** exits `3`, so its row is in the next table. The one case that sends you back here: with **no round at all**, recovery replays the whole log, and a `tick boundary gap` saying `follows tick 0` means `andara.events.v1`'s 30-day retention has expired its first boundaries (#363). Find out first why there is no round (`snapshot-stale.md`), and only then reset as in (b), confirming with Brian. Every other gap is row `3`'s. (e) **`no content in effect: the World has no Zones…`**: `server-unavailable.md`'s row of that name: escalate, don't reset. (f) **A line naming a config key, a Secret, or a path** is configuration: `make k8s-dry ENV=<env>` would have caught a schema error, so it's usually a missing Secret or a bad `content.*` path. (g) **Any other line** (`verb table`, `roster`, `content publish path`, `content core not in effect`, `content could not be brought into effect`, a `content core not published` digest conflict): find it in `server-unavailable.md`'s table, else escalate to implementation with the `error` line |
-| `2` | a Go panic or runtime fatal error. No recovery path exits `2` | read the stack trace: `kubectl -n andara-<env> logs andara-0 -c server --previous`. Escalate to implementation with it |
+| `2` | a Go panic or runtime fatal error. No recovery path exits `2` | read the stack trace: `kubectl --context kind-andara -n andara-<env> logs andara-0 -c server --previous`. Escalate to implementation with it |
 | `5` | a Tick Boundary Record was lost (`AW-SRV-026`), and the running server exited into exact recovery. The log line is `tick boundary lost; exiting into recovery`, with `lost_tick` and `last_delivered_tick`. The counter is `andara_tick_boundary_lost_total` | look at the broker, not the server: the boundary's produce failed. Each restart while the broker is down fails at boot with exit `1`. Once the broker is healthy, the next boot recovers and ticks. `world-read-only.md` covers the broker |
 | `137` / OOMKilled | memory below the World's footprint | raise `resources.requests.memory` (or re-run `make measure-tick`). A projector replica has the same footprint as the server (`AW-SRV-019`) |
 | liveness restart, no exit line | tick loop wedged for `tick_budget × 100` | `AW-SRV-002`'s `SimulationLagging` runbook. This is the liveness probe doing its job |
@@ -78,7 +78,7 @@ make server-start ENV=<dev|prod>
 It scales to the chart's replica count, restores the sync policy `server-stop` suspended, and waits
 for Ready (`SERVER_START_TIMEOUT`, 300 s by default; a server started and waiting for content
 counts, as in `make world-reset`). Exit 1 on the wait means the policy is already restored and
-the server is still recovering: watch `kubectl -n andara-<env> get pod andara-0`, or run
+the server is still recovering: watch `kubectl --context kind-andara -n andara-<env> get pod andara-0`, or run
 `server-start` again with a longer `SERVER_START_TIMEOUT`. The replica count comes from the
 chart values in your checkout, so run it from `main`.
 
@@ -86,7 +86,7 @@ chart values in your checkout, so run it from `main`.
 
 1. Exit code and last log line, as above. Every recovery refusal is one `error` line with the fields its
    exit-code table names.
-2. `kubectl -n andara-<env> describe pod andara-0` — `OOMKilled` vs `Error` vs probe failure events.
+2. `kubectl --context kind-andara -n andara-<env> describe pod andara-0` — `OOMKilled` vs `Error` vs probe failure events.
 3. Is the newest snapshot round complete? With a server serving, `andara-cli snapshot list` gives the
    rounds newest first with a `COMPLETE` column. A server in a crash loop serves no Admin endpoint, so there use
    `andara-cli snapshot list --local --zone <zone>`, one Zone at a time with no `complete` column

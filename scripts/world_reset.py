@@ -38,6 +38,7 @@ import sys
 import time
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+import kube  # noqa: E402
 import objectstore  # noqa: E402
 import projector  # noqa: E402
 import topics  # noqa: E402
@@ -72,7 +73,7 @@ class StepFailed(Exception):
 
 
 def kubectl(ns, *args, check=True):
-    p = subprocess.run(["kubectl", "-n", ns, *args], capture_output=True, text=True)
+    p = subprocess.run(kube.kubectl("-n", ns, *args), capture_output=True, text=True)
     if check and p.returncode != 0:
         raise StepFailed("kubectl %s: %s" % (" ".join(args[:3]), (p.stderr or p.stdout).strip()))
     return p
@@ -142,9 +143,9 @@ def restore_argo(app, policy):
     p = kubectl(ARGO_NS, "patch", "application", app, "--type", "merge",
                 "-p", json.dumps({"spec": {"syncPolicy": policy}}), check=False)
     if p.returncode != 0:
-        print("world-reset: could not restore %s's syncPolicy; restore it with: kubectl -n %s "
+        print("world-reset: could not restore %s's syncPolicy; restore it with: kubectl --context %s -n %s "
               "patch application %s --type merge -p '%s'"
-              % (app, ARGO_NS, app, json.dumps({"spec": {"syncPolicy": policy}})), file=sys.stderr)
+              % (app, kube.context(), ARGO_NS, app, json.dumps({"spec": {"syncPolicy": policy}})), file=sys.stderr)
         raise StepFailed("restore Argo CD sync")
     say("restored Argo CD's automated sync on %s" % app)
 

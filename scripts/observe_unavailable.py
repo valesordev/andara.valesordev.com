@@ -36,6 +36,8 @@ import time
 
 import yaml
 
+import kube
+
 HERE = os.path.dirname(os.path.abspath(__file__))
 _spec = importlib.util.spec_from_file_location("grafana_http", os.path.join(HERE, "grafana_http.py"))
 oc = importlib.util.module_from_spec(_spec)
@@ -63,7 +65,7 @@ def namespaces(prom, expr):
 
 
 def kubectl(*args):
-    p = subprocess.run(["kubectl", *args], capture_output=True, text=True)
+    p = subprocess.run(kube.kubectl(*args), capture_output=True, text=True)
     if p.returncode != 0:
         say("kubectl %s: %s" % (" ".join(args), p.stderr.strip()))
         sys.exit(2)
@@ -113,7 +115,7 @@ def main():
         kubectl("-n", ns, "scale", "statefulset", "andara", "--replicas=1")
         # The pod object may not exist yet; wait for it, then for Ready.
         end = time.monotonic() + deadline
-        while subprocess.run(["kubectl", "-n", ns, "get", "pod", "andara-0"], capture_output=True).returncode != 0:
+        while subprocess.run(kube.kubectl("-n", ns, "get", "pod", "andara-0"), capture_output=True).returncode != 0:
             if time.monotonic() > end:
                 say("andara-0 was not recreated within %ds" % deadline)
                 sys.exit(2)

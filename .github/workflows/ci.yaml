@@ -105,6 +105,9 @@ jobs:
       # AW-INF-054: deploy/platform/versions.yaml is valid and the only place a platform item is pinned.
       - name: platform pins
         run: make platform-check
+      # AW-INF-053: every kubectl, helm and kind call names ANDARA_KUBE_CONTEXT's cluster.
+      - name: kube context
+        run: make kube-context-check
       # AW-INF-029. On a pull request the merge base with origin/main comes from
       # fetch-depth: 0 above. On a push to main it compares with the commit main was at before
       # the push, so a multi-commit push is checked whole; main's runs are never cancelled (the

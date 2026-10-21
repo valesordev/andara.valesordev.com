@@ -22,16 +22,16 @@ The clock is the `expiration_timestamp` in the alert. You have days, not minutes
 ## How to confirm
 
 ```
-kubectl -n andara-<env> get certificate                       # READY False, or True with an old NOT AFTER
-kubectl -n andara-<env> describe certificate andara-edge       # Events: the issuer's last answer
-kubectl -n andara-<env> get certificaterequest                 # a stuck request is the usual shape
-kubectl get clusterissuer andara-ca                            # READY True? the CA that signs both
+kubectl --context kind-andara -n andara-<env> get certificate                       # READY False, or True with an old NOT AFTER
+kubectl --context kind-andara -n andara-<env> describe certificate andara-edge       # Events: the issuer's last answer
+kubectl --context kind-andara -n andara-<env> get certificaterequest                 # a stuck request is the usual shape
+kubectl --context kind-andara get clusterissuer andara-ca                            # READY True? the CA that signs both
 ```
 
-If `andara-ca` itself is not Ready: `kubectl -n cert-manager get certificate andara-ca` and its
+If `andara-ca` itself is not Ready: `kubectl --context kind-andara -n cert-manager get certificate andara-ca` and its
 Secret `andara-ca-tls`. The chain is in `deploy/k8s/cert-manager/andara-ca.yaml`.
 
-For a public host on the ACME issuer (`tls.issuer: letsencrypt`): `kubectl -n andara-<env> get
+For a public host on the ACME issuer (`tls.issuer: letsencrypt`): `kubectl --context kind-andara -n andara-<env> get
 order,challenge` — a DNS-01 challenge that never became `valid` is a Cloudflare token or zone problem,
 which is the cluster's, not the chart's.
 
@@ -39,10 +39,10 @@ which is the cluster's, not the chart's.
 
 | Symptom | Action |
 |---------|--------|
-| `CertificateRequest` stuck, issuer Ready | `kubectl -n andara-<env> delete certificaterequest -l cert-manager.io/certificate-name=<name>` — cert-manager creates a fresh one |
+| `CertificateRequest` stuck, issuer Ready | `kubectl --context kind-andara -n andara-<env> delete certificaterequest -l cert-manager.io/certificate-name=<name>` — cert-manager creates a fresh one |
 | issuer not Ready | `make platform-up` re-applies `andara-ca` (and, with `CLOUDFLARE_API_TOKEN` set, the `letsencrypt` issuers) and waits on them; if it times out, read the CA Certificate's or the issuer's events. `make helm-install` applies no issuer: it exits 1 naming `platform-up` |
 | renewed but the pod still serves the old one | see below — a restart, before the old one expires |
-| expired already | `kubectl -n andara-<env> patch certificate <name> --subresource=status --type=merge -p '{"status":{"conditions":[{"type":"Issuing","status":"True","reason":"ManuallyTriggered","message":"runbook","lastTransitionTime":"<now, RFC3339>"}]}}'` forces issuance — the same condition `cmctl renew` sets |
+| expired already | `kubectl --context kind-andara -n andara-<env> patch certificate <name> --subresource=status --type=merge -p '{"status":{"conditions":[{"type":"Issuing","status":"True","reason":"ManuallyTriggered","message":"runbook","lastTransitionTime":"<now, RFC3339>"}]}}'` forces issuance — the same condition `cmctl renew` sets |
 
 ### The server certificate is loaded once
 
@@ -56,7 +56,7 @@ certificate's remaining validity: `renewBefore` (10 days). Any deploy in that wi
 none is due, roll the pod:
 
 ```
-kubectl -n andara-<env> rollout restart statefulset/andara    # AW-INF-007's pre-stop snapshot makes this short
+kubectl --context kind-andara -n andara-<env> rollout restart statefulset/andara    # AW-INF-007's pre-stop snapshot makes this short
 ```
 
 The edge certificate has no such step: Traefik reloads `andara-edge-tls` live, and `make
@@ -67,10 +67,10 @@ procedure and `CertificateExpiringSoon` is what reminds you.
 
 ## How to diagnose
 
-1. `kubectl -n andara-<env> describe certificate <name>` — the condition message names the stage.
-2. `kubectl -n cert-manager logs deploy/cert-manager --since=1h | grep <name>`.
-3. Issuer chain: `kubectl get clusterissuer andara-ca -o yaml` — `ca.secretName` must exist in
-   `cert-manager`, and `kubectl -n cert-manager get secret andara-ca-tls` must hold `tls.crt`.
+1. `kubectl --context kind-andara -n andara-<env> describe certificate <name>` — the condition message names the stage.
+2. `kubectl --context kind-andara -n cert-manager logs deploy/cert-manager --since=1h | grep <name>`.
+3. Issuer chain: `kubectl --context kind-andara get clusterissuer andara-ca -o yaml` — `ca.secretName` must exist in
+   `cert-manager`, and `kubectl --context kind-andara -n cert-manager get secret andara-ca-tls` must hold `tls.crt`.
 4. If the CA itself is what expired (10-year duration, `rotationPolicy: Never`): every leaf and every
    `andara-cli` trust bundle must be reissued — that is a planned procedure, not this runbook.
 
