@@ -195,18 +195,18 @@ def pin_findings(repo=REPO, aliases=None):
                 except (UnicodeDecodeError, OSError):
                     continue
                 rel = os.path.relpath(path, repo)
-                for n, line in logical_lines(lines):
-                    where = "%s:%d" % (rel, n)
-                    if NODE_IMAGE_RE.search(line):
-                        found.append("%s: kind.nodeImage (a kindest/node image)" % where)
+                for chunk in logical_lines(lines):
+                    text = " ".join(t for _, t in chunk)
+                    images = [n for n, t in chunk if NODE_IMAGE_RE.search(t)]
+                    if images:
+                        found.append("%s:%d: kind.nodeImage (a kindest/node image)" % (rel, images[0]))
                         continue
-                    if not VERSION_RE.search(line):
-                        continue
-                    item = item_named(line, aliases)
+                    versions = [n for n, t in chunk if VERSION_RE.search(t)]
+                    item = versions and item_named(text, aliases)
                     if item:
-                        found.append("%s: %s beside a version" % (where, item))
+                        found.append("%s:%d: %s beside a version" % (rel, versions[0], item))
                 for n, item in chart_version_pairs(lines, aliases):
-                    found.append("%s:%d: %s chart with a version: below it" % (rel, n, item))
+                    found.append("%s:%d: %s chart with a version: in its entry" % (rel, n, item))
     return found
 
 
@@ -221,56 +221,82 @@ def item_named(text, aliases):
     return None
 
 
+def code(line):
+    """line without a trailing `#` comment, for counting brackets."""
+    return line.split("#", 1)[0]
+
+
 def logical_lines(lines, limit=8):
-    """(first line number, text) with continued lines joined: after a trailing backslash (shell), or
-    while a bracket is open (a Python `run([...])` call), so a `helm upgrade` whose chart name and
-    `--version` are on different lines is one line. At most limit lines join, so one unbalanced
-    bracket can't fold the rest of a file into a single line."""
-    out, start, buf, depth = [], None, [], 0
+    """Physical lines grouped into logical ones, each a list of (line number, text): a run ending in
+    a backslash (shell) joins with no limit; a `(` or `[` still open (a Python `run([...])` call)
+    joins at most limit lines, so one unbalanced bracket can't fold a file together. `{` never
+    joins: a shell function body is many commands, not one."""
+    out, chunk, depth = [], [], 0
     for n, line in enumerate(lines, 1):
-        if start is None:
-            start = n
         text = line.rstrip()
         backslash = text.endswith("\\")
-        buf.append(text[:-1] if backslash else line)
-        depth = max(0, depth + sum(text.count(c) for c in "([{") - sum(text.count(c) for c in ")]}"))
-        if (backslash or depth > 0) and len(buf) < limit:
+        chunk.append((n, text[:-1] if backslash else text))
+        c = code(text)
+        depth = max(0, depth + c.count("(") + c.count("[") - c.count(")") - c.count("]"))
+        if backslash or (depth > 0 and len(chunk) < limit):
             continue
-        out.append((start, " ".join(buf)))
-        start, buf, depth = None, [], 0
-    if buf:
-        out.append((start, " ".join(buf)))
+        out.append(chunk)
+        chunk, depth = [], 0
+    if chunk:
+        out.append(chunk)
     return out
 
 
-CHART_KEY_RE = re.compile(r"^\s*-?\s*chart:\s*[\"']?(\S+?)[\"']?\s*(?:#.*)?$")
-VERSION_KEY_RE = re.compile(r"^\s*-?\s*(?:target)?[vV]ersion:\s*[\"']?v?\d+\.\d+\.\d+")
-ENTRY_RE = re.compile(r"^\s*-\s|^\s*-?\s*chart:")
+CHART_KEY_RE = re.compile(r"^(\s*)(-\s+)?chart:\s*[\"']?(\S+?)[\"']?\s*(?:#.*)?$")
+VERSION_KEY_RE = re.compile(r"^\s*(?:-\s+)?version:\s*[\"']?v?\d+\.\d+\.\d+")
 
 
-def chart_version_pairs(lines, aliases, window=4):
-    """(line, item) for YAML `chart: <item>` with a `version:` literal in the same entry: within
-    window lines either side, stopping at another list entry or another `chart:` key."""
+def indent(line):
+    return len(line) - len(line.lstrip())
+
+
+def entry(lines, i, key_col, dash):
+    """The sibling keys of the key at lines[i], column key_col, in the YAML mapping that holds it:
+    bounded by indentation, so nested lists stay inside it and the next or previous list entry
+    stays out. Nested values are skipped, not returned."""
+    out = []
+    if not dash:
+        for j in range(i - 1, -1, -1):
+            line = lines[j]
+            if not line.strip():
+                continue
+            ind = indent(line)
+            if ind > key_col:
+                continue
+            if ind == key_col:
+                out.append(line)
+                continue
+            # A `- key:` line whose key sits at key_col starts this entry; anything else ends it.
+            if line.lstrip().startswith("- ") and ind + 2 + indent(line.lstrip()[2:]) == key_col:
+                out.append(line)
+            break
+    for j in range(i + 1, len(lines)):
+        line = lines[j]
+        if not line.strip():
+            continue
+        ind = indent(line)
+        if ind < key_col or (ind == key_col and line.lstrip().startswith("- ")):
+            break
+        if ind == key_col:
+            out.append(line)
+    return out
+
+
+def chart_version_pairs(lines, aliases):
+    """(line, item) for YAML `chart: <item>` with a sibling `version:` literal in the same mapping."""
     found = []
     for i, line in enumerate(lines):
         m = CHART_KEY_RE.match(line)
-        item = m and item_named(m.group(1), aliases)
+        item = m and item_named(m.group(3), aliases)
         if not item:
             continue
-        near = []
-        # Up to the line that starts this list entry, never into another chart's.
-        if not line.lstrip().startswith("-"):
-            for j in range(i - 1, max(-1, i - 1 - window), -1):
-                if CHART_KEY_RE.match(lines[j]):
-                    break
-                near.append(lines[j])
-                if lines[j].lstrip().startswith("- "):
-                    break
-        for j in range(i + 1, min(len(lines), i + 1 + window)):
-            if ENTRY_RE.match(lines[j]):
-                break
-            near.append(lines[j])
-        if any(VERSION_KEY_RE.match(x) for x in near):
+        key_col = len(m.group(1)) + len(m.group(2) or "")
+        if any(VERSION_KEY_RE.match(x) for x in entry(lines, i, key_col, bool(m.group(2)))):
             found.append((i + 1, item))
     return found
 

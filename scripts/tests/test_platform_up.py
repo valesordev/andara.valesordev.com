@@ -522,30 +522,64 @@ class PinCheck(unittest.TestCase):
         self.write("scripts/values.yaml", "- chart: strimzi-kafka-operator\n  repo: https://strimzi.io/charts/\n  version: '1.2.0'\n")
         self.write("scripts/both.sh", "ARGOCD=10.9.2 IMAGE_UPDATER=1.3.1\n")
         self.assertEqual(sorted(platform_up.pin_findings(self.d)), sorted([
-            ".github/workflows/w.yaml:2: argocd chart with a version: below it",
+            ".github/workflows/w.yaml:2: argocd chart with a version: in its entry",
             "scripts/both.sh:1: argocd beside a version",
-            "scripts/install.sh:1: traefik beside a version",
-            "scripts/values.yaml:1: strimzi chart with a version: below it",
+            "scripts/install.sh:3: traefik beside a version",
+            "scripts/values.yaml:1: strimzi chart with a version: in its entry",
         ]))
 
     def test_a_python_call_split_inside_its_brackets_is_found(self):
         self.write("scripts/a.py", 'run(["helm", "upgrade", "--install", "traefik", "traefik",\n'
                                    '     "--version", "41.4.0"])\nx = 1\n')
-        self.assertEqual(platform_up.pin_findings(self.d), ["scripts/a.py:1: traefik beside a version"])
+        self.assertEqual(platform_up.pin_findings(self.d), ["scripts/a.py:2: traefik beside a version"])
 
     def test_an_unbalanced_bracket_joins_at_most_a_few_lines(self):
         lines = ["s = '('"] + ["x = %d" % i for i in range(20)] + ['TRAEFIK = "41.4.0"']
         joined = platform_up.logical_lines(lines)
-        self.assertEqual(joined[-1], (22, 'TRAEFIK = "41.4.0"'))
+        self.assertEqual(joined[-1], [(22, 'TRAEFIK = "41.4.0"')])
 
     def test_an_oci_chart_reference_is_found(self):
         self.write(".github/workflows/b.yaml", "- chart: oci://quay.io/jetstack/charts/cert-manager\n  version: v1.21.1\n")
         self.assertEqual(platform_up.pin_findings(self.d),
-                         [".github/workflows/b.yaml:1: certManager chart with a version: below it"])
+                         [".github/workflows/b.yaml:1: certManager chart with a version: in its entry"])
 
     def test_a_neighbouring_entry_s_version_is_not_this_chart_s(self):
         self.write("scripts/c.yaml", "- chart: argocd-image-updater\n  version: 1.3.1\n"
                                      "- chart: argo-cd\n  repo: https://argoproj.github.io/argo-helm\n")
+        self.assertEqual(platform_up.pin_findings(self.d), [])
+
+    def test_a_next_entry_s_version_is_not_this_chart_s(self):
+        self.write("scripts/d.yaml", "- chart: argo-cd\n  repo: x\n- chart: other\n  version: 1.0.0\n")
+        self.assertEqual(platform_up.pin_findings(self.d), [])
+
+    def test_a_version_above_chart_in_the_same_entry_is_found(self):
+        self.write("scripts/e.yaml", "- name: edge\n  version: 41.4.0\n  args:\n    - x\n  chart: traefik\n")
+        self.assertEqual(platform_up.pin_findings(self.d), ["scripts/e.yaml:5: traefik chart with a version: in its entry"])
+
+    def test_a_version_below_a_nested_list_is_found(self):
+        self.write("scripts/f.yaml", "- chart: traefik\n  valuesFiles:\n    - a.yaml\n  version: 41.4.0\n")
+        self.assertEqual(platform_up.pin_findings(self.d), ["scripts/f.yaml:1: traefik chart with a version: in its entry"])
+
+    def test_a_nested_version_is_not_the_chart_s(self):
+        self.write("scripts/g.yaml", "chart: traefik\nimages:\n  - version: 1.2.3\n")
+        self.assertEqual(platform_up.pin_findings(self.d), [])
+
+    def test_a_long_backslash_command_is_one_line(self):
+        sets = "".join("  --set a%d=b \\\n" % i for i in range(9))
+        self.write("scripts/h.sh", "helm upgrade --install traefik traefik/traefik \\\n" + sets + "  --version 41.4.0\n")
+        self.assertEqual(platform_up.pin_findings(self.d), ["scripts/h.sh:11: traefik beside a version"])
+
+    def test_a_shell_function_body_is_not_joined(self):
+        """`{` never joins: a pin inside a function is found on its own line, and an unrelated
+        version elsewhere in the body doesn't pair with an item named on another line."""
+        self.write("scripts/g.sh", "deploy() {\n  echo a\n  echo b\n  echo c\n  echo d\n  echo e\n"
+                                   "  helm upgrade --install traefik traefik/traefik \\\n    --namespace edge \\\n"
+                                   "    --wait \\\n    --version 41.4.0\n}\n"
+                                   "install() {\n  echo installing traefik\n  KIND_VERSION=v0.33.0\n}\n")
+        self.assertEqual(platform_up.pin_findings(self.d), ["scripts/g.sh:10: traefik beside a version"])
+
+    def test_a_bracket_in_a_comment_does_not_join(self):
+        self.write("scripts/k.sh", "# traefik (see versions.yaml\nKUBECTL_VERSION=v1.36.4\n")
         self.assertEqual(platform_up.pin_findings(self.d), [])
 
     def test_a_chart_key_without_a_version_is_not_a_pin(self):
