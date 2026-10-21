@@ -43,7 +43,7 @@ outside this contract. It is not asserted, and its auto-create stays on (`--mode
 | `auto.create.topics.enable` | `false` | Order. A typo in a topic name must fail, not create a topic with default partitions and a default key mapping. |
 | per-topic `partitions` | `topics.yaml` | Order. Permanent for keyed topics: repartitioning changes the key-to-Partition mapping and reorders history. |
 | per-topic `retention.ms`, `cleanup.policy` | `topics.yaml`; see Retention | Replay window. |
-| `local.` `delete` topics' `retention.bytes`, `retention.ms`, `segment.bytes`, `segment.ms` | `topics.yaml`'s `local` values; today 64 MiB (67108864) and 7 days (`ADR-0013` decision 4, AW-INF-055 measures them), with `segment.bytes` at most a quarter of `retention.bytes` (16 MiB) and `segment.ms` at most 1 day | Isolation. `dev`'s `andara.commands.v1` is infinite on a 20Gi PVC per broker, and a `local` soak must not fill the disk `dev`'s RPO depends on. Retention deletes only closed segments, so with Kafka's default 1 GiB segment a partition would grow to about 1 GiB before 64 MiB bites. With 16 MiB segments, a partition holds at most about 80 MiB. Across `local.`'s 222 partitions on 3 brokers, that is at most about 6 GiB per broker. `local.`'s compacted topics are bounded by their key count, not by these values. `make shared-check`'s 80% threshold is the residual (AW-INF-055). |
+| `local.` `delete` topics' `retention.bytes`, `retention.ms`, `segment.bytes`, `segment.ms` | `topics.yaml`'s `local` values; today 64 MiB (67108864) and 7 days (`ADR-0013` decision 4, AW-INF-055 measures them), with `segment.bytes` at most a quarter of `retention.bytes` (16 MiB) and `segment.ms` at most 1 day | Isolation. `dev`'s `andara.commands.v1` is infinite on a 20Gi PVC per broker, and a `local` soak must not fill the disk `dev`'s RPO depends on. Retention deletes only closed segments, so with Kafka's default 1 GiB segment a partition would grow to about 1 GiB before 64 MiB bites. With 16 MiB segments, a `delete` partition holds about 80 MiB, plus what is produced between retention checks (`log.retention.check.interval.ms`, 5 min), which `local`'s byte-rate quotas bound. `local.`'s 134 `delete` partitions on 3 brokers come to about 3.5 GiB per broker. `local.`'s compacted topics are bounded by their key count, not by these values. `make shared-check`'s 80% threshold is the residual (AW-INF-055). |
 | `max.connections` | at most 1000 per broker | Availability. A backstop against file-descriptor exhaustion taking a shared broker down for both environments, not a budget (see Capacity). |
 | rack awareness | none on the box; required off it | Recorded, not enforced. Three replicas on one box share one disk (see below). |
 
@@ -73,7 +73,8 @@ budget unenforced. This section states the budget and the one backstop.
   on one broker. It doesn't divide the budget between environments: a runaway `local` client could still take
   connections `dev` needs. But it stops the runaway at a limit the broker survives, where today the broker's
   file-descriptor limit would take it down for both. It counts every client listener, the `it` listener
-  included. Inter-broker connections are exempt (KIP-402). Kafka's `max.connections.per.ip` is not set, because pod
+  included. At the limit, an inter-broker connection is still admitted, by closing the least-recently-used
+  client connection on another listener (KIP-402). Kafka's `max.connections.per.ip` is not set, because pod
   IPs on kind are neither stable nor per-environment.
 - **No per-principal connection cap exists.**
   - KIP-612's `connection_creation_rate` is a quota on the `ips` entity only. Combining it with a user is an
@@ -100,6 +101,16 @@ domains, a claim about one machine.
 
 Topic names below are without the environment prefix (`dev.`; unprefixed for prod). On `local.` topics, the
 Settings row's bounds override every value here.
+
+**`local` is outside the recovery invariant (decided 2026-10-21).** With `local.andara.events.v1` at 7 days and
+`local.andara.commands.v1` at 64 MiB per partition, the invariant below (a round older than `retention.ms - 7 d`
+is unusable) leaves `local` no usable round age. `local` is disposable (`ADR-0013` decision 4), so:
+- its recovery is good only while its newest complete round is within its events window and its Commands since
+  that round are still retained;
+- past that, the honest outcome is `ErrLogGap`, and the remedy is `make world-reset ENV=local`, not a recovery;
+- `lifecycle.md`'s `make check` assertion (`snapshot.max_round_age <= retention.ms(events) - 7 d`) reads `dev`'s and
+  prod's events retention, not `local`'s;
+- no `local`-specific `snapshot.max_round_age` is introduced.
 
 | Topic | Retention | Decision |
 |---|---|---|
