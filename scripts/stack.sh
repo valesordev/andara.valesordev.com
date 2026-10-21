@@ -187,7 +187,6 @@ CLICONF
       printf '  %-24s %s\n' "OTLP receiver"  "localhost:${ANDARA_TRACE_PORT:-4317}"
       printf '  %-24s %s\n' "Prometheus"     "http://localhost:${ANDARA_METRICS_PORT:-9090}"
       printf '  %-24s %s\n' "Loki"           "http://localhost:${ANDARA_LOKI_PORT:-3100}"
-      printf '  %-24s %s\n' "Grafana"        "http://localhost:${ANDARA_DASHBOARD_PORT:-3000}/d/andara-tick-health"
     fi
     if [[ -n "$(server_profile_args)" ]]; then
       printf '  %-24s %s\n' "andara-server"  "localhost:${ANDARA_GRPC_PORT:-8443} (gRPC, TLS)"

@@ -343,5 +343,41 @@ class SharedFilesTest(unittest.TestCase):
         self.assertIn("solo7-irm", e.exception.msg)
 
 
+class DashboardBreaksTest(NoBoxEnv):
+    """AW-INF-049 AC-2: a break the preconditions don't refuse fails tf-test; one they refuse passes."""
+
+    def breaks(self, fake):
+        with mock.patch.object(tf, "run", fake), contextlib.redirect_stdout(io.StringIO()):
+            return tf.dashboard_breaks({})
+
+    def test_a_break_terraform_accepts_fails(self):
+        with self.assertRaises(tf.Exit) as e:
+            self.breaks(FakeTerraform())
+        self.assertEqual(e.exception.code, 1)
+        self.assertIn("no ds variable: tf-test passed", e.exception.msg)
+
+    def test_a_failure_for_another_reason_fails(self):
+        fake = FakeTerraform([(["test"], 1, "Error: Unsupported argument\n")])
+        with self.assertRaises(tf.Exit) as e:
+            self.breaks(fake)
+        self.assertIn("failed for another reason", e.exception.msg)
+
+    def test_every_break_refused_with_its_message(self):
+        # Terraform wraps the message behind its box drawing; the match reads through it.
+        answers = [(["test"], 1, "\x1b[31m│\x1b[0m Error: %s\n\x1b[31m│\x1b[0m %s\n" % tuple(m.split(" ", 1)))
+                   for _, _, m in tf.DASHBOARD_BREAKS]
+        fake = FakeTerraform(answers)
+        self.assertEqual(self.breaks(fake), 0)
+        self.assertEqual([c[0] for c in fake.calls], ["init"] + ["test"] * len(tf.DASHBOARD_BREAKS))
+
+    def test_each_break_changes_the_committed_source(self):
+        with open(tf.DASHBOARD) as f:
+            source = f.read()
+        for what, breaker, _ in tf.DASHBOARD_BREAKS:
+            d = json.loads(source)
+            breaker(d)
+            self.assertNotEqual(d, json.loads(source), what)
+
+
 if __name__ == "__main__":
     unittest.main()

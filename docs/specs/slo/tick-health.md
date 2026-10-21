@@ -67,6 +67,14 @@ that should have resolved in 65 ms typical (ADR-0008) resolving in 565 ms crosse
 | **Window** | rolling 28 days |
 | **Error budget** | ~40 minutes per 28 days |
 
+## Dashboard
+
+UID **`andara-tick-health`**, *Andara — tick health and log lag*. Its source is
+[`deploy/grafana/dashboards/tick-health.json`](../../../deploy/grafana/dashboards/tick-health.json),
+which Terraform deploys to the `Andara` folder of each stack (ADR-0012 decision 11). Its `environment`
+and `namespace` variables pick the source. `make dashboard-check ENV=<env>` checks that every panel
+has data.
+
 ## Alert
 
 **`SimulationLagging`** — `andara_simulation_lag_seconds > 0.5` sustained for 2 minutes.

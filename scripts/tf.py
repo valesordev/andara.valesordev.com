@@ -35,7 +35,10 @@ in a throwaway root (deploy/terraform/grafana/test-alert, local state under
 test-alert-clean destroys it.
 
 fmt-check, validate and test need no credential and no backend: they run in a data directory
-of their own (.terraform/check) with `-backend=false`, against the committed lock file.
+of their own (.terraform/check) with `-backend=false`, against the committed lock file. test also
+copies the tree to a temporary directory and breaks deploy/grafana/dashboards/tick-health.json one
+way at a time (DASHBOARD_BREAKS); solo7dev's tests must fail on each, naming the module's
+precondition (AW-INF-049 AC-2).
 
 Exit codes: 0 ok; 1 a Terraform, API, lock or assertion failure; 2 usage; 3 a credential unset.
 """
@@ -397,6 +400,83 @@ def cmd_test(env):
         say("test %s" % root)
         rc, out = run(["test"], root_dir(root), tenv)
         checked("test " + root, rc, out)
+    return dashboard_breaks(env)
+
+
+# AC-2's other half (AW-INF-049): the module's preconditions refuse a broken tick-health.json. Each entry
+# breaks the committed source one way, and solo7dev's tests must then fail with the precondition's message.
+DASHBOARD = os.path.join(REPO, "deploy", "grafana", "dashboards", "tick-health.json")
+FILTER = ('environment="$environment"', 'namespace="$namespace"')
+
+
+def _drop_variable(name):
+    def f(d):
+        d["templating"]["list"] = [v for v in d["templating"]["list"] if v["name"] != name]
+    return f
+
+
+def _first_target(d):
+    return next(t for p in d["panels"] for t in p.get("targets", []) if "{" in t["expr"])
+
+
+def _fixed_ds(d):
+    d["panels"][0]["datasource"]["uid"] = "grafanacloud-prom"
+
+
+def _unfilter(matcher):
+    def f(d):
+        t = _first_target(d)
+        t["expr"] = re.sub(r",?\s*" + re.escape(matcher) + r",?\s*", "", t["expr"])
+    return f
+
+
+def _bare_metric(d):
+    t = _first_target(d)
+    t["expr"] = re.sub(r"\{[^}]*\}", "", t["expr"])
+
+
+DASHBOARD_BREAKS = (
+    ("no ds variable", _drop_variable("ds"), "lacks the variable(s) ds"),
+    ("no environment variable", _drop_variable("environment"), "lacks the variable(s) environment"),
+    ("no namespace variable", _drop_variable("namespace"), "lacks the variable(s) namespace"),
+    ("a panel with a fixed datasource", _fixed_ds, "must use the datasource"),
+    ("a query without environment", _unfilter(FILTER[0]), "read a series without"),
+    ("a query without namespace", _unfilter(FILTER[1]), "read a series without"),
+    ("a query with a bare metric name", _bare_metric, "read a series without"),
+)
+
+
+def dashboard_breaks(env, breaks=DASHBOARD_BREAKS):
+    """Run solo7dev's tests against a copy of the tree with each break applied; each must fail as named."""
+    with open(DASHBOARD) as f:
+        source = f.read()
+    with tempfile.TemporaryDirectory(prefix="tf-dashboard-") as tmp:
+        tf_copy = os.path.join(tmp, os.path.relpath(TF_DIR, REPO))
+        shutil.copytree(TF_DIR, tf_copy, ignore=shutil.ignore_patterns(".terraform"))
+        dash = os.path.join(tmp, os.path.relpath(DASHBOARD, REPO))
+        os.makedirs(os.path.dirname(dash))
+        root = os.path.join(tf_copy, "stacks", "solo7dev")
+        tenv = child_env(env, data_dir=os.path.join(tmp, ".terraform"))
+        with open(dash, "w") as f:
+            f.write(source)
+        say("init a copy of solo7dev for the dashboard checks (no backend)")
+        rc, out = run(["init", "-input=false", "-backend=false", "-lockfile=readonly"], root, tenv, capture=True)
+        if rc:
+            sys.stdout.write(out)
+        checked("init the dashboard copy", rc, out)
+        for what, breaker, message in breaks:
+            d = json.loads(source)
+            breaker(d)
+            with open(dash, "w") as f:
+                json.dump(d, f)
+            rc, out = run(["test"], root, tenv, capture=True)
+            # Terraform wraps a long message across lines, each behind the diagnostic's box drawing.
+            plain = " ".join(re.sub(r"[│╷╵]", " ", ANSI.sub("", out)).split())
+            if rc == 0 or message not in plain:
+                sys.stdout.write(out)
+                raise Exit(1, "tick-health.json with %s: tf-test %s, want a failure naming %r (AW-INF-049 AC-2)"
+                              % (what, "passed" if rc == 0 else "failed for another reason", message))
+            say("dashboard: %s is refused" % what)
     return 0
 
 
