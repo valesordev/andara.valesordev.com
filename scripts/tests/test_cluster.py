@@ -555,9 +555,6 @@ class Ignored(unittest.TestCase):
         self.assertEqual(subprocess.run(["git", "-C", REPO, "check-ignore", "-q", ".local/tls/x"]).returncode, 0)
 
 
-if __name__ == "__main__":
-    unittest.main()
-
 
 class RebuildPlatform(unittest.TestCase):
     """run_platform carries platform-up's failures over as the rebuild's own exit codes."""
@@ -582,3 +579,7 @@ class RebuildPlatform(unittest.TestCase):
     def test_a_failed_release_is_exit_1(self):
         with self.assertRaises(cluster.Failed):
             self.run_with(cluster.platform_up.Failed("traefik did not become Ready"))
+
+
+if __name__ == "__main__":
+    unittest.main()

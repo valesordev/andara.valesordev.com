@@ -40,7 +40,7 @@ which is the cluster's, not the chart's.
 | Symptom | Action |
 |---------|--------|
 | `CertificateRequest` stuck, issuer Ready | `kubectl -n andara-<env> delete certificaterequest -l cert-manager.io/certificate-name=<name>` — cert-manager creates a fresh one |
-| issuer not Ready | `make helm-install ENV=<env>` re-applies and waits on the CA chain; if it times out, read the CA Certificate's events |
+| issuer not Ready | `make platform-up` re-applies `andara-ca` (and, with `CLOUDFLARE_API_TOKEN` set, the `letsencrypt` issuers) and waits on them; if it times out, read the CA Certificate's or the issuer's events. `make helm-install` applies no issuer: it exits 1 naming `platform-up` |
 | renewed but the pod still serves the old one | see below — a restart, before the old one expires |
 | expired already | `kubectl -n andara-<env> patch certificate <name> --subresource=status --type=merge -p '{"status":{"conditions":[{"type":"Issuing","status":"True","reason":"ManuallyTriggered","message":"runbook","lastTransitionTime":"<now, RFC3339>"}]}}'` forces issuance — the same condition `cmctl renew` sets |
 

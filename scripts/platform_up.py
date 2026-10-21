@@ -194,20 +194,66 @@ def pin_findings(repo=REPO, aliases=None):
                         lines = f.read().splitlines()
                 except (UnicodeDecodeError, OSError):
                     continue
-                for n, line in enumerate(lines, 1):
-                    where = "%s:%d" % (os.path.relpath(path, repo), n)
+                rel = os.path.relpath(path, repo)
+                for n, line in logical_lines(lines):
+                    where = "%s:%d" % (rel, n)
                     if NODE_IMAGE_RE.search(line):
                         found.append("%s: kind.nodeImage (a kindest/node image)" % where)
                         continue
                     if not VERSION_RE.search(line):
                         continue
-                    squashed = re.sub(r"[-_\s]", "", line.lower())
-                    if any(x in squashed for x in NOT_ITEMS):
-                        continue
-                    for item, names in aliases.items():
-                        if any(a in squashed for a in names):
-                            found.append("%s: %s beside a version" % (where, item))
-                            break
+                    item = item_named(line, aliases)
+                    if item:
+                        found.append("%s: %s beside a version" % (where, item))
+                for n, item in chart_version_pairs(lines, aliases):
+                    found.append("%s:%d: %s chart with a version: below it" % (rel, n, item))
+    return found
+
+
+def item_named(text, aliases):
+    """The first item whose name text contains, with the names that aren't items taken out first."""
+    squashed = re.sub(r"[-_\s]", "", text.lower())
+    for x in NOT_ITEMS:
+        squashed = squashed.replace("argocd" + x, "").replace(x, "")
+    for item, names in aliases.items():
+        if any(a in squashed for a in names):
+            return item
+    return None
+
+
+def logical_lines(lines):
+    """(first line number, text) with backslash-continued lines joined, so a `helm upgrade` whose
+    chart name and `--version` are on different lines is one line."""
+    out, start, buf = [], None, []
+    for n, line in enumerate(lines, 1):
+        if start is None:
+            start = n
+        if line.rstrip().endswith("\\"):
+            buf.append(line.rstrip()[:-1])
+            continue
+        buf.append(line)
+        out.append((start, " ".join(buf)))
+        start, buf = None, []
+    if buf:
+        out.append((start, " ".join(buf)))
+    return out
+
+
+CHART_KEY_RE = re.compile(r"^\s*-?\s*chart:\s*[\"']?([\w./-]+)")
+VERSION_KEY_RE = re.compile(r"^\s*(?:target)?[vV]ersion:\s*[\"']?v?\d+\.\d+\.\d+")
+
+
+def chart_version_pairs(lines, aliases, window=4):
+    """(line, item) for YAML `chart: <item>` with a `version:` literal within window lines either side."""
+    found = []
+    for i, line in enumerate(lines):
+        m = CHART_KEY_RE.match(line)
+        item = m and item_named(m.group(1), aliases)
+        if not item:
+            continue
+        near = lines[max(0, i - window):i] + lines[i + 1:i + 1 + window]
+        if any(VERSION_KEY_RE.match(x) for x in near):
+            found.append((i + 1, item))
     return found
 
 
@@ -424,6 +470,15 @@ def ingress_node(c):
 
 
 def restore_ca(r, c, restore=cluster_secrets.restore):
+    """Restore the exported CA root only when the cluster has none: before the first apply of
+    andara-ca.yaml (ADR-0013 decision 11). A live Secret is never overwritten, so a root cert-manager
+    renewed, or one an operator rotated, stays."""
+    p = c.kubectl("-n", "cert-manager", "get", "secret", "andara-ca-tls", "-o", "name", check=False)
+    if p.returncode == 0:
+        r.say("cert-manager/andara-ca-tls present; restore skipped")
+        return
+    if "NotFound" not in p.stderr:
+        raise Failed("read cert-manager/andara-ca-tls (only NotFound means absent): %s" % p.stderr.strip())
     try:
         restore(context=c.context, namespaces=("cert-manager",), say=lambda m: r.say("restore " + m))
     except cluster_secrets.Missing as e:
@@ -447,7 +502,7 @@ def token_secret(token):
 
 
 def letsencrypt(r, c, token):
-    """Both ACME issuers, or None when skipped for want of the token."""
+    """Both ACME issuers: True when applied, False when skipped for want of the token."""
     if not token:
         r.say("letsencrypt, letsencrypt-staging skipped: %s is unset (set it in .local/box.env)" % TOKEN)
         return False

@@ -81,7 +81,13 @@ jobs:
           node_image: ${{ steps.pins.outputs.node_image }}
           config: deploy/kind/config.yaml
       - name: platform-up PROFILE=ci (cert-manager, andara-ca, Traefik with PROXY trust)
-        run: make platform-up PROFILE=ci ANDARA_KUBE_CONTEXT=kind-ci
+        run: |
+          set -euo pipefail
+          make platform-up PROFILE=ci ANDARA_KUBE_CONTEXT=kind-ci
+          # AW-INF-054 AC-12: ci installs those and nothing else.
+          releases="$(helm list -A -o json | python3 -c 'import json,sys; print(" ".join(sorted(r["name"] for r in json.load(sys.stdin))))')"
+          [[ "$releases" == "cert-manager traefik" ]] \
+            || { echo "::error::platform-up PROFILE=ci installed '$releases', not 'cert-manager traefik'"; exit 1; }
       - name: image
         run: make image
       - name: kind-load
@@ -215,12 +221,14 @@ jobs:
           [[ "$(admin_calls)" == "$before" ]] || { echo "::error::the server saw a request the edge refused"; exit 1; }
           code=$(admin --haproxy-protocol --haproxy-clientip 10.1.2.3)
           [[ "$code" == "200" ]] || { echo "::error::a PROXY client 10.1.2.3 (inside the allowlist) got $code, not 200"; exit 1; }
+          # Captured before grep: `grep -q` closing the pipe early would fail kubectl under pipefail.
+          seen=""
           for i in $(seq 1 10); do
-            kubectl -n traefik logs deploy/traefik --since=5m | grep -q '"ClientHost":"10.1.2.3"' && break
+            logs="$(kubectl -n traefik logs deploy/traefik --since=5m)"
+            if grep -q '"ClientHost":"10.1.2.3"' <<<"$logs"; then seen=1; break; fi
             sleep 1
           done
-          kubectl -n traefik logs deploy/traefik --since=5m | grep -q '"ClientHost":"10.1.2.3"' \
-            || { echo "::error::Traefik's access log has no request from the PROXY client 10.1.2.3"; exit 1; }
+          [[ -n "$seen" ]] || { echo "::error::Traefik's access log has no request from the PROXY client 10.1.2.3"; exit 1; }
           code=$(admin)
           [[ "$code" == "200" ]] || { echo "::error::a request with no PROXY header got $code, not 200"; exit 1; }
       - name: the server pod is unreachable from another namespace (AC-6)

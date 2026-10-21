@@ -9,6 +9,7 @@ import io
 import json
 import os
 import shutil
+import subprocess
 import sys
 import tempfile
 import types
@@ -38,6 +39,10 @@ class FakeCluster:
     """kubectl, helm and docker as platform_up sees them: releases, namespaces, issuers, and every call."""
 
     def __init__(self, inspect=INSPECT_BOX, issuers_ready=True, bindings=True):
+        self.ca_secret = False   # cert-manager writes andara-ca-tls once andara-ca.yaml is applied
+        self.ca_secret_err = ""  # a read error that isn't NotFound
+        self.not_ready = set()   # names whose wait times out
+        self.secret_err = ""     # stderr of a failed token Secret write
         self.context = "kind-andara"
         self.kubectl_path = "bin/kubectl"
         self.inspect = inspect
@@ -61,16 +66,28 @@ class FakeCluster:
             self.stdins.append(stdin)
         if args[:2] == ("get", "nodes"):
             return self.ok("node/andara-control-plane\n")
+        if args[-4:] == ("secret", "andara-ca-tls", "-o", "name"):
+            if self.ca_secret_err:
+                return self.no(self.ca_secret_err)
+            return self.ok("secret/andara-ca-tls\n") if self.ca_secret else self.no(
+                'Error from server (NotFound): secrets "andara-ca-tls" not found')
         if args[:2] == ("apply", "-f"):
+            if args[2].endswith("andara-ca.yaml"):
+                self.ca_secret = True
             first = args[2] not in self.applied
             self.applied.append(args[2])
             name = os.path.basename(args[2])
             return self.ok("clusterissuer.cert-manager.io/%s %s\n" % (name, "created" if first else "unchanged"))
         if args[:2] == ("apply", "--server-side"):
+            if self.secret_err:
+                return self.no(self.secret_err)
             self.applied.append("secret")
             return self.ok("secret/cloudflare-api-token serverside-applied\n")
         if "wait" in args:
-            return self.ok() if self.issuers_ready else self.no("timed out waiting for the condition")
+            target = [a for a in args if "/" in a and not a.startswith("--")][0].split("/", 1)[1]
+            if not self.issuers_ready or target in self.not_ready:
+                return self.no("timed out waiting for the condition")
+            return self.ok()
         if args[:3] == ("get", "namespace", platform_up.SHARED):
             return self.ok() if platform_up.SHARED in self.namespaces else self.no("NotFound")
         if args[:2] == ("create", "namespace"):
@@ -207,10 +224,38 @@ class Box(Base):
     def test_a_null_in_the_values_file_does_not_count_as_a_change(self):
         """Helm may drop traefik's `rollingUpdate: null` from the stored values."""
         self.up()
-        self.fake.releases["traefik"]["values"] = platform_up.strip_none(self.fake.releases["traefik"]["values"])
+        stored = json.loads(json.dumps(self.fake.releases["traefik"]["values"]))
+        self.assertIn("rollingUpdate", stored["updateStrategy"])
+        self.assertIsNone(stored["updateStrategy"]["rollingUpdate"])
+        del stored["updateStrategy"]["rollingUpdate"]
+        self.fake.releases["traefik"]["values"] = stored
         before = len(self.fake.upgrades())
         self.up()
         self.assertEqual(len(self.fake.upgrades()), before)
+
+    def test_a_release_not_deployed_is_reinstalled(self):
+        """AC-1/2: a failed release at the right version is not `unchanged`."""
+        self.up()
+        self.fake.releases["argocd"]["status"] = "failed"
+        out = self.up()
+        self.assertEqual(self.fake.upgrades()[-1], "argocd")
+        self.assertIn("argocd 10.9.2 installed (status failed)", out)
+
+    def test_a_present_ca_root_is_never_restored_over(self):
+        """A renewed or rotated root on the cluster stays; restore is for a cluster without one."""
+        self.up()
+        self.assertEqual(self.restored, [("cert-manager",)])
+        out = self.up()
+        self.assertEqual(self.restored, [("cert-manager",)])
+        self.assertIn("cert-manager/andara-ca-tls present; restore skipped", out)
+
+    def test_an_unreadable_ca_secret_is_exit_1_not_a_restore(self):
+        self.fake.ca_secret_err = "error: You must be logged in to the server (Unauthorized)"
+        with self.assertRaises(platform_up.Failed) as e:
+            self.up()
+        self.assertIn("only NotFound means absent", str(e.exception))
+        self.assertEqual(self.restored, [])
+        self.assertNotIn("apply andara-ca.yaml", self.fake.order())
 
     def test_strimzi_watches_andara_shared_only(self):
         """AC-5."""
@@ -334,9 +379,24 @@ class LetsEncrypt(Base):
         self.assertIn("readable by its owner only", str(e.exception))
 
     def test_a_failed_secret_write_never_echoes_the_token(self):
+        b64 = base64.b64encode(TOKEN.encode()).decode()
+        self.fake.secret_err = "admission webhook denied data.api-token=%s (%s)" % (b64, TOKEN)
+        out = io.StringIO()
         r = platform_up.Run()
-        r.secrets.append(TOKEN)
-        self.assertEqual(r.redact("rejected %s" % TOKEN), "rejected <redacted>")
+        with redirect_stdout(out), self.assertRaises(platform_up.Failed) as e:
+            platform_up.up(r, "box", env=self.env(CLOUDFLARE_API_TOKEN=TOKEN), restore=self.restore)
+        text = out.getvalue() + str(e.exception)
+        self.assertIn("<redacted>", str(e.exception))
+        self.assertNotIn(TOKEN, text)
+        self.assertNotIn(b64, text)
+
+    def test_an_issuer_that_never_becomes_ready_is_exit_1(self):
+        """AC-3."""
+        self.fake.not_ready = {"letsencrypt-staging"}
+        with self.assertRaises(platform_up.Failed) as e:
+            self.up(CLOUDFLARE_API_TOKEN=TOKEN)
+        self.assertIn("clusterissuer letsencrypt-staging did not become Ready", str(e.exception))
+        self.assertNotIn("helm traefik", self.fake.order())
 
 
 class CI(Base):
@@ -456,6 +516,22 @@ class PinCheck(unittest.TestCase):
             "scripts/x.py:2: certManager beside a version",
         ]))
 
+    def test_pins_split_across_lines_are_found(self):
+        self.write("scripts/install.sh", "helm upgrade --install traefik traefik \\\n  --namespace traefik \\\n  --version 41.4.0\n")
+        self.write(".github/workflows/w.yaml", "with:\n  chart: argo-cd\n  version: 10.9.2\n")
+        self.write("scripts/values.yaml", "- chart: strimzi-kafka-operator\n  repo: https://strimzi.io/charts/\n  version: '1.2.0'\n")
+        self.write("scripts/both.sh", "ARGOCD=10.9.2 IMAGE_UPDATER=1.3.1\n")
+        self.assertEqual(sorted(platform_up.pin_findings(self.d)), sorted([
+            ".github/workflows/w.yaml:2: argocd chart with a version: below it",
+            "scripts/both.sh:1: argocd beside a version",
+            "scripts/install.sh:1: traefik beside a version",
+            "scripts/values.yaml:1: strimzi chart with a version: below it",
+        ]))
+
+    def test_a_chart_key_without_a_version_is_not_a_pin(self):
+        self.write("scripts/values.yaml", "chart: traefik\nrepo: https://traefik.github.io/charts\n")
+        self.assertEqual(platform_up.pin_findings(self.d), [])
+
     def test_tests_and_non_items_are_exempt(self):
         self.write("scripts/tests/fixture.py", 'echo strimzi-kafka-operator-1.2.0\n')
         self.write("scripts/bootstrap.sh", 'KUBECTL_VERSION="v1.36.4"\nKIND_VERSION="v0.33.0"\n')
@@ -471,6 +547,23 @@ class PinCheck(unittest.TestCase):
         lines = []
         self.assertEqual(platform_up.check(say=lines.append), 0)
         self.assertEqual(lines, ["platform-check: ok"])
+
+
+
+class MakeTarget(unittest.TestCase):
+    """`make platform-up` passes PROFILE through, and defaults to box rather than the compose `full`."""
+
+    def recipe(self, *args):
+        r = subprocess.run(["make", "-n", "-s", "-C", REPO, "platform-up", *args], capture_output=True, text=True)
+        self.assertEqual(r.returncode, 0, r.stderr)
+        return r.stdout
+
+    def test_profile_ci_reaches_the_script(self):
+        self.assertIn('platform_up.py up "ci"', self.recipe("PROFILE=ci"))
+
+    def test_no_profile_is_box(self):
+        env_free = self.recipe()
+        self.assertIn('platform_up.py up "box"', env_free)
 
 
 if __name__ == "__main__":

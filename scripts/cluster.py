@@ -61,6 +61,8 @@ WAIT = "5m"
 # The steps a rebuild doesn't do yet. Each story that lands one replaces its line with the call.
 NOT_YET = [
     "shared-up (Kafka, object store in andara-shared): AW-INF-055, AW-INF-058",
+    "the dev edge certificate restore (andara-dev/andara-edge-tls, once andara-dev exists; "
+    "platform-up restores the CA root only): AW-INF-066",
     "the schema registry: AW-INF-057",
     "the collectors: AW-INF-065",
 ]
