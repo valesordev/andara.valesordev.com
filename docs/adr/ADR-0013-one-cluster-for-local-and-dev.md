@@ -157,7 +157,7 @@ and the prefix is empty, and the chart's `required` fails the render for the sam
 *What an environment can still do to the other, and what is bounded:* `topics.yaml` gives `andara.commands.v1`
 `retention.ms: -1`, and brokers have a 20Gi PVC each that `dev`'s zero-RPO claim depends on, so a `local` soak
 could fill them. So `local.` topics get a bounded retention (`retention.bytes` 64 MiB per partition and 7 days,
-a starting value for story 3 to measure), `local`'s principals get `KafkaUser` quotas (producer and consumer byte
+a starting value for story 3 to measure; *annotated 2026-10-21: retention deletes only closed segments, so every `local.` topic, `delete` and `compact` alike, also needs `segment.bytes` at most a quarter of `retention.bytes` and `segment.ms` at most 1 day, because neither retention nor compaction touches the active segment and a partition otherwise grows to Kafka's default 1 GiB segment first. Compacted `local.` topics keep `cleanup.policy: compact` and declare no retention, which `compact,delete` would turn into deleting keyed state. And `local` doesn't meet ADR-0002 §4 or the zero-RPO claim: a `local` World past its retention window is `ErrLogGap` at recovery, and is reset. See `docs/specs/kafka/broker-contract.md`, Settings and Retention*), `local`'s principals get `KafkaUser` quotas (producer and consumer byte
 rates), and no environment principal may create topics or alter configs (`CreateTopics`, `AlterConfigs` are
 the operator's alone, ADR-0011). What stays unbounded: a runaway `dev` producer, the partition and connection budget,
 and the broker superuser deleting the other's topics. The residual is a check, `make shared-check`, that reports

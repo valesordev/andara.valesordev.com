@@ -118,7 +118,7 @@ identify one (an idle Zone repeats its offset across rounds). The name grammar i
   than `andara.events.v1` retention minus 7 days unusable, and keeping it would promise a recovery that
   `ErrLogGap` refuses. The one exception besides the newest complete round: **the sweep never deletes the
   round `recovery.pin_round` names**, whatever its age or tag count, so a pin cannot outlive its round. A
-  pin past 23 days is then an `ErrLogGap` at recovery, which is the honest failure. `make check` (SRE) asserts `snapshot.max_round_age <= retention.ms(events) - 7 d`.
+  pin past 23 days is then an `ErrLogGap` at recovery, which is the honest failure. `make check` (SRE) asserts `snapshot.max_round_age <= retention.ms(events) - 7 d`. *Amended 2026-10-21:* over `dev`'s and prod's events retention. `local` is outside this invariant (`broker-contract.md`, Retention).
 - A tag for a round that is gone is an error before anything moves (`make rollback ROUND=T`).
 
 ## Configuration
