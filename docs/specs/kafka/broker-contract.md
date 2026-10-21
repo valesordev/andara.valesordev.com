@@ -107,10 +107,11 @@ Settings row's bounds override every value here.
 is unusable) leaves `local` no usable round age. `local` is disposable (`ADR-0013` decision 4), so:
 - its recovery is good only while its newest complete round is within its events window and its Commands since
   that round are still retained;
-- past that, the honest outcome is `ErrLogGap`, and the remedy is `make world-reset ENV=local`, not a recovery;
+- past that, the honest outcome is `ErrLogGap`, and the remedy is a reset, not a recovery: `make world-reset ENV=local BROKER=cluster CONFIRM=andara-local` (AW-INF-055 AC-7; `BROKER=` drops out when AW-INF-067 retires compose);
 - `lifecycle.md`'s `make check` assertion (`snapshot.max_round_age <= retention.ms(events) - 7 d`) reads `dev`'s and
   prod's events retention, not `local`'s;
-- no `local`-specific `snapshot.max_round_age` is introduced.
+- no `local`-specific `snapshot.max_round_age` is introduced;
+- `local` therefore doesn't meet ADR-0002 §4's "retention reaches back at least as far as the oldest snapshot", and its zero-RPO claim doesn't apply. `local` runs at RF 1 with bounded Command retention by design (`ADR-0013` decision 4).
 
 | Topic | Retention | Decision |
 |---|---|---|
