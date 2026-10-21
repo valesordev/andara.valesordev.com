@@ -1,7 +1,7 @@
 ---
 id: ADR-0014
 title: "Collection split: k8s-monitoring collects Kubernetes, Fleet collects the shared services"
-status: proposed          # draft | proposed | accepted | rejected | superseded by ADR-XXXX
+status: accepted          # draft | proposed | accepted | rejected | superseded by ADR-XXXX
 date: 2026-10-21
 deciders: [brian]
 gates: [AW-INF-065, AW-INF-051]   # their contracts are written against this decision
