@@ -143,11 +143,18 @@ def background_findings(name, text):
     or kube_helm and background anything, or call kube_kubectl_exec and background nothing. A whole
     line, not a segment: bash's & backgrounds the whole and-or list or pipeline before it, so
     `kube_kubectl … || true &` is a subshell too. That also refuses `kube_kubectl get x; sleep 1 &`,
-    which errs toward failing. A group spanning lines (`(` … `) &`, a function later backgrounded) is
-    out of its reach; no script has one."""
-    out = []
+    which errs toward failing. A line ending in &&, || or | continues the list, as in bash, so it is
+    joined with the next. A group spanning lines (`(` … `) &`, a function later backgrounded) is out
+    of its reach; no script has one."""
+    lines = []
     for n, line in kube_check.logical(text.splitlines()):
         code = QUOTED.sub("''", kube_check.strip_comment(line))
+        if lines and re.search(r"(&&|\|\|?)\s*$", lines[-1][1]):
+            lines[-1] = (lines[-1][0], lines[-1][1] + " " + code)
+        else:
+            lines.append((n, code))
+    out = []
+    for n, code in lines:
         calls = re.findall(r"\b(coproc\s+)?kube_(kubectl_exec|kubectl|helm)\b", code)
         if not calls:
             continue
@@ -207,14 +214,19 @@ class ShellHelper(Workdir):
                'kube_kubectl -n x port-forward a 1:1 && echo ok &',
                'kube_kubectl -n x port-forward a 1:1 | tee log &',
                '{ kube_kubectl -n x port-forward a 1:1; } &',
-               'kube_kubectl get x; sleep 1 &']
+               'kube_kubectl get x; sleep 1 &',
+               'kube_kubectl -n x port-forward a 1:1 & kube_kubectl_exec get y &',
+               'kube_kubectl -n x port-forward a 1:1 &&\n  true &',
+               'kube_kubectl -n x port-forward a 1:1 ||\n  true &',
+               'kube_kubectl -n x port-forward a 1:1 |\n  tee log &']
         good = ['kube_kubectl get x >/dev/null &&\n  true',
                 'kube_kubectl get x >/dev/null 2>&1 || kube_kubectl create x',
                 'kube_kubectl_exec -n x port-forward a 1:1 >"$W/pf.log" 2>&1 &',
                 'kube_kubectl get x &>/dev/null',
                 'kube_kubectl get x  # & later',
                 'kube_kubectl get x -l "a&b" -o \'jsonpath={.a}&\'',
-                'kube_kubectl apply -f - <&3']
+                'kube_kubectl apply -f - <&3',
+                'kube_kubectl get x -l "a\\"&b"']
         for text in bad:
             with self.subTest(bad=text):
                 self.assertTrue(background_findings("t.sh", text), text)
