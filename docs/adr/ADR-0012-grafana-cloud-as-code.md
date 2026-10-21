@@ -116,7 +116,10 @@ rule the §8 check is supposed to exercise; `make up` would be verifying a rule 
   `pack` label identifies the failed load (its tests and the runbook depend on one alert per pack); the
   `on(namespace)` joins become `on (environment, namespace)`. The deliberately empty guard in
   `AndaraServerUnavailable` (`and on() count(up{namespace!=""}) > 0`, a `by`-less `count`) stays exactly as it is:
-  it asks whether anything at all is reporting, across every environment.
+  it asks whether anything at all is reporting, across every environment. *Superseded in part by `ADR-0014`
+  (2026-10-21, §9 and amendment A3):* the guard stays `by`-less, and it becomes
+  `count(up{cluster!="ci", namespace!="", namespace!="andara-shared"}) > 0`. It now asks whether the box's chart
+  scrape is reporting, so that Fleet's `andara-shared` series and CI's series can't satisfy it.
   Each alert instance therefore carries both labels, and every label it carries today. `environment` is the routing and rendering key (decisions 10 and 12); `namespace` stays as the source
   within an environment, because `local` has two (`andara-local`, `andara-ci`) and the
   drills must not see each other's series. Series that have no `environment` of their own (cert-manager,

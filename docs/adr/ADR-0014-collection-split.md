@@ -356,6 +356,9 @@ telemetry-freshness rule exists, a dead `metrics` collector is silent rather tha
 
 **In `ADR-0012`**, superseded by this ADR, with a dated annotation at each place:
 
+- **Decision 1** (added 2026-10-21 with A3): the guard sentence "stays exactly as it is". §9 and A3 change its
+  expression and its meaning.
+
 - **Decision 15:**
   - "the whole collection pipeline lives in Fleet Management";
   - the bare-collector item and its `[verify]`;
@@ -388,7 +391,7 @@ deployed (§1).
 |---|---|---|
 | `AW-INF-065` (draft) | **Gains:** the chart's features and the four collectors (§2), the autodiscovery remap and include-lists (§1), the receiver's fixed Service and ports, the OTLP-log drop filter, `environments.yaml` and `keep-list.yaml` with their rendered rules, the keep-list and parity tests moved from `AW-INF-051`, `KEEP_PIPELINE`, the log stream-label allow-list (also from `AW-INF-051`: `environment`, `namespace`, `cluster`, `job`, `container`), the active-series and log records (from `AW-INF-051`), AC-2 (`environment` on a series) and AC-4 (`unknown` outside the table) moved from `AW-INF-051`, and `AW-INF-009`'s inherited line (the two kube-state-metrics series kept, now by the chart). **Changes:** AC-3 ("each collector registers") becomes "only `fleet` registers"; AC-7's "reachable by the exporters" becomes the include-lists; the Secret `grafana-telemetry` holds the token under one key and the endpoint usernames, which aren't secret, under one key each (`prom`, `loki`, `tempo`, `fleet`; the chart's `usernameKey` defaults to `username` and must be set per destination and on `fleet`'s `remoteConfig` (`usernameKey: fleet`); every reader takes the token as `passwordKey: token`); node-exporter is not installed; the bare-collector `[verify]` is dropped. It **stays blocked by `AW-INF-051`**, because `[verify 065]` item 1 and §5's `owner: fleet` test need `shared-kafka`. Its `[verify]` items are the ones below. Likely `L`. | PM's call: a split such as **065a** (install, Secret, `fleet` registration, the receiver) and **065b** (stamp, guard, keep-list and their tests) |
 | `AW-INF-051` (ready) | Shrinks to the Fleet plumbing (provider, tokens, `tf.py`, the `pipelines/` safety checks without `replace()`) plus `shared-kafka`, and its series spelling `[verify 051]`. Loses `scrape`, `stamp`, `keep`, `logs`, `traces` and `export`, its keep-list and `replace()` tests, ACs 2, 4 and 10, the active-series record, and the inherited `AW-INF-009` line, all of which move to `AW-INF-065`. Its Observability line "broker … series are **not shipped**" reverses: `shared-kafka` ships §6's set. Probably `S`. | no |
-| `AW-INF-047` (ready) | The rules are unchanged except `AndaraServerUnavailable`'s guard (§9: `namespace!="andara-shared"`). "keeps the `environment` it arrived with: `unknown` once `AW-INF-051`'s `stamp` runs" now reads "once `AW-INF-065`'s destinations stamp", and its blocked-by link moves from `AW-INF-051` to `AW-INF-065`. | no |
+| `AW-INF-047` (ready) | The rules are unchanged except `AndaraServerUnavailable`'s guard (§9: `namespace!="andara-shared"`; *amended 2026-10-21 (A3):* also `cluster!="ci"`). "keeps the `environment` it arrived with: `unknown` once `AW-INF-051`'s `stamp` runs" now reads "once `AW-INF-065`'s destinations stamp", and its blocked-by link moves from `AW-INF-051` to `AW-INF-065`. | no |
 | `AW-INF-049` (ready) | No contract change. Its live data already waits on `AW-INF-065`. | no |
 | `AW-INF-061` (ready) | Its out-of-scope line "the same pipeline files as static config with `environment="local"` (`AW-INF-065`)" becomes "the chart with `values-ci.yaml` (`platform-up PROFILE=ci`), no override". The throwaway Kafka's namespace is outside the CI include-list, so it isn't scraped. | no |
 | `AW-INF-075` (review, merged) | none to its contract; its constant moves in `AW-INF-065` | no |
@@ -495,7 +498,10 @@ its findings are decided here. A4 corrects a false statement.
     `andara-local` (`ADR-0013` made CI a `local`). The rules aggregate by `namespace`, and by `(environment,
     namespace)` after `AW-INF-047`, so during a CI run CI's `andara-local` and the box's can mask each other in a
     `local` alert, in either direction. `local` is a developer install that pages nobody. Revisit-when names the
-    trigger.
+    trigger. The drills are unaffected today: CI's drills run in `andara-ci`, and CI's lifecycle job (which uses
+    `andara-local`) reads nothing by selector. But `ADR-0012` decision 1's "`local` has two sources (`andara-local`,
+    `andara-ci`)" holds only per cluster. A box `ENV=local` drill that reads `namespace="andara-local"` adds
+    `cluster="andara"` (AW-INF-064's selectors).
   - **Churn:** each CI run brings new `pod` and `instance` values, about 100 series a run by the kube row counts.
     AW-INF-065's active-series record states CI's share (`cluster="ci"`) apart from the box's.
 - **A4. Correction to §8 and the Consequences.** They said `tf_policy.py`'s `replace()`/`__PLACEHOLDER__` allowance
@@ -510,4 +516,6 @@ raises it with PM.
 - `AW-INF-065`: A1's rule and test; A2's annotation; A3's `cluster.name: ci` render assertion and the CI share in
   the active-series record.
 - `AW-INF-047`: A3's guard, with a promtool case in which only `cluster="ci"` series exist.
-- `AW-INF-061` and AW-INF-064: no change.
+- `ADR-0012` decision 1: the guard sentence, annotated.
+- AW-INF-064: its box `ENV=local` selectors add `cluster="andara"`.
+- `AW-INF-061`: no change.
