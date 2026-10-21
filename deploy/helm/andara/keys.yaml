@@ -108,6 +108,11 @@ keys:
   # kafka.brokers is read by the account store first (AW-SRV-008); the command log
   # producer (AW-SRV-010) and the tick consumers (AW-SRV-002) read the same key.
   - {key: kafka.brokers,             env: ANDARA_KAFKA_BROKERS,           type: string, default: "", story: AW-SRV-008}
+  # Read by the server and andara-projector alike. Empty, or [a-z0-9]+ with no trailing dot; the
+  # server joins it as <prefix>.andara.<name>.v<n> and refuses anything else at startup (exit 1).
+  # Empty is prod's value; outside prod it is a startup warn until the follow-on story makes it
+  # fatal (ADR-0013 Amendment 16). The chart's values and required check are AW-INF-055's.
+  - {key: kafka.topic_prefix,        env: ANDARA_KAFKA_TOPIC_PREFIX,      type: string, default: "", story: AW-SRV-058}
   - {key: auth.store,                env: ANDARA_AUTH_STORE,              type: enum, values: [kafka, memory], default: kafka, story: AW-SRV-008}
   - {key: auth.session_ttl,          env: ANDARA_AUTH_SESSION_TTL,        type: duration, default: 1h, story: AW-SRV-008}
   - {key: auth.refresh_ttl,          env: ANDARA_AUTH_REFRESH_TTL,        type: duration, default: 720h, story: AW-SRV-008}
