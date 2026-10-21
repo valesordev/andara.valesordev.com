@@ -98,7 +98,7 @@ else
     && [[ -s "$CA" ]] || fail "no ca.crt in $NS/andara-server-tls"
   PORT="$(python3 -c 'import socket; s=socket.socket(); s.bind(("127.0.0.1",0)); print(s.getsockname()[1])')"
   say "port-forwarding 127.0.0.1:$PORT to $NS/andara-0 (gRPC)"
-  kube_kubectl -n "$NS" port-forward pod/andara-0 "$PORT:grpc" >"$WORK/pf.log" 2>&1 &
+  kube_kubectl_exec -n "$NS" port-forward pod/andara-0 "$PORT:grpc" >"$WORK/pf.log" 2>&1 &
   PF=$!
   for _ in $(seq 1 30); do
     grep -q '^Forwarding from' "$WORK/pf.log" && break

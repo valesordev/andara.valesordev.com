@@ -101,7 +101,7 @@ rm -f "$LOG"
 # Both legs HTTP/2: Traefik labels the inbound protocol, and gRPC to the pod cannot run
 # over anything but HTTP/2, so a non-zero grpc counter on this release's routers is the
 # whole proof. Read through a port-forward; the metrics entrypoint is not exposed.
-kube_kubectl -n "$INGRESS_NS" port-forward deploy/traefik 19100:9100 >/dev/null 2>&1 &
+kube_kubectl_exec -n "$INGRESS_NS" port-forward deploy/traefik 19100:9100 >/dev/null 2>&1 &
 pf=$!
 trap 'kill $pf 2>/dev/null || true' EXIT
 sleep 2

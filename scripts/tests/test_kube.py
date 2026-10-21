@@ -9,6 +9,7 @@ cluster-bound script against the stubs under a kubeconfig whose current-context 
 (AC-2, AC-3, AC-4, AC-8)."""
 import io
 import os
+import re
 import shutil
 import stat
 import subprocess
@@ -148,6 +149,31 @@ class ShellHelper(Workdir):
                 self.assertEqual(p.stderr.splitlines()[0], "context: " + want)
                 self.assertEqual(self.calls(), [["kubectl", "--context", want, "get", "pods"],
                                                 ["helm", "--kube-context", want, "list"]])
+
+    def test_a_backgrounded_call_is_killable_by_its_pid(self):
+        """Codex on #605: `kube_kubectl … &` backgrounds a subshell, so `kill $!` left the port-forward
+        running. kube_kubectl_exec replaces that subshell with kubectl, so $! is kubectl's PID."""
+        pidfile = os.path.join(self.d, "pid")
+        sleeper = os.path.join(self.bin, "kubectl")
+        with open(sleeper, "w") as f:
+            f.write('#!/bin/sh\necho $$ > "%s"\nexec sleep 30\n' % pidfile)
+        p = self.sh('kube_kubectl_exec -n x port-forward pod/a 1:1 &\npf=$!\n'
+                    'for _ in $(seq 50); do [ -s "%s" ] && break; sleep 0.1; done\n'
+                    'kill "$pf"; echo "$pf"\n' % pidfile)
+        self.assertEqual(p.returncode, 0, p.stderr)
+        with open(pidfile) as f:
+            self.assertEqual(f.read().strip(), p.stdout.strip())
+
+    def test_no_script_backgrounds_the_function(self):
+        sdir = os.path.join(REPO, "scripts")
+        found = []
+        for name in sorted(os.listdir(sdir)):
+            if name.endswith(".sh"):
+                with open(os.path.join(sdir, name)) as f:
+                    for n, line in enumerate(f, 1):
+                        if re.search(r"\bkube_(kubectl|helm)\b[^#]*&\s*$", line):
+                            found.append("%s:%d" % (name, n))
+        self.assertEqual(found, [], "background with kube_kubectl_exec, whose $! is kubectl's")
 
     def test_a_missing_context_exits_3_before_any_call(self):
         p = self.sh("kube_require t\nkube_kubectl get pods\n", "kind-nope")

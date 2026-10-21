@@ -21,6 +21,13 @@ kube_kubectl() {
   "${KUBECTL:-kubectl}" --context "$ANDARA_KUBE_CONTEXT" "$@"
 }
 
+# For a call backgrounded with &: bash runs a function there in a subshell, so `$!` would name the
+# subshell and `kill $!` would leave kubectl (a port-forward) running. exec makes the subshell
+# kubectl. Never call it in the script's own shell, which exec would replace.
+kube_kubectl_exec() {
+  exec "${KUBECTL:-kubectl}" --context "$ANDARA_KUBE_CONTEXT" "$@"
+}
+
 kube_helm() {
   "${HELM:-helm}" --kube-context "$ANDARA_KUBE_CONTEXT" "$@"
 }
