@@ -528,6 +528,26 @@ class PinCheck(unittest.TestCase):
             "scripts/values.yaml:1: strimzi chart with a version: below it",
         ]))
 
+    def test_a_python_call_split_inside_its_brackets_is_found(self):
+        self.write("scripts/a.py", 'run(["helm", "upgrade", "--install", "traefik", "traefik",\n'
+                                   '     "--version", "41.4.0"])\nx = 1\n')
+        self.assertEqual(platform_up.pin_findings(self.d), ["scripts/a.py:1: traefik beside a version"])
+
+    def test_an_unbalanced_bracket_joins_at_most_a_few_lines(self):
+        lines = ["s = '('"] + ["x = %d" % i for i in range(20)] + ['TRAEFIK = "41.4.0"']
+        joined = platform_up.logical_lines(lines)
+        self.assertEqual(joined[-1], (22, 'TRAEFIK = "41.4.0"'))
+
+    def test_an_oci_chart_reference_is_found(self):
+        self.write(".github/workflows/b.yaml", "- chart: oci://quay.io/jetstack/charts/cert-manager\n  version: v1.21.1\n")
+        self.assertEqual(platform_up.pin_findings(self.d),
+                         [".github/workflows/b.yaml:1: certManager chart with a version: below it"])
+
+    def test_a_neighbouring_entry_s_version_is_not_this_chart_s(self):
+        self.write("scripts/c.yaml", "- chart: argocd-image-updater\n  version: 1.3.1\n"
+                                     "- chart: argo-cd\n  repo: https://argoproj.github.io/argo-helm\n")
+        self.assertEqual(platform_up.pin_findings(self.d), [])
+
     def test_a_chart_key_without_a_version_is_not_a_pin(self):
         self.write("scripts/values.yaml", "chart: traefik\nrepo: https://traefik.github.io/charts\n")
         self.assertEqual(platform_up.pin_findings(self.d), [])

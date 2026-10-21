@@ -221,37 +221,55 @@ def item_named(text, aliases):
     return None
 
 
-def logical_lines(lines):
-    """(first line number, text) with backslash-continued lines joined, so a `helm upgrade` whose
-    chart name and `--version` are on different lines is one line."""
-    out, start, buf = [], None, []
+def logical_lines(lines, limit=8):
+    """(first line number, text) with continued lines joined: after a trailing backslash (shell), or
+    while a bracket is open (a Python `run([...])` call), so a `helm upgrade` whose chart name and
+    `--version` are on different lines is one line. At most limit lines join, so one unbalanced
+    bracket can't fold the rest of a file into a single line."""
+    out, start, buf, depth = [], None, [], 0
     for n, line in enumerate(lines, 1):
         if start is None:
             start = n
-        if line.rstrip().endswith("\\"):
-            buf.append(line.rstrip()[:-1])
+        text = line.rstrip()
+        backslash = text.endswith("\\")
+        buf.append(text[:-1] if backslash else line)
+        depth = max(0, depth + sum(text.count(c) for c in "([{") - sum(text.count(c) for c in ")]}"))
+        if (backslash or depth > 0) and len(buf) < limit:
             continue
-        buf.append(line)
         out.append((start, " ".join(buf)))
-        start, buf = None, []
+        start, buf, depth = None, [], 0
     if buf:
         out.append((start, " ".join(buf)))
     return out
 
 
-CHART_KEY_RE = re.compile(r"^\s*-?\s*chart:\s*[\"']?([\w./-]+)")
-VERSION_KEY_RE = re.compile(r"^\s*(?:target)?[vV]ersion:\s*[\"']?v?\d+\.\d+\.\d+")
+CHART_KEY_RE = re.compile(r"^\s*-?\s*chart:\s*[\"']?(\S+?)[\"']?\s*(?:#.*)?$")
+VERSION_KEY_RE = re.compile(r"^\s*-?\s*(?:target)?[vV]ersion:\s*[\"']?v?\d+\.\d+\.\d+")
+ENTRY_RE = re.compile(r"^\s*-\s|^\s*-?\s*chart:")
 
 
 def chart_version_pairs(lines, aliases, window=4):
-    """(line, item) for YAML `chart: <item>` with a `version:` literal within window lines either side."""
+    """(line, item) for YAML `chart: <item>` with a `version:` literal in the same entry: within
+    window lines either side, stopping at another list entry or another `chart:` key."""
     found = []
     for i, line in enumerate(lines):
         m = CHART_KEY_RE.match(line)
         item = m and item_named(m.group(1), aliases)
         if not item:
             continue
-        near = lines[max(0, i - window):i] + lines[i + 1:i + 1 + window]
+        near = []
+        # Up to the line that starts this list entry, never into another chart's.
+        if not line.lstrip().startswith("-"):
+            for j in range(i - 1, max(-1, i - 1 - window), -1):
+                if CHART_KEY_RE.match(lines[j]):
+                    break
+                near.append(lines[j])
+                if lines[j].lstrip().startswith("- "):
+                    break
+        for j in range(i + 1, min(len(lines), i + 1 + window)):
+            if ENTRY_RE.match(lines[j]):
+                break
+            near.append(lines[j])
         if any(VERSION_KEY_RE.match(x) for x in near):
             found.append((i + 1, item))
     return found
