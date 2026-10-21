@@ -40,10 +40,19 @@ Facts this rests on, read from the chart `grafana/k8s-monitoring` **4.5.3** (the
   any feature's.
 - Annotation autodiscovery and pod logs take `namespaces` and `excludeNamespaces`. Integrations exist for
   `cert-manager` and `postgresql`, but not for Kafka.
-- The server's chart already annotates its pods for this chart's autodiscovery: `prometheus.io/scrape`, port, path,
-  and `k8s.grafana.com/job` (`deploy/helm/andara/templates/_helpers.tpl`, `AW-INF-008`). The Kafka brokers carry
-  the same annotations, with `job` `andara-kafka`, and serve the Strimzi Metrics Reporter on `:9404`
-  (`deploy/k8s/kafka/kafka.yaml`).
+- Annotation autodiscovery reads `k8s.grafana.com/scrape`, `k8s.grafana.com/metrics.portNumber` and
+  `k8s.grafana.com/metrics.path` by default, and takes `job` from `k8s.grafana.com/job`. The names are values
+  (`annotationAutodiscovery.annotations.*`). It has no `prometheus.io/*` handling of its own.
+- The server's chart annotates its pods `prometheus.io/scrape`, `prometheus.io/port`, `prometheus.io/path` and
+  `k8s.grafana.com/job` (`deploy/helm/andara/templates/_helpers.tpl`, `AW-INF-008`). So the chart's defaults would
+  **not** scrape the servers, and the deleted cluster's values (another repo) must have remapped the names. The
+  Kafka brokers carry the same four annotations, with `job` `andara-kafka`, and serve the Strimzi Metrics Reporter
+  on `:9404` (`deploy/k8s/kafka/kafka.yaml`).
+- node-exporter is scraped by the `hostMetrics` feature (`linuxHosts`), not by `clusterMetrics` (`UPGRADING.md`,
+  "Cluster Metrics feature split").
+- The server exports its log records over OTLP as well as writing them to stderr (`AW-SRV-024`,
+  `server/telemetry/logexport.go`). `deploy/helm/values/dev.yaml` points that export, and the traces, at
+  `k8s-monitoring-alloy-receiver.observability.svc:4317`.
 
 ## Options considered
 
@@ -101,10 +110,12 @@ inside `andara-shared`, belong to Fleet.
 
 | Source | Owner | Chart feature or Fleet pipeline | Why this owner |
 |---|---|---|---|
-| kube-state-metrics, node-exporter, kubelet and cAdvisor | chart | `clusterMetrics`, with `telemetryServices` deploying kube-state-metrics and node-exporter | standard Kubernetes collection |
-| Andara servers and projectors (`andara-local`, `andara-dev`, `andara-ci`) | chart | `annotationAutodiscovery`, `excludeNamespaces: [andara-shared]` | the pods are annotated for it already; `job` comes from `k8s.grafana.com/job` |
+| kube-state-metrics, kubelet and cAdvisor | chart | `clusterMetrics`, with `telemetryServices.kube-state-metrics.deploy: true` | standard Kubernetes collection |
+| node-exporter | not deployed | `telemetryServices.node-exporter.deploy: false`, no `hostMetrics` | no rule or dashboard panel reads a `node_*` series (`ADR-0012` decision 13: unread series are not shipped). The first reader enables `hostMetrics.linuxHosts`. This amends `ADR-0013` decision 2's "collectors, kube-state-metrics, node-exporter". |
+| Andara servers and projectors (`andara-local`, `andara-dev`, `andara-ci`) | chart | `annotationAutodiscovery`, with `annotations.scrape: prometheus.io/scrape`, `annotations.metricsPortNumber: prometheus.io/port` and `annotations.metricsPath: prometheus.io/path` (`job` stays `k8s.grafana.com/job`), and an include-list, `namespaces`: `[andara-local, andara-dev, traefik]` on the box and `[andara-ci, traefik]` in CI. So `andara-shared` and CI's throwaway Kafka namespace, which has no fixed name, are never discovered. | the pods' existing annotations, remapped in values rather than changed in two charts; `job` must come out `andara-server` and `andara-projector-state` (`ADR-0012` decision 13), and a `make check` render asserts the remap |
 | the server's traces (OTLP) | chart | `applicationObservability` on the `receiver` collector | the chart's OTLP receiver is the standard path; no Fleet value |
-| pod logs, every namespace listed below | chart | `podLogsViaLoki`, `namespaces: [andara-local, andara-dev, andara-ci, andara-shared]` | logs of a pod are Kubernetes-level data, including a broker's |
+| pod logs, every namespace listed below | chart | `podLogsViaLoki`, `namespaces: [andara-local, andara-dev, andara-ci, andara-shared]` | logs of a pod are Kubernetes-level data, including a broker's. **The server's logs are owned here, from stderr**, because stderr also holds what is written before the OTLP exporter starts (a boot failure). |
+| the server's OTLP log records (`AW-SRV-024`) | dropped at the `receiver` | `applicationObservability.logs` with a filter that drops every record | The server sends logs and traces to one `otlp_endpoint`, and nothing switches only the logs off. Shipping both would double the server's log volume with duplicates. The receiver accepts the records, so the exporter reports no failure, and drops them. A server switch for the log export is an implementation story PM may write. Nothing waits on it. |
 | cert-manager | chart | `integrations.cert-manager` | the chart has the integration |
 | Traefik | chart | `annotationAutodiscovery` on Traefik's pod annotations | platform edge, standard scrape; `[verify 065]` that the pinned Traefik chart annotates its pods, else an `extraConfig` scrape on the same collector |
 | Kafka brokers (`andara-log`, the Strimzi Metrics Reporter on `:9404`) | **Fleet** | `shared-kafka` | Brian's direction: outside the chart's standard scope, changed without a chart upgrade |
@@ -140,10 +151,20 @@ applied by `make platform-up`. They don't appear in Grafana Cloud's Fleet pages,
 
 | Collector | Workload | Carries |
 |---|---|---|
-| `metrics` | Deployment, 1 replica | `clusterMetrics`, `annotationAutodiscovery`, `integrations` |
+| `metrics` | Deployment, 1 replica | `clusterMetrics` (with kube-state-metrics), `annotationAutodiscovery`, `integrations` |
 | `logs` | DaemonSet | `podLogsViaLoki` |
 | `receiver` | Deployment, 1 replica, with its `extraService` | `applicationObservability` (OTLP in) and `prometheusMetricsReceiver` (remote-write in, for Fleet) |
 | `fleet` (box only) | Deployment, 1 replica | no chart feature; `remoteConfig.enabled: true` |
+
+- **The receiver's address is fixed:** `extraService.fullname: k8s-monitoring-alloy-receiver`. That is the name the
+  committed server values already dial (`deploy/helm/values/dev.yaml`, `prod.yaml`, the chart README). The chart's
+  default would render `k8s-monitoring-alloy`. It exposes:
+  - OTLP gRPC on `4317`, the server's `otlp_endpoint`, unchanged;
+  - remote-write on `9090`, `prometheusMetricsReceiver`'s default, the Fleet pipelines' one URL:
+    `http://k8s-monitoring-alloy-receiver.observability.svc:9090/api/v1/metrics/write`.
+
+  `make check` asserts both against the render (`[verify 065]` item 1: the path, and that `extraService` carries
+  both ports).
 
 ### 3. Fleet on its own collector
 
@@ -154,8 +175,8 @@ applied by `make platform-up`. They don't appear in Grafana Cloud's Fleet pages,
 - **Fleet pipelines** stay `grafana_fleet_management_pipeline` resources in the `solo7dev` root, matched on `stack`
   alone (decision 15 unchanged on this point). Their sources are `deploy/terraform/grafana/pipelines/<name>.alloy`,
   read with one literal `file()` each. There is no `replace()` and no `__PLACEHOLDER__` token: a pipeline names no
-  endpoint. Its only output is `prometheus.remote_write` to the `receiver` collector's `extraService` (a fixed
-  in-cluster URL in the `.alloy` file). `make check` fails on any other `remote_write` URL, any
+  endpoint. Its only output is `prometheus.remote_write` to the receiver URL in §2, written literally in the
+  `.alloy` file. `make check` fails on any other `remote_write` URL, any
   `otelcol.exporter.*`, any `loki.write`, and any `sys.env` call outside the allow-list in the pipeline-safety bullet.
 - **A Fleet pipeline sets `namespace` and `job`** from discovery (`__meta_kubernetes_namespace`, the pod's
   `k8s.grafana.com/job` annotation), because the chart's stamp keys on `namespace` (§4).
@@ -219,17 +240,21 @@ applied by `make platform-up`. They don't appear in Grafana Cloud's Fleet pages,
   marked `owner: fleet`. The destination keeps what it is told to keep, so a name kept by a pipeline but missing
   from `keep-list.yaml` is dropped at the destination and fails the test below.
 - **Ownership of a name follows its prefix:** `kafka_` and `pg_` belong to Fleet; every other name belongs to the
-  chart. `make check` asserts all of these:
+  chart. **`up` is shared**: every scrape produces it, so it is in `keep-list.yaml` once, kept for all jobs, and
+  each Fleet pipeline also keeps its own job's `up`. `make check` asserts all of these:
   - every metric name in `alerts.yaml` and the dashboard is in `keep-list.yaml`;
   - each `owner: fleet` name is kept by the pipeline that owns its prefix;
-  - no chart feature scrapes a `kafka_` name.
+  - the chart's discovery reaches no Fleet-owned source. A static check can't see what an annotated pod will
+    expose, so this is asserted on the render: `annotationAutodiscovery.namespaces` is the include-list of §1,
+    which has no `andara-shared`.
 - **What reads the files:**
   - `scripts/observe_keep_list.py`'s offline half (the fault-only names) reads `keep-list.yaml`;
   - its `KEEP_PIPELINE` constant changes from `pipelines/keep.alloy` to that file, in `AW-INF-065` (`AW-INF-075` is
     merged and is not reopened for it);
   - `KEEP_LIST=1`'s live half queries the stack, as before;
-  - the parity tests for `alerts.yaml` (`AW-INF-047`) and the `tick-health` dashboard (`AW-INF-049`) assert against
-    `keep-list.yaml`.
+  - the keep-list tests in `make check` (every name in `alerts.yaml` and the dashboard is kept) are `AW-INF-065`'s,
+    moved from `AW-INF-051`, and they read `keep-list.yaml`. `AW-INF-047`'s parity test (the rendered rules against
+    `alerts.yaml`) and `AW-INF-049`'s dashboard don't read a keep-list and don't change.
 - **A rule change is now also a collector change.** A rule that names a new series needs that name in
   `keep-list.yaml` (the test enforces it), and then `make platform-up`. Until the platform is reconciled, the rule
   sees no data, and `no_data_state = OK` keeps it silent. The rule's PR says so, and `KEEP_LIST=1` after
@@ -256,11 +281,11 @@ The bounds allow for label variants (`instance`, a `-total` suffix). Per-topic s
 come to about 1,000 series, and no reader exists. The reporter's own `allowList` in `kafka.yaml` is unchanged, since
 it bounds the scrape, not the shipment.
 
-**Against the limit:** the Grafana Cloud free tier allows **10,000 active metric series** per stack (`[verify 051]`
-against `solo7dev`'s usage page, the record `AW-INF-051` already owes). The shared services add at most 80. The
-chart side is the same set decision 15 planned, so the split moves no series. `AW-INF-065` records the total per
-`environment` beside the limit, the record that `ADR-0012`'s revisit trigger ("over the limit twice in a month")
-measures. Logs: shipping the brokers' pod logs is new volume against the free tier's log allowance, and
+**Against the limit:** the Grafana Cloud free tier allows **10,000 active metric series** per stack (`[verify 065]`
+against `solo7dev`'s usage page, the record moves from `AW-INF-051` to `AW-INF-065`, its one owner). The shared
+services add at most 80. The chart side is the same set decision 15 planned, so the split moves no series.
+`AW-INF-065` records the total per `environment` beside the limit, the record that `ADR-0012`'s revisit trigger
+("`solo7dev` exceeds the free tier's active-series limit twice in a month") measures. Logs: shipping the brokers' pod logs is new volume against the free tier's log allowance, and
 `AW-INF-065` records the first week's ingest.
 
 ### 7. CI's `andara-ci`
@@ -268,7 +293,9 @@ measures. Logs: shipping the brokers' pod logs is new volume against the free ti
 - **What runs:**
   - CI's kind job installs the same chart at the same pin with `values.yaml` and `values-ci.yaml` (`make platform-up
     PROFILE=ci`), when the job holds `solo7dev`'s telemetry token.
-  - Without the token (a fork), it skips the install, and the Grafana Cloud assertions say so (`ADR-0012` decision 14).
+  - Without the token (a fork), it installs anyway with the `grafana-telemetry` Secret empty, so the collectors
+    ship nothing. Only the Grafana Cloud assertions are skipped, with a notice (`ADR-0012` decision 14, `ADR-0013`'s
+    Agreement). That run is where `[verify 065]` item 6 is observed.
   - There is no `fleet` collector and no Fleet registration (decision 15's reason stands: ephemeral collectors would
     pollute the inventory).
   - The `drills` job's throwaway Kafka is not scraped.
@@ -290,7 +317,38 @@ measures. Logs: shipping the brokers' pod logs is new volume against the free ti
 - **Not Terraform's:** the chart, its values, the stamp, the guard, the chart's keep-list, the collectors and the
   telemetry Secret. Those belong to `make platform-up`.
 
-### 9. Supersedes, and the ripple
+### 9. The 12 rules in `alerts.yaml`
+
+Every series the 12 rules read had decision 15's planned `scrape` pipeline as its owner, and now has the chart. Nothing
+had shipped from either, so no live series changes. **No series name changes.** The labels the rules select on keep
+their meaning:
+- `job` comes from `k8s.grafana.com/job`;
+- `namespace` is the pod's;
+- `exported_namespace` and `name` come from cert-manager (`[verify 065]` item 3);
+- `router` comes from Traefik;
+- `environment` comes from §4's stamp.
+
+The only label added is `cluster`.
+
+| Rule | Reads | Owner and feature |
+|---|---|---|
+| `AndaraServerUnavailable` | `up{job="andara-server"}`; guard `count(up{namespace!=""}) > 0` | chart, `annotationAutodiscovery`. **The guard changes meaning; see below.** |
+| `AndaraServerCrashLooping` | `kube_pod_container_status_restarts_total` | chart, `clusterMetrics` |
+| `RecoveryStateMismatch` | `kube_pod_container_status_last_terminated_exitcode` ‡, `kube_pod_container_status_ready`, `andara_recovery_state_hash_match` ‡ | chart: `clusterMetrics` (default allow-list off, §5) and `annotationAutodiscovery` |
+| `SimulationLagging`, `SnapshotStale`, `StateProjectorDiverged`, `ProjectionStale`, `ContentLoadFailing`, `SessionsDroppingAtRate` | `andara_*` | chart, `annotationAutodiscovery` |
+| `StateProjectorDown` | `up{job="andara-projector-state"}`, `kube_deployment_spec_replicas` | chart, `annotationAutodiscovery` and `clusterMetrics` |
+| `CertificateExpiringSoon` | `certmanager_certificate_expiration_timestamp_seconds` | chart, `integrations.cert-manager` |
+| `IngressErrorRateHigh` | `traefik_router_requests_total` | chart, `annotationAutodiscovery` in namespace `traefik` (`[verify 065]` item 4) |
+
+**`AndaraServerUnavailable`'s guard.** The guard reads "telemetry is arriving at all" as `count(up{namespace!=""}) >
+0`. Fleet now ships `up{job="andara-kafka", namespace="andara-shared"}` through `receiver`, a path that doesn't pass
+through `metrics`. So a dead `metrics` collector, with `receiver` and `fleet` alive, would satisfy the guard. The
+`dev` absence line would then page "server unavailable" for what is a collector fault. The guard becomes
+`count(up{namespace!="", namespace!="andara-shared"}) > 0`, so it reads the chart's scrape alone, as it did when
+the guard was written. That is an amendment to `AW-INF-047`'s rendered rule and to `alerts.yaml`. Until a
+telemetry-freshness rule exists, a dead `metrics` collector is silent rather than misattributed (Consequences).
+
+### 10. Supersedes, and the ripple
 
 **In `ADR-0012`**, superseded by this ADR, with a dated annotation at each place:
 
@@ -323,9 +381,11 @@ environments" holds: it is the `k8s-monitoring` release in `observability`.
 
 | Story | What changes | New story? |
 |---|---|---|
-| `AW-INF-065` (draft) | Gains the chart's features, the four collectors, `environments.yaml` and `keep-list.yaml` with their rendered rules, the parity and keep tests, `KEEP_PIPELINE`, the log stream-label allow-list (moved from `AW-INF-051`: `environment`, `namespace`, `cluster`, `job`, `container`), the active-series and log records, and `AW-INF-009`'s inherited line (the two kube-state-metrics series kept, now by the chart). Its `[verify]` items are the ones below. Likely `L`. | PM's call: a split such as **065a** (install, Secret, `fleet` registration, the receiver) and **065b** (stamp, guard, keep-list and their tests) |
-| `AW-INF-051` (ready) | Shrinks to the Fleet plumbing (provider, tokens, `tf.py`, the `pipelines/` safety checks) plus `shared-kafka`. Loses `scrape`, `stamp`, `keep`, `logs`, `traces`, `export`, ACs 2, 4 and 10, and the inherited `AW-INF-009` line, which moves to `AW-INF-065`. Probably `S`. | no |
-| `AW-INF-047`, `AW-INF-049` (ready) | "kept by the `keep` pipeline" becomes "named in `deploy/platform/collectors/keep-list.yaml`"; the rules and the panels are unchanged | no |
+| `AW-INF-065` (draft) | **Gains:** the chart's features and the four collectors (§2), the autodiscovery remap and include-lists (§1), the receiver's fixed Service and ports, the OTLP-log drop filter, `environments.yaml` and `keep-list.yaml` with their rendered rules, the keep-list and parity tests moved from `AW-INF-051`, `KEEP_PIPELINE`, the log stream-label allow-list (also from `AW-INF-051`: `environment`, `namespace`, `cluster`, `job`, `container`), the active-series and log records (from `AW-INF-051`), AC-2 (`environment` on a series) and AC-4 (`unknown` outside the table) moved from `AW-INF-051`, and `AW-INF-009`'s inherited line (the two kube-state-metrics series kept, now by the chart). **Changes:** AC-3 ("each collector registers") becomes "only `fleet` registers"; AC-7's "reachable by the exporters" becomes the include-lists; the Secret `grafana-telemetry` holds the token under one key and the endpoint usernames, which aren't secret, under one key each (`prom`, `loki`, `tempo`, `fleet`; the chart's `usernameKey` defaults to `username` and must be set per destination); node-exporter is not installed; the bare-collector `[verify]` is dropped. Its `[verify]` items are the ones below. Likely `L`. | PM's call: a split such as **065a** (install, Secret, `fleet` registration, the receiver) and **065b** (stamp, guard, keep-list and their tests) |
+| `AW-INF-051` (ready) | Shrinks to the Fleet plumbing (provider, tokens, `tf.py`, the `pipelines/` safety checks without `replace()`) plus `shared-kafka`, and its series spelling `[verify 051]`. Loses `scrape`, `stamp`, `keep`, `logs`, `traces` and `export`, its keep-list and `replace()` tests, ACs 2, 4 and 10, the active-series record, and the inherited `AW-INF-009` line, all of which move to `AW-INF-065`. Its Observability line "broker … series are **not shipped**" reverses: `shared-kafka` ships §6's set. Probably `S`. | no |
+| `AW-INF-047` (ready) | The rules are unchanged except `AndaraServerUnavailable`'s guard (§9: `namespace!="andara-shared"`). "keeps the `environment` it arrived with: `unknown` once `AW-INF-051`'s `stamp` runs" and AC-7's "after 051" now read "`AW-INF-065`'s destinations", and its blocked-by link moves from `AW-INF-051` to `AW-INF-065`. | no |
+| `AW-INF-049` (ready) | No contract change. Its live data already waits on `AW-INF-065`. | no |
+| `AW-INF-061` (ready) | Its out-of-scope line "the same pipeline files as static config with `environment="local"` (`AW-INF-065`)" becomes "the chart with `values-ci.yaml` (`platform-up PROFILE=ci`), no override". The throwaway Kafka's namespace is outside the CI include-list, so it isn't scraped. | no |
 | `AW-INF-075` (review, merged) | none to its contract; its constant moves in `AW-INF-065` | no |
 | `AW-INF-070` (ready) | Step 4(i-b) applies `shared-kafka` only. Step 4(iii-b) becomes "the chart is installed and `fleet` has registered and pulled `shared-kafka`". | no |
 | `AW-INF-078` (parked) | `solo7`'s collection is the same chart with a prod values profile on prod's cluster, plus `solo7`'s copy of the pipelines | no |
@@ -333,8 +393,8 @@ environments" holds: it is the `k8s-monitoring` release in `observability`.
 
 **`[verify 065]`**, observed in `AW-INF-065` against the pinned 4.5.3:
 
-1. A `prometheus.remote_write` from a `fleet` pipeline to the `receiver` collector's `prometheusMetricsReceiver`
-   Service arrives, and `solo7dev-metrics`' `metricProcessingRules` apply to it. A forwarded series carries
+1. The receiver's Service (§2) carries ports `4317` and `9090`, and the remote-write path is
+   `/api/v1/metrics/write`. A `prometheus.remote_write` from a `fleet` pipeline to that URL arrives, and `solo7dev-metrics`' `metricProcessingRules` apply to it. A forwarded series carries
    `namespace="andara-shared"` and `environment="unknown"`, and an unkept `kafka_` name is dropped. **If it
    fails,** fall back to Option B for Fleet's sources only, with the table and the guard written a second time in
    the pipeline and a test asserting the two encode the same table. That fallback is an amendment here, not a
@@ -342,10 +402,16 @@ environments" holds: it is the `k8s-monitoring` release in `observability`.
 2. The `alloy-operator` CRD is installed before the collectors, in `platform-up`'s order.
 3. `integrations.cert-manager` keeps `exported_namespace` and `name` on `certmanager_certificate_expiration_timestamp_seconds`
    (the rule's and the keep-list check's selector).
-4. Traefik's pods are discovered by annotation (§1's Traefik row).
+4. Traefik's pods in namespace `traefik` are discovered by annotation (§1's Traefik row), and
+   `traefik_router_requests_total` arrives with `router` intact.
 5. The `otlp` destination's transform sees `k8s.namespace.name` on the server's spans.
 6. With the telemetry Secret empty, the chart installs, the collectors are `Ready` and ship nothing (`ADR-0012`
-   decision 14).
+   decision 14), observed in CI's run without the token (§7).
+7. The annotation remap of §1 yields `up{job="andara-server"}` and `up{job="andara-projector-state"}` with
+   `namespace` set, from `andara-local` and `andara-dev`.
+8. The receiver accepts the server's OTLP log records and drops them: the server's log-export
+   counter `andara_log_export_dropped_total` stays at 0 and `andara_log_export_queue_size` does not grow
+   (`server/telemetry/logexport.go`), and no OTLP-origin log line reaches `solo7dev`.
 
 ## Consequences
 
@@ -360,7 +426,8 @@ environments" holds: it is the `k8s-monitoring` release in `observability`.
   healthy `dev`", is narrowed but not closed).
   - Narrowed: a bad Fleet pipeline no longer blinds `andara-dev`, because the chart's metrics and logs don't pass
     through `fleet`.
-  - Not closed: a dead `metrics` collector or an empty token still looks healthy.
+  - Not closed: a dead `metrics` collector or an empty token still looks healthy. With §9's guard change, a dead
+    `metrics` collector reads as no data, which is silent, rather than as a misattributed "server unavailable" page.
   - The telemetry-freshness rule `AW-INF-047`'s set is owed stays the fix.
 - **Broker series reach `solo7dev`**, about 24 now. Shared-service series stay `environment="unknown"`, so a rule on
   them can't route by environment until decision 9 is reopened (`ADR-0013` amendment 15).

@@ -766,6 +766,9 @@ so replacing the tree does not silence them. `solo7dev` is new: nothing to impor
 > **Annotation, 2026-10-21: `ADR-0014` moves where the table is applied, not the table.** The chart's three
 > destinations apply it, from `deploy/platform/collectors/environments.yaml`, for the chart's signals and for Fleet's
 > forwarded ones. There is no `stamp` pipeline (`ADR-0014` §4). The values and the `unknown` guard are unchanged.
+> In the stacks table, "Fleet-managed collectors" now reads "the `k8s-monitoring` chart's collectors, one of which
+> runs Fleet pipelines". "The Fleet `keep` pipeline drops everything but the keep-list" now reads "the chart's
+> metrics destination drops everything but `deploy/platform/collectors/keep-list.yaml`" (`ADR-0014` §5).
 
 > **Annotation, 2026-10-10 — ADR-0013 adds one exception, not a change to this decision.** `andara-shared` (Kafka,
 > object store, later Redis and Postgres) is a platform namespace with no environment: the `stamp` pipeline leaves it
@@ -891,7 +894,7 @@ step (so their ignored-`ENV` caveat goes away).
 > the chart. The keep-list's allow-list is `deploy/platform/collectors/keep-list.yaml`, enforced at the chart's
 > metrics destination. "The collection pipelines are files … rendered with the stack endpoints" and "the allow-list
 > is read from the in-repo pipeline source" no longer hold. The keep-list table, the checks and the order stand,
-> with order step 1's pipelines read as `shared-kafka` (`ADR-0014` §5, §9).
+> with order step 1's pipelines read as `shared-kafka` (`ADR-0014` §5, §10).
 
 Until 2026-10-10 the cluster and its `k8s-monitoring` release belonged to a separate repo, and this decision was
 a contract this repo wrote for it. Now one repo owns both the rules and the thing that feeds them.
