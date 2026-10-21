@@ -43,14 +43,17 @@ outside this contract. It is not asserted, and its auto-create stays on (`--mode
 | `auto.create.topics.enable` | `false` | Order. A typo in a topic name must fail, not create a topic with default partitions and a default key mapping. |
 | per-topic `partitions` | `topics.yaml` | Order. Permanent for keyed topics: repartitioning changes the key-to-Partition mapping and reorders history. |
 | per-topic `retention.ms`, `cleanup.policy` | `topics.yaml`; see Retention | Replay window. |
-| `local.` topics' `segment.bytes`, `segment.ms` (every `local.` topic); `delete` topics' `retention.bytes`, `retention.ms` | `topics.yaml`'s `local` values. Today retention is 64 MiB (67108864) and 7 days (`ADR-0013` decision 4, AW-INF-055 measures them). `segment.bytes` is 16 MiB, at most a quarter of `retention.bytes`, and `segment.ms` is at most 1 day, on `delete` and `compact` topics alike | Isolation. `dev`'s `andara.commands.v1` is infinite on a 20Gi PVC per broker, and a `local` soak must not fill the disk `dev`'s RPO depends on. Neither retention nor compaction touches the active segment (`topics.yaml`, `andara.state.v1`). So with Kafka's default 1 GiB segment, every `local.` partition could hold about 1 GiB before either bites, which is 64 GiB for `local.andara.state.v1` alone against 60 GiB of broker storage. With 16 MiB segments:
-- a `delete` partition holds about 80 MiB, plus what is produced between retention checks (`log.retention.check.interval.ms`, 5 min), which `local`'s byte-rate quotas bound;
-- a compacted partition holds its 16 MiB active segment plus up to about twice its live keyed data (the default `min.cleanable.dirty.ratio` of 0.5);
-- in total, `local.`'s 134 `delete` partitions and 88 compacted partitions on 3 brokers come to about 4 GiB per broker, plus twice `local`'s live keyed state.
-
-Compacted topics take no `retention.bytes` or `retention.ms`, which would delete keyed state. `make shared-check`'s 80% threshold is the residual (AW-INF-055). |
+| `local.` topics' `segment.bytes` and `segment.ms` (every `local.` topic); `delete` topics' `retention.bytes` and `retention.ms` | exactly `topics.yaml`'s `local` values, which must satisfy `segment.bytes` ≤ `retention.bytes` / 4 and `segment.ms` ≤ 86400000. Today: retention 64 MiB (67108864) and 7 days, segments 16 MiB (`ADR-0013` decision 4; AW-INF-055 declares and measures them) | Isolation. `dev`'s `andara.commands.v1` is infinite on a 20Gi PVC per broker, and a `local` soak must not fill the disk `dev`'s RPO depends on. See **`local.` bounds** below the table. |
 | `max.connections` | at most 1000 per broker | Availability. A backstop against file-descriptor exhaustion taking a shared broker down for both environments, not a budget (see Capacity). |
 | rack awareness | none on the box; required off it | Recorded, not enforced. Three replicas on one box share one disk (see below). |
+
+**`local.` bounds.** Neither retention nor compaction touches the active segment (`topics.yaml`, `andara.state.v1`). With Kafka's default 1 GiB segment, every `local.` partition could hold about 1 GiB before either bites, which is 64 GiB for `local.andara.state.v1` alone against 60 GiB of broker storage. With 16 MiB segments:
+
+- a `delete` partition holds about 80 MiB, plus what is produced between retention checks (`log.retention.check.interval.ms`, 5 min), which `local`'s byte-rate quotas bound;
+- a compacted partition holds its 16 MiB active segment plus its dirty portion, which the cleaner targets at about its live keyed data (the default `min.cleanable.dirty.ratio` of 0.5). Cleaner lag, `min.compaction.lag.ms` and tombstones held for `delete.retention.ms` can exceed that under a soak;
+- in total, `local.`'s 134 `delete` and 88 compacted partitions on 3 brokers come to about 4 GiB per broker, plus about twice `local`'s live keyed state.
+
+Compacted `local.` topics keep `cleanup.policy: compact` and declare no retention. Retention is ignored without `delete`, and `compact,delete` would drop keyed state. So `broker-assert` checks their segment values only. `make shared-check`'s 80% threshold is the backstop (AW-INF-055).
 
 `make broker-assert ENV=<local|dev>` fails on any deviation in the broker rows (`default.replication.factor`,
 `min.insync.replicas`'s broker default, `unclean.leader.election.enable`, `replica.lag.time.max.ms`,
