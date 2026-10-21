@@ -17,23 +17,25 @@ locals {
   # Every selector in every query carries both labels as whole matchers, written $environment and
   # $namespace (not $${environment}), and no metric name is read without a selector. A query with no
   # series in it (the Tick Budget line, vector(0.05)) has nothing to filter. Grafana's variables are
-  # plain text to Terraform: only "$${" interpolates.
+  # plain text to Terraform: only "$${" interpolates. Not modelled, so not to be written in a panel
+  # query: PromQL `#` comments, and a `{` or `}` inside a string literal.
   dashboard_targets = flatten([
     for p in local.dashboard.panels : [for t in try(p.targets, []) : { title = p.title, expr = t.expr }]
   ])
   dashboard_matchers = ["environment=\"\\$environment\"", "namespace=\"\\$namespace\""]
   promql_keywords    = ["and", "or", "unless", "by", "without", "on", "ignoring", "group_left", "group_right", "bool", "offset", "atan2", "inf", "nan"]
-  # PromQL's other string forms: a single-quoted or backtick value can't be a matcher's value here.
-  other_strings = "/'(?:[^'\\\\]|\\\\.)*'|`[^`]*`/"
+  # PromQL's three string forms, in one alternation so they're read left to right together: a quote
+  # of one kind inside a string of another doesn't pair with the next string. Group 1 is a
+  # double-quoted string, the only form a matcher's value may take here.
+  any_string = "/(\"(?:[^\"\\\\]|\\\\.)*\")|'(?:[^'\\\\]|\\\\.)*'|`[^`]*`/"
 
   # What is left of a query outside its selectors: selectors emptied, then string literals, ranges,
   # number and duration literals (5m, 1e3) and grouping clauses removed, so every remaining name is a
   # function call, a selector's metric, a keyword or bare.
   dashboard_outside = [
-    for t in local.dashboard_targets : replace(replace(replace(replace(replace(replace(replace(t.expr,
+    for t in local.dashboard_targets : replace(replace(replace(replace(replace(replace(t.expr,
       "/\\{[^}]*\\}/", "{}"),
-      "/\"(?:[^\"\\\\]|\\\\.)*\"/", "\"\""),
-      local.other_strings, "''"),
+      local.any_string, "''"),
       "/\\[[^\\]]*\\]/", ""),
       "/\\b[0-9][0-9A-Za-z_.]*/", ""),
       "/(?i)\\b(?:by|without|on|ignoring|group_left|group_right)\\s*\\([^)]*\\)/", " "),
@@ -44,7 +46,7 @@ locals {
     for i, t in local.dashboard_targets : t.title
     if anytrue([
       for s in regexall("\\{[^}]*\\}", t.expr) : anytrue([
-        for m in local.dashboard_matchers : length(regexall("[{,]\\s*${m}\\s*[,}]", replace(s, local.other_strings, "''"))) == 0
+        for m in local.dashboard_matchers : length(regexall("[{,]\\s*${m}\\s*[,}]", replace(s, local.any_string, "$1"))) == 0
       ])
       ]) || anytrue([
       for n in regexall("[A-Za-z_:][A-Za-z0-9_:]*[{(]?", local.dashboard_outside[i]) :

@@ -456,6 +456,12 @@ DASHBOARD_BREAKS = (
     ("a bare metric name without an underscore", _bare_up, "read a series without"),
     ("a matcher hidden in a single-quoted value", lambda d: _set_first(
         d, "andara_ticks_total{namespace=\"$namespace\", job=',%s,'}" % FILTER[0]), "read a series without"),
+    # A quote of one kind inside a string of another must not pair with the next string (pre-PR review).
+    ("a matcher hidden after a quote inside a double-quoted value", lambda d: _set_first(
+        d, "andara_ticks_total{a!=\"'\", b!=',%s,%s,'}" % FILTER), "read a series without"),
+    ("a bare metric between double quotes inside single-quoted strings", lambda d: _set_first(
+        d, "label_replace(vector(1),'a','\"','b','') or andara_ticks_total or label_replace(vector(1),'a','\"','b','')"),
+     "read a series without"),
     ("a row panel", lambda d: d["panels"].append({"type": "row", "title": "r", "panels": []}), "row panel(s)"),
 )
 
@@ -475,6 +481,8 @@ DASHBOARD_ACCEPTS = (
     ("single-quoted function arguments", lambda d: _set_first(
         d, "label_replace(andara_build_info%s, 'v', '$1', 'version', '(.*)')" % SELECTOR)),
     ("atan2", lambda d: _set_first(d, "andara_ticks_total%s atan2 andara_tick_overruns_total%s" % (SELECTOR, SELECTOR))),
+    ("an upper-case keyword", lambda d: _set_first(
+        d, "andara_ticks_total%s AND andara_tick_overruns_total%s" % (SELECTOR, SELECTOR))),
 )
 
 
