@@ -38,11 +38,14 @@ NS="andara-${ENVNAME}"
 for tool in helm kubectl; do
   command -v "$tool" >/dev/null 2>&1 || { echo "make: helm-install: $tool not found" >&2; exit 1; }
 done
+# Every call names its cluster: ANDARA_KUBE_CONTEXT, default kind-andara (AW-INF-053).
+. scripts/kube.sh
+kube_require helm-install
 
 # One owner per namespace (AW-INF-019 AC-7): once Argo CD deploys it, a helm upgrade here
 # would fight its sync. `make argocd-uninstall ENV=<env>` hands it back.
-if kubectl get crd applications.argoproj.io >/dev/null 2>&1 \
-   && kubectl -n argocd get application "$NS" >/dev/null 2>&1; then
+if kube_kubectl get crd applications.argoproj.io >/dev/null 2>&1 \
+   && kube_kubectl -n argocd get application "$NS" >/dev/null 2>&1; then
   echo "make: helm-install: $NS is deployed by Argo CD (application $NS); see make argocd-status" >&2
   exit 1
 fi
@@ -51,7 +54,7 @@ fi
 # AC-7). Without it the pod would crash-loop on an unreachable broker for the full --wait,
 # so the release is not touched until the broker is Ready.
 if [[ "$ENVNAME" != "local" ]]; then
-  kready="$(kubectl -n "$NS" get kafka andara-log \
+  kready="$(kube_kubectl -n "$NS" get kafka andara-log \
     -o jsonpath='{.status.conditions[?(@.type=="Ready")].status}' 2>/dev/null || true)"
   [[ "$kready" == "True" ]] \
     || { echo "make: helm-install: no Ready kafka/andara-log in $NS; run \`make kafka-install ENV=$ENVNAME\` first" >&2; exit 1; }
@@ -63,9 +66,9 @@ fi
 # (AW-INF-054); nothing here applies them, because an apply of andara-ca.yaml before platform-up's
 # CA root restore mints a new root. The failure mode otherwise is an Ingress nobody serves and a
 # Certificate nobody signs, so each is checked.
-kubectl get ingressclass traefik >/dev/null 2>&1 \
+kube_kubectl get ingressclass traefik >/dev/null 2>&1 \
   || { echo "make: helm-install: no IngressClass 'traefik'; run \`make platform-up\`" >&2; exit 1; }
-kubectl get crd clusterissuers.cert-manager.io >/dev/null 2>&1 \
+kube_kubectl get crd clusterissuers.cert-manager.io >/dev/null 2>&1 \
   || { echo "make: helm-install: cert-manager CRDs absent; run \`make platform-up\`" >&2; exit 1; }
 
 # The issuers this environment needs: the private CA for the server certificate's second leg,
@@ -76,14 +79,14 @@ print(((yaml.safe_load(open(sys.argv[1])) or {}).get("tls") or {}).get("issuer")
 PYEOF
 )"
 for issuer in andara-ca $([[ "$EDGE_ISSUER" != andara-ca ]] && echo "$EDGE_ISSUER"); do
-  ready="$(kubectl get clusterissuer "$issuer" \
+  ready="$(kube_kubectl get clusterissuer "$issuer" \
     -o jsonpath='{.status.conditions[?(@.type=="Ready")].status}' 2>/dev/null || true)"
   [[ "$ready" == "True" ]] \
     || { echo "make: helm-install: ClusterIssuer $issuer is not Ready; run \`make platform-up\`" >&2; exit 1; }
   echo "helm-install: clusterissuer $issuer is ready"
 done
 
-kubectl get namespace "$NS" >/dev/null 2>&1 || kubectl create namespace "$NS" >/dev/null
+kube_kubectl get namespace "$NS" >/dev/null 2>&1 || kube_kubectl create namespace "$NS" >/dev/null
 echo "helm-install: namespace $NS"
 
 # Environments whose content comes from ConfigMaps (server.content.source: dir) and whose
@@ -106,10 +109,10 @@ if [[ " $CONTENT_FROM_CONFIGMAP " == *" $ENVNAME "* ]]; then
   # and `helm upgrade` refuses an object it doesn't own, so they're handed to the release
   # before it runs: one writer, whichever deploy path runs.
   for cm in andara-content andara-content-templates; do
-    if kubectl -n "$NS" get configmap "$cm" >/dev/null 2>&1 \
-       && [[ -z "$(kubectl -n "$NS" get configmap "$cm" -o jsonpath='{.metadata.annotations.meta\.helm\.sh/release-name}')" ]]; then
-      kubectl -n "$NS" label configmap "$cm" app.kubernetes.io/managed-by=Helm --overwrite >/dev/null
-      kubectl -n "$NS" annotate configmap "$cm" meta.helm.sh/release-name=andara meta.helm.sh/release-namespace="$NS" --overwrite >/dev/null
+    if kube_kubectl -n "$NS" get configmap "$cm" >/dev/null 2>&1 \
+       && [[ -z "$(kube_kubectl -n "$NS" get configmap "$cm" -o jsonpath='{.metadata.annotations.meta\.helm\.sh/release-name}')" ]]; then
+      kube_kubectl -n "$NS" label configmap "$cm" app.kubernetes.io/managed-by=Helm --overwrite >/dev/null
+      kube_kubectl -n "$NS" annotate configmap "$cm" meta.helm.sh/release-name=andara meta.helm.sh/release-namespace="$NS" --overwrite >/dev/null
       echo "helm-install: configmap $cm handed to the release (the chart renders it now)"
     fi
   done
@@ -119,15 +122,15 @@ if [[ " $CONTENT_FROM_CONFIGMAP " == *" $ENVNAME "* ]]; then
   # Secret from its secret store; the rotation procedure is in server/README.md.
   "$REPO/scripts/auth_keys.sh" >/dev/null
   AUTH_DIR="${ANDARA_AUTH_DIR:-$REPO/.local/auth}"
-  kubectl -n "$NS" create secret generic andara-server-token-key \
+  kube_kubectl -n "$NS" create secret generic andara-server-token-key \
     --from-file=token.keys="$AUTH_DIR/token-keys" \
-    --dry-run=client -o yaml | kubectl -n "$NS" apply -f - >/dev/null
+    --dry-run=client -o yaml | kube_kubectl -n "$NS" apply -f - >/dev/null
   echo "helm-install: secret andara-server-token-key from $AUTH_DIR"
 
   # The first operator: local's is the value `make up` uses; others were required above.
-  kubectl -n "$NS" create secret generic andara-server-bootstrap \
+  kube_kubectl -n "$NS" create secret generic andara-server-bootstrap \
     --from-literal=bootstrap-operator="${ANDARA_BOOTSTRAP_OPERATOR:-operator:andara-local}" \
-    --dry-run=client -o yaml | kubectl -n "$NS" apply -f - >/dev/null
+    --dry-run=client -o yaml | kube_kubectl -n "$NS" apply -f - >/dev/null
   echo "helm-install: secret andara-server-bootstrap (operator:andara-local unless ANDARA_BOOTSTRAP_OPERATOR is set)"
 fi
 
@@ -154,28 +157,28 @@ PYEOF
   fi
 fi
 
-helm upgrade --install andara "$CHART" \
+kube_helm upgrade --install andara "$CHART" \
   --namespace "$NS" \
   --values "$VALUES" \
   "${IMAGE_ARGS[@]}" \
   --wait --timeout 10m
 
-echo "helm-install: andara in $NS is serving ($(kubectl -n "$NS" get statefulset andara -o jsonpath='{.spec.template.spec.containers[?(@.name=="server")].image}'))"
-kubectl -n "$NS" get statefulset andara
-kubectl -n "$NS" get pvc -l app=andara
+echo "helm-install: andara in $NS is serving ($(kube_kubectl -n "$NS" get statefulset andara -o jsonpath='{.spec.template.spec.containers[?(@.name=="server")].image}'))"
+kube_kubectl -n "$NS" get statefulset andara
+kube_kubectl -n "$NS" get pvc -l app=andara
 
 # The trust bundle for anything outside the cluster: the CA that signed the edge
 # certificate, read from the server certificate's Secret (cert-manager writes the
 # issuing CA into ca.crt). Its own path, not .local/tls/ca.pem — that is the compose
 # stack's CA (`make tls`), and the two must not overwrite each other.
 HOST="$(awk '/^host:/{print $2}' "$VALUES")"
-ISSUER="$(helm -n "$NS" get values andara --all -o json | "${PY:-python3}" -c 'import json,sys; print(json.load(sys.stdin)["tls"]["issuer"])')"
+ISSUER="$(kube_helm -n "$NS" get values andara --all -o json | "${PY:-python3}" -c 'import json,sys; print(json.load(sys.stdin)["tls"]["issuer"])')"
 CA_DIR="$REPO/.local/tls/cluster/$ENVNAME"
 mkdir -p "$CA_DIR"
-kubectl -n "$NS" wait --for=condition=Ready certificate/andara-server --timeout=120s >/dev/null
-kubectl -n "$NS" get secret andara-server-tls -o jsonpath='{.data.ca\.crt}' | base64 -d > "$CA_DIR/ca.pem"
-if kubectl -n "$NS" get certificate andara-edge >/dev/null 2>&1; then
-  kubectl -n "$NS" wait --for=condition=Ready certificate/andara-edge --timeout=120s >/dev/null
+kube_kubectl -n "$NS" wait --for=condition=Ready certificate/andara-server --timeout=120s >/dev/null
+kube_kubectl -n "$NS" get secret andara-server-tls -o jsonpath='{.data.ca\.crt}' | base64 -d > "$CA_DIR/ca.pem"
+if kube_kubectl -n "$NS" get certificate andara-edge >/dev/null 2>&1; then
+  kube_kubectl -n "$NS" wait --for=condition=Ready certificate/andara-edge --timeout=120s >/dev/null
   echo "helm-install: edge https://$HOST (issuer $ISSUER); private CA written to $CA_DIR/ca.pem"
   if [[ "$ISSUER" == "andara-ca" ]]; then
     echo "helm-install:   andara-cli --server-address $HOST:443 --tls-ca $CA_DIR/ca.pem ..."

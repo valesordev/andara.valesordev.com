@@ -28,7 +28,7 @@ class RpkPrefix(unittest.TestCase):
             with self.subTest(env=env):
                 p = topics.rpk_prefix(env, compose_redpanda_running=True, host_rpk=True)
                 self.assertNotIn("docker", p)
-                self.assertEqual(p[:3], ["kubectl", "-n", "andara-" + env])
+                self.assertEqual(p[:5], ["kubectl", "--context", "kind-andara", "-n", "andara-" + env])
                 self.assertIn(topics.CLUSTER_TOOLBOX, p)
                 self.assertEqual(p[-3:], ["rpk", "-X", "brokers=" + topics.CLUSTER_BOOTSTRAP])
 

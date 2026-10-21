@@ -19,8 +19,8 @@ release that already matches is reported `unchanged` with its revision untouched
                 digest, no Image Updater key), and no file in scripts/ or .github/workflows/ outside
                 scripts/tests/ carries a version of a listed item.
 
-The context is ANDARA_KUBE_CONTEXT, default kind-andara, passed to every kubectl and helm call;
-nothing here runs `kubectl config use-context`. CLOUDFLARE_API_TOKEN is read after .local/box.env is
+The context is ANDARA_KUBE_CONTEXT, default kind-andara, passed to every kubectl and helm call
+through scripts/kube.py; nothing here runs `kubectl config use-context`. CLOUDFLARE_API_TOKEN is read after .local/box.env is
 loaded by scripts/tf.py's rules, written to cert-manager/cloudflare-api-token by server-side apply,
 and never printed. Without it both letsencrypt issuers are skipped and the last line says so.
 
@@ -48,6 +48,7 @@ import uuid
 import yaml
 
 import cluster_secrets
+import kube
 import tf
 
 REPO = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
@@ -56,7 +57,6 @@ CA_FILE = os.path.join(REPO, "deploy", "k8s", "cert-manager", "andara-ca.yaml")
 LETSENCRYPT_FILE = os.path.join(REPO, "deploy", "k8s", "cert-manager", "letsencrypt.yaml")
 TRAEFIK_VALUES = os.path.join(REPO, "deploy", "k8s", "traefik", "values.yaml")
 ARGOCD_VALUES = os.path.join(REPO, "deploy", "argocd", "argocd-values.yaml")
-DEFAULT_CONTEXT = "kind-andara"
 PROFILES = ("box", "ci")
 SHARED = "andara-shared"
 WAIT = "5m"
@@ -348,27 +348,29 @@ def run(*cmd, check=True, stdin=None):
 class Cluster:
     """kubectl and helm against one context, and docker for the gateway."""
 
-    def __init__(self, context):
+    def __init__(self, context, env=None):
         self.context = context
+        self.env = env
         self.kubectl_path = tool("kubectl", "KUBECTL")
         self.helm_path = tool("helm", "HELM")
         self.docker_path = os.environ.get("DOCKER") or "docker"
 
     def kubectl(self, *args, check=True, stdin=None):
-        return run(self.kubectl_path, "--context", self.context, *args, check=check, stdin=stdin)
+        return run(*kube.kubectl(*args, tool=self.kubectl_path, env=self.env, ctx=self.context),
+                   check=check, stdin=stdin)
 
     def helm(self, *args, check=True):
-        return run(self.helm_path, "--kube-context", self.context, *args, check=check)
+        return run(*kube.helm(*args, tool=self.helm_path, env=self.env, ctx=self.context), check=check)
 
     def docker(self, *args, check=True):
         return run(self.docker_path, *args, check=check)
 
 
 def require_context(c):
-    p = run(c.kubectl_path, "config", "get-contexts", c.context, check=False)
-    if p.returncode != 0:
-        raise Missing("kubeconfig context %s is missing; `make cluster-up` creates kind-andara, or set "
-                      "ANDARA_KUBE_CONTEXT" % c.context)
+    try:
+        kube.require(env=c.env, ctx=c.context)
+    except kube.Missing as e:
+        raise Missing(str(e))
 
 
 def gateway(inspect_json):
@@ -584,7 +586,7 @@ def up(r, profile="box", env=None, restore=cluster_secrets.restore):
     token = env.get(TOKEN, "")
     if profile == "box" and env.get("REQUIRE_LETSENCRYPT") == "1" and not token:
         raise Missing("%s is unset and REQUIRE_LETSENCRYPT=1; set it in .local/box.env" % TOKEN)
-    c = Cluster(env.get("ANDARA_KUBE_CONTEXT") or DEFAULT_CONTEXT)
+    c = Cluster(kube.context(env), env)
     require_context(c)
     doc = load_versions()
     errors = validate(doc)

@@ -22,6 +22,8 @@ cd "$REPO"
 
 KAFKA="andara-log"
 PY="${PY:-python3}"
+# Every call names its cluster: ANDARA_KUBE_CONTEXT, default kind-andara (AW-INF-053).
+. scripts/kube.sh
 
 die() { echo "make: kafka-$1: $2" >&2; exit "${3:-1}"; }
 
@@ -41,7 +43,7 @@ env_ns() {
 }
 
 ensure_ns() {
-  kubectl get namespace "$1" >/dev/null 2>&1 || kubectl create namespace "$1" >/dev/null
+  kube_kubectl get namespace "$1" >/dev/null 2>&1 || kube_kubectl create namespace "$1" >/dev/null
 }
 
 # Strimzi is the platform's (AW-INF-054): `make platform-up` is its only installer, watching
@@ -49,7 +51,7 @@ ensure_ns() {
 # there, and kafka-install would wait out its 15 minutes, so it refuses first.
 require_operator() {
   local ns="$1" watching
-  watching="$(helm get values strimzi -n strimzi -o json 2>/dev/null \
+  watching="$(kube_helm get values strimzi -n strimzi -o json 2>/dev/null \
     | "$PY" -c 'import json,sys; v=json.load(sys.stdin) or {}; print(" ".join(v.get("watchNamespaces") or []))' 2>/dev/null || true)"
   [[ -n "$watching" ]] || die install "no Strimzi release in namespace strimzi; run \`make platform-up\`"
   [[ " $watching " == *" $ns "* ]] \
@@ -60,20 +62,21 @@ install() {
   local env="$1" ns
   ns="$(env_ns "$env")"
   need helm kubectl "$PY"
+  kube_require kafka-install
   require_operator "$ns"
   ensure_ns "$ns"
   # Never apply to a namespace other than the one ENV names. A bare `ns` in a helper once
   # overwrote this one (bash scoping is dynamic) and applied dev's install to andara-prod.
   [[ "$ns" == "andara-$env" ]] || die install "internal error: target namespace is $ns, not andara-$env"
-  kubectl -n "$ns" apply -f deploy/k8s/kafka/ >/dev/null
+  kube_kubectl -n "$ns" apply -f deploy/k8s/kafka/ >/dev/null
   echo "kafka-install: applied deploy/k8s/kafka/ to $ns; waiting for kafka/$KAFKA (first boot pulls images and forms the KRaft quorum)"
-  kubectl -n "$ns" wait "kafka/$KAFKA" --for=condition=Ready --timeout=15m >/dev/null \
-    || die install "kafka/$KAFKA in $ns did not become Ready: kubectl -n $ns describe kafka $KAFKA"
-  kubectl -n "$ns" rollout status deploy/andara-kafka-tools --timeout=5m >/dev/null \
+  kube_kubectl -n "$ns" wait "kafka/$KAFKA" --for=condition=Ready --timeout=15m >/dev/null \
+    || die install "kafka/$KAFKA in $ns did not become Ready: kubectl --context $ANDARA_KUBE_CONTEXT -n $ns describe kafka $KAFKA"
+  kube_kubectl -n "$ns" rollout status deploy/andara-kafka-tools --timeout=5m >/dev/null \
     || die install "the rpk toolbox in $ns did not become Available"
   "$PY" scripts/topics.py apply --env "$env"
   echo "kafka-install: $ns brokers:"
-  kubectl -n "$ns" get pods -l "strimzi.io/cluster=$KAFKA,strimzi.io/pool-name=broker" \
+  kube_kubectl -n "$ns" get pods -l "strimzi.io/cluster=$KAFKA,strimzi.io/pool-name=broker" \
     -o custom-columns=POD:.metadata.name,NODE:.spec.nodeName,READY:.status.containerStatuses[0].ready --no-headers
 }
 
@@ -81,13 +84,13 @@ install() {
 # moved, "?" when /metrics could not be read (not a zero).
 unavailable_count() {
   local body
-  body="$(kubectl -n "$1" exec andara-0 -c server -- wget -qO- localhost:8080/metrics 2>/dev/null)" \
+  body="$(kube_kubectl -n "$1" exec andara-0 -c server -- wget -qO- localhost:8080/metrics 2>/dev/null)" \
     || { echo "?"; return; }
   awk '/^andara_ingress_submits_total\{.*outcome="unavailable".*\}/{v=$2} END{print v+0}' <<<"$body"
 }
 
 ready_since() {
-  kubectl -n "$1" get pod andara-0 \
+  kube_kubectl -n "$1" get pod andara-0 \
     -o jsonpath='{.status.conditions[?(@.type=="Ready")].status} {.status.conditions[?(@.type=="Ready")].lastTransitionTime} {.status.containerStatuses[?(@.name=="server")].restartCount}{"\n"}'
 }
 
@@ -95,7 +98,7 @@ ready_since() {
 # "?" when the count could not be taken: an unanswered question is not a zero.
 under_replicated() {
   local out
-  out="$(kubectl -n "$1" exec "$KAFKA-broker-1" -c kafka -- \
+  out="$(kube_kubectl -n "$1" exec "$KAFKA-broker-1" -c kafka -- \
     /opt/kafka/bin/kafka-topics.sh --bootstrap-server localhost:9092 --describe --under-replicated-partitions 2>/dev/null)" \
     || { echo "?"; return; }
   grep -c 'Topic:' <<<"$out" || true
@@ -105,16 +108,17 @@ bounce() {
   local env="$1" ns victim="$KAFKA-broker-0"
   ns="$(env_ns "$env")"
   need kubectl
+  kube_require kafka-broker-bounce
   read -r ready0 since0 restarts0 < <(ready_since "$ns") \
     || die broker-bounce "no andara-0 in $ns to observe; run \`make helm-install ENV=$env\` first"
   [[ "$ready0" == "True" ]] || die broker-bounce "andara-0 in $ns is not Ready before the bounce"
   local unavail0 uid0 t0
   unavail0="$(unavailable_count "$ns")"
   [[ "$unavail0" != "?" ]] || die broker-bounce "could not read andara-0's /metrics before the bounce"
-  uid0="$(kubectl -n "$ns" get pod "$victim" -o jsonpath='{.metadata.uid}')" \
+  uid0="$(kube_kubectl -n "$ns" get pod "$victim" -o jsonpath='{.metadata.uid}')" \
     || die broker-bounce "no $victim in $ns; run \`make kafka-install ENV=$env\` first"
   t0="$(date -u +%Y-%m-%dT%H:%M:%SZ)"
-  kubectl -n "$ns" delete pod "$victim" --wait=false >/dev/null
+  kube_kubectl -n "$ns" delete pod "$victim" --wait=false >/dev/null
   echo "kafka-broker-bounce: deleted $victim at $t0; waiting for the checkpoint"
 
   # Rule 1 of docs/specs/testing/live-assertions.md: poll to a deadline, and only for the
@@ -122,8 +126,8 @@ bounce() {
   # about the server is sampled in this loop.
   local deadline=$((SECONDS + 600)) uid ready urp
   while :; do
-    uid="$(kubectl -n "$ns" get pod "$victim" -o jsonpath='{.metadata.uid}' 2>/dev/null || true)"
-    ready="$(kubectl -n "$ns" get pod "$victim" -o jsonpath='{.status.containerStatuses[0].ready}' 2>/dev/null || true)"
+    uid="$(kube_kubectl -n "$ns" get pod "$victim" -o jsonpath='{.metadata.uid}' 2>/dev/null || true)"
+    ready="$(kube_kubectl -n "$ns" get pod "$victim" -o jsonpath='{.status.containerStatuses[0].ready}' 2>/dev/null || true)"
     if [[ -n "$uid" && "$uid" != "$uid0" && "$ready" == "true" ]]; then
       urp="$(under_replicated "$ns")"
       [[ "$urp" == "0" ]] && break
@@ -144,7 +148,7 @@ bounce() {
     fail=1
   fi
   local log
-  if ! log="$(kubectl -n "$ns" logs andara-0 -c server --since-time="$t0" 2>&1)"; then
+  if ! log="$(kube_kubectl -n "$ns" logs andara-0 -c server --since-time="$t0" 2>&1)"; then
     echo "kafka-broker-bounce: FAIL could not read andara-0's log since $t0: $log" >&2
     fail=1
   fi

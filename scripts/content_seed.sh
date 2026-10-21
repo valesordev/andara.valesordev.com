@@ -89,13 +89,16 @@ if [[ -n "${ANDARA_SEED_ADDRESS:-}" ]]; then
   CA="${ANDARA_SEED_CA:-}"
 else
   command -v kubectl >/dev/null 2>&1 || fail "kubectl not found"
+  # Every call names its cluster: ANDARA_KUBE_CONTEXT, default kind-andara (AW-INF-053).
+  . "$(dirname "${BASH_SOURCE[0]}")/kube.sh"
+  kube_require content-seed
   say "reading the server CA from $NS/andara-server-tls"
   CA="$WORK/ca.pem"
-  kubectl -n "$NS" get secret andara-server-tls -o jsonpath='{.data.ca\.crt}' | base64 -d > "$CA" 2>/dev/null \
+  kube_kubectl -n "$NS" get secret andara-server-tls -o jsonpath='{.data.ca\.crt}' | base64 -d > "$CA" 2>/dev/null \
     && [[ -s "$CA" ]] || fail "no ca.crt in $NS/andara-server-tls"
   PORT="$(python3 -c 'import socket; s=socket.socket(); s.bind(("127.0.0.1",0)); print(s.getsockname()[1])')"
   say "port-forwarding 127.0.0.1:$PORT to $NS/andara-0 (gRPC)"
-  kubectl -n "$NS" port-forward pod/andara-0 "$PORT:grpc" >"$WORK/pf.log" 2>&1 &
+  kube_kubectl -n "$NS" port-forward pod/andara-0 "$PORT:grpc" >"$WORK/pf.log" 2>&1 &
   PF=$!
   for _ in $(seq 1 30); do
     grep -q '^Forwarding from' "$WORK/pf.log" && break

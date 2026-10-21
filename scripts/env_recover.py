@@ -53,6 +53,8 @@ import urllib.request
 
 import yaml
 
+import kube
+
 HERE = os.path.dirname(os.path.abspath(__file__))
 REPO = os.path.dirname(HERE)
 POD = "andara-0"
@@ -344,7 +346,7 @@ class Run:
         return subprocess.run(args, capture_output=True, text=True, **kw)
 
     def kubectl(self, *args):
-        p = self.sh(["kubectl", "-n", self.ns, *args])
+        p = self.sh(kube.kubectl("-n", self.ns, *args))
         if p.returncode != 0:
             raise Failed("kubectl %s: %s" % (" ".join(args[:3]), (p.stderr or p.stdout).strip()))
         return p.stdout
@@ -520,7 +522,7 @@ class Run:
                          % (now["restarts"], expected))
 
     def trace_id(self, since):
-        p = self.sh(["kubectl", "-n", self.ns, "logs", POD, "-c", CONTAINER, "--since-time=" + since])
+        p = self.sh(kube.kubectl("-n", self.ns, "logs", POD, "-c", CONTAINER, "--since-time=" + since))
         tid = ""
         for line in p.stdout.splitlines():
             try:
@@ -564,7 +566,7 @@ class Run:
             for l in p.lines():
                 print("  %s| %s" % (who.upper(), l), file=sys.stderr)
         for flag, title in (("--previous", "previous"), ("", "current")):
-            p = self.sh(["kubectl", "-n", self.ns, "logs", POD, "-c", CONTAINER, "--tail", "50"] + ([flag] if flag else []))
+            p = self.sh(kube.kubectl("-n", self.ns, "logs", POD, "-c", CONTAINER, "--tail", "50", *([flag] if flag else [])))
             print("--- %s %s, last 50 lines:" % (CONTAINER, title), file=sys.stderr)
             print(p.stdout or p.stderr, file=sys.stderr)
 

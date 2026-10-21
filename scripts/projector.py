@@ -41,6 +41,7 @@ import sys
 import time
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+import kube  # noqa: E402
 import topics  # noqa: E402
 
 DEPLOYMENT = "andara-projector-state"
@@ -72,7 +73,7 @@ def usage(msg):
 
 
 def kubectl(ns, *args, check=True, input=None):
-    p = subprocess.run(["kubectl", "-n", ns, *args], capture_output=True, text=True, input=input)
+    p = subprocess.run(kube.kubectl("-n", ns, *args), capture_output=True, text=True, input=input)
     if check and p.returncode != 0:
         raise Failed("kubectl %s: %s" % (" ".join(args[:3]), (p.stderr or p.stdout).strip()))
     return p
@@ -201,8 +202,8 @@ def rebuild(env, ns, run):
             raise Failed("rebuild: Job %s not caught up in %ds" % (JOB, bound))
         job = get_json(ns, "job", JOB) or {}
         if job.get("status", {}).get("failed"):
-            raise Failed("rebuild: Job %s failed; its pod's exit code is in `kubectl -n %s describe job %s` "
-                         "(2 divergence, 3 log gap, 4 state_version)" % (JOB, ns, JOB))
+            raise Failed("rebuild: Job %s failed; its pod's exit code is in `kubectl --context %s -n %s describe "
+                         "job %s` (2 divergence, 3 log gap, 4 state_version)" % (JOB, kube.context(), ns, JOB))
         tick = caught_up_tick(kubectl(ns, "logs", "job/" + JOB, check=False).stdout)
         if tick is None:
             time.sleep(3)

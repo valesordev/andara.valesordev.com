@@ -43,6 +43,7 @@ HERE = os.path.dirname(os.path.abspath(__file__))
 sys.path.insert(0, HERE)
 import gcx  # noqa: E402
 import grafana_stack  # noqa: E402
+import kube  # noqa: E402
 
 REPO = os.path.dirname(HERE)
 ALERTS = os.path.join(REPO, "deploy", "helm", "andara", "files", "alerts.yaml")
@@ -85,8 +86,8 @@ def projector_jobs(ns):
         return [] if names == "none" else ["andara-projector-" + n.strip() for n in names.split(",") if n.strip()]
     if not shutil.which("kubectl"):
         raise Failed("no kubectl and no PROJECTORS; cannot verify AC-2")
-    p = subprocess.run(["kubectl", "-n", ns, "get", "deploy", "-l", "app.kubernetes.io/name=andara",
-                        "-o", "jsonpath={.items[*].metadata.name}"], capture_output=True, text=True)
+    p = subprocess.run(kube.kubectl("-n", ns, "get", "deploy", "-l", "app.kubernetes.io/name=andara",
+                                    "-o", "jsonpath={.items[*].metadata.name}"), capture_output=True, text=True)
     if p.returncode:
         raise Failed("kubectl could not list %s deployments (%s) and no PROJECTORS; cannot verify AC-2"
                      % (ns, p.stderr.strip()))

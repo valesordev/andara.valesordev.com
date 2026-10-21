@@ -38,7 +38,8 @@ chart, and one `Deployment` per projector. Story: [AW-INF-003](https://github.co
 | `make kafka-install ENV=<dev\|prod>` | Kafka `andara-log` (`deploy/k8s/kafka/`) in `andara-<env>`, waits for Ready, applies `deploy/kafka/topics.yaml` through the `rpk` toolbox; refuses unless `platform-up`'s Strimzi watches the namespace (it watches `andara-shared` only; the shared broker is AW-INF-055's) |
 | `make kafka-broker-bounce ENV=<env>` | delete one broker; after it rejoins with every partition in sync, assert once that the server never left Ready, never logged `command log unreachable`, and refused no Submit |
 | `make image-check ENV=<env> [TAG=dev] [REGISTRY_ONLY=1]` | prove a published tag pulls anonymously (and a `sha-` tag carries its commit), then from the cluster with a throwaway `/bin/true` pod in `andara-<env>` |
-| `make kind-load [KIND_CLUSTER=]` | load the image into kind |
+| `make kind-load` | load the image into the kind cluster `ANDARA_KUBE_CONTEXT` names, without its `kind-` prefix (`andara` by default); a context that isn't a `kind-` one exits 2 |
+| `make kube-context-check` | no `kubectl`, `helm` or `kind` call in `scripts/`, the `Makefile` or a workflow's `run:` step acts on the ambient context, and none moves `current-context`; in `make check` (AW-INF-053) |
 | `make helm-install ENV=<env> [TAG=]` | idempotent `helm upgrade --install` into namespace `andara-<env>`; `local` installs the kind-loaded `IMAGE:TAG`, any other environment its values file's image, with `TAG=` pinning one (`scripts/helm_image_args.sh`), and a moving tag like `:dev` pinned to the digest it names now, so a rerun rolls the pod exactly when `publish` has moved it; refuses unless the ClusterIssuers it needs (`andara-ca`, and `tls.issuer`) are Ready, and applies none of them; the chart renders the content ConfigMaps from `testdata/content/valid` and `content/core/templates` (`contentVolume.render`, through symlinks under `files/`); refuses a namespace an Argo CD Application deploys; writes the CA bundle to `.local/tls/cluster/<env>/ca.pem` and prints the `andara-cli` line and the `/etc/hosts` hint |
 | `make platform-up [PROFILE=box\|ci] [REQUIRE_LETSENCRYPT=1]` | install and reconcile the platform at `deploy/platform/versions.yaml`'s pins against `ANDARA_KUBE_CONTEXT` (default `kind-andara`): a release whose version or values differ is upgraded, one that matches prints `unchanged`. `box`: cert-manager, the CA root restore, `andara-ca`, the `letsencrypt` issuers (skipped without `CLOUDFLARE_API_TOKEN`, read from `.local/box.env`), Traefik, the namespace `andara-shared`, Strimzi watching it, Argo CD. `ci`: cert-manager, `andara-ca`, Traefik (AW-INF-054) |
 | `make platform-check` | `versions.yaml` is valid and no script or workflow pins a platform item outside it; in `make check` |
@@ -57,6 +58,14 @@ chart, and one `Deployment` per projector. Story: [AW-INF-003](https://github.co
 
 `make image && make kind-load && make helm-install ENV=local` is the whole local path on the box;
 a fresh cluster needs `make cluster-up && make platform-up` first.
+
+Every target acts on the cluster `ANDARA_KUBE_CONTEXT` names, default `kind-andara`, and never on
+the kubeconfig's current-context, which no script reads or moves (ADR-0013 decision 1, AW-INF-053).
+`scripts/kube.py` and its shell twin `scripts/kube.sh` pass it as `--context` to `kubectl` and
+`--kube-context` to `helm`. A cluster-bound script prints `context: <name>` to stderr first, and
+exits 3 naming the variable when the kubeconfig has no such context. CI sets it to `kind-ci`.
+`cluster-up`, `cluster-down` and `cluster-rebuild` act on `andara` only, and exit 2 when the
+variable names any other context.
 
 ## Edge
 

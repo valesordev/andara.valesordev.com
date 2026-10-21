@@ -46,14 +46,17 @@ echo "image-check: ok anonymous pull of $REF (revision $rev)"
 
 [[ -z "$REGISTRY_ONLY" ]] || exit 0
 
+# Every call names its cluster: ANDARA_KUBE_CONTEXT, default kind-andara (AW-INF-053).
+. "$(dirname "${BASH_SOURCE[0]}")/kube.sh"
+kube_require image-check
 NS="andara-$ENVNAME"
 POD="andara-image-check-$$"
-kubectl get namespace "$NS" >/dev/null 2>&1 || kubectl create namespace "$NS" >/dev/null
-trap 'rm -rf "$anon"; kubectl -n "$NS" delete pod "$POD" --ignore-not-found --wait=false >/dev/null 2>&1 || true' EXIT
-kubectl -n "$NS" run "$POD" --image="$REF" --image-pull-policy=Always --restart=Never \
+kube_kubectl get namespace "$NS" >/dev/null 2>&1 || kube_kubectl create namespace "$NS" >/dev/null
+trap 'rm -rf "$anon"; kube_kubectl -n "$NS" delete pod "$POD" --ignore-not-found --wait=false >/dev/null 2>&1 || true' EXIT
+kube_kubectl -n "$NS" run "$POD" --image="$REF" --image-pull-policy=Always --restart=Never \
   --labels=app.kubernetes.io/component=image-check --command -- /bin/true >/dev/null
-if ! kubectl -n "$NS" wait --for=jsonpath='{.status.phase}'=Succeeded "pod/$POD" --timeout=180s >/dev/null 2>&1; then
-  why="$(kubectl -n "$NS" get pod "$POD" -o jsonpath='{.status.phase} {.status.containerStatuses[0].state}' 2>/dev/null || true)"
+if ! kube_kubectl -n "$NS" wait --for=jsonpath='{.status.phase}'=Succeeded "pod/$POD" --timeout=180s >/dev/null 2>&1; then
+  why="$(kube_kubectl -n "$NS" get pod "$POD" -o jsonpath='{.status.phase} {.status.containerStatuses[0].state}' 2>/dev/null || true)"
   echo "image-check: FAIL the cluster could not pull and run $REF in $NS: $why" >&2
   exit 1
 fi

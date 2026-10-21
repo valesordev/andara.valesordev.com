@@ -30,6 +30,8 @@ import subprocess
 import sys
 import time
 
+import kube
+
 REPO = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 MANIFEST = os.path.join(REPO, "deploy", "k8s", "objectstore", "objectstore.yaml")
 SECRET = "andara-snapshot-s3"
@@ -67,7 +69,7 @@ def bucket(env):
 
 
 def kubectl(ns, *args, check=True, input=None):
-    p = subprocess.run(["kubectl", "-n", ns, *args], capture_output=True, text=True, input=input)
+    p = subprocess.run(kube.kubectl("-n", ns, *args), capture_output=True, text=True, input=input)
     if check and p.returncode != 0:
         raise Failed("kubectl %s: %s" % (" ".join(args[:3]), (p.stderr or p.stdout).strip()))
     return p

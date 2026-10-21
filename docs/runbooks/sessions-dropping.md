@@ -32,8 +32,8 @@ the drops, that is a bug, and the first escalation below.
 
 ```
 curl -s http://<server>:8080/metrics | grep -E 'andara_session_egress_drops_total|andara_stream_subscribers|andara_sessions_in_drop_state'
-kubectl -n andara-<env> logs statefulset/andara | grep 'stream ended'        # warn, one per drop: session_id, buffered, last_sent, tick
-kubectl -n andara-<env> logs statefulset/andara | grep 'closing the connection'   # the escalation: a client not reading its socket
+kubectl --context kind-andara -n andara-<env> logs statefulset/andara | grep 'stream ended'        # warn, one per drop: session_id, buffered, last_sent, tick
+kubectl --context kind-andara -n andara-<env> logs statefulset/andara | grep 'closing the connection'   # the escalation: a client not reading its socket
 ```
 
 Locally: `make up`, open two `andara-cli play` terminals in one Room, `SIGSTOP` one of them and keep
@@ -45,7 +45,7 @@ other never notices. `SIGCONT` and the client reopens its stream.
 | Symptom | Action |
 |---------|--------|
 | `reason="draining"`, a deploy in progress | wait for the drain (`grpc.drain_timeout`, 15 s default). Past it, the pod is being force-closed; see `server-crashlooping.md` if it restarts in a loop. |
-| `reason="draining"`, no deploy | something is sending the server SIGTERM — a node drain, an OOM kill, a liveness probe failing. `kubectl describe pod`. |
+| `reason="draining"`, no deploy | something is sending the server SIGTERM — a node drain, an OOM kill, a liveness probe failing. `kubectl --context kind-andara describe pod`. |
 | `reason="buffer_full"`, many Sessions at once | the World is producing more than the wire carries: an Event storm in one Room (a script, a fight with many participants, a builder's mass change). Find the Room from the affected Sessions' Characters; stop the source. Do not raise `egress.buffer` — it defers the drop and grows memory per Session. |
 | `reason="buffer_full"`, a few Sessions, repeatedly the same | those clients cannot keep up: a slow link, a client stuck rendering, a client that opened the stream and stopped reading. Nothing server-side; `AW-CLI-004` owns client behavior. |
 | `closing the connection` lines | clients that stopped reading their socket entirely — the reset could not reach them and their connection was closed after `egress.heartbeat_interval`. Their Sessions are torn down; they reconnect. Normal for pulled cables; a burst of them is a network path. |

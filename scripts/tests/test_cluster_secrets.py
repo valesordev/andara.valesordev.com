@@ -261,7 +261,7 @@ class MissingContext(Base):
         for step in (self.export, self.restore):
             with self.subTest(step=step.__name__), self.assertRaises(cluster_secrets.Missing) as e:
                 step()
-            self.assertIn("context kind-andara is missing", str(e.exception))
+            self.assertIn("the kubeconfig has no context kind-andara", str(e.exception))
 
     def test_main_exits_3_through_real_kubectl(self):
         self.exported()

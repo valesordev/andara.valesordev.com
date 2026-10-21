@@ -30,7 +30,9 @@ import time
 
 import yaml
 
-REPO = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+import kube
+
+REPO =os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 ARGO_REPO = "https://argoproj.github.io/argo-helm"
 # Argo CD's chart and version are deploy/platform/versions.yaml's (AW-INF-054). Image Updater isn't a
 # platform item: it keeps its pin here until AW-INF-059 removes it.
@@ -65,7 +67,7 @@ def run(args, check=True, input=None):
 
 
 def kubectl_json(*args):
-    p = run(["kubectl", *args, "-o", "json"], check=False)
+    p = run(kube.kubectl(*args, "-o", "json"), check=False)
     return json.loads(p.stdout) if p.returncode == 0 and p.stdout.strip() else None
 
 
@@ -86,7 +88,7 @@ def env_ns(cmd, env):
 # --- install ---------------------------------------------------------------------------
 
 def helm_release_chart(release):
-    p = run(["helm", "list", "-n", NS, "-o", "json"], check=False)
+    p = run(kube.helm("list", "-n", NS, "-o", "json"), check=False)
     for r in json.loads(p.stdout or "[]"):
         if r["name"] == release:
             return r["chart"]
@@ -94,7 +96,7 @@ def helm_release_chart(release):
 
 
 def release_values(release):
-    p = run(["helm", "get", "values", release, "-n", NS, "-o", "json"], check=False)
+    p = run(kube.helm("get", "values", release, "-n", NS, "-o", "json"), check=False)
     return (json.loads(p.stdout) if p.returncode == 0 and p.stdout.strip() else None) or {}
 
 
@@ -104,8 +106,8 @@ def install_chart(release, chart, version, values_file=None):
         say("%s %s already installed in %s" % (chart, version, NS))
         return
     extra = ["--values", values_file] if values_file else ["--reset-values"]
-    run(["helm", "upgrade", "--install", release, chart, "--repo", ARGO_REPO, "--version", version,
-         "--namespace", NS, "--create-namespace", *extra, "--wait", "--timeout", "10m"])
+    run(kube.helm("upgrade", "--install", release, chart, "--repo", ARGO_REPO, "--version", version,
+                  "--namespace", NS, "--create-namespace", *extra, "--wait", "--timeout", "10m"))
     say("%s %s in %s" % (chart, version, NS))
 
 
@@ -122,8 +124,8 @@ def install_argocd():
     need("install", "helm", "kubectl")
     install_chart("argocd", *argocd_chart(), ARGOCD_VALUES_FILE)
     install_chart("argocd-image-updater", "argocd-image-updater", IMAGE_UPDATER_CHART_VERSION)
-    run(["kubectl", "-n", NS, "rollout", "status", "deploy/argocd-server", "--timeout=5m"])
-    run(["kubectl", "-n", NS, "rollout", "status", "deploy/argocd-image-updater-controller", "--timeout=5m"], check=False)
+    run(kube.kubectl("-n", NS, "rollout", "status", "deploy/argocd-server", "--timeout=5m"))
+    run(kube.kubectl("-n", NS, "rollout", "status", "deploy/argocd-image-updater-controller", "--timeout=5m"), check=False)
     say("Argo CD Ready in %s" % NS)
 
 
@@ -136,9 +138,9 @@ def issuer_ready(name):
 def preconditions(ns):
     # The same checks, and messages, helm_install.sh makes. Nothing under deploy/k8s/cert-manager/ is
     # applied here: platform-up is its one applier, after the CA root restore (AW-INF-054).
-    if run(["kubectl", "get", "ingressclass", "traefik"], check=False).returncode:
+    if run(kube.kubectl("get", "ingressclass", "traefik"), check=False).returncode:
         die("install", "no IngressClass 'traefik'; run `make platform-up`")
-    if run(["kubectl", "get", "crd", "clusterissuers.cert-manager.io"], check=False).returncode:
+    if run(kube.kubectl("get", "crd", "clusterissuers.cert-manager.io"), check=False).returncode:
         die("install", "cert-manager CRDs absent; run `make platform-up`")
     edge = ((yaml.safe_load(open(VALUES)) or {}).get("tls") or {}).get("issuer") or "andara-ca"
     for issuer in dict.fromkeys(("andara-ca", edge)):
@@ -154,21 +156,21 @@ def preconditions(ns):
 
 def secrets(ns):
     """dev's two Secrets, created only when absent; the Application never manages them."""
-    if run(["kubectl", "-n", ns, "get", "secret", "andara-server-token-key"], check=False).returncode:
+    if run(kube.kubectl("-n", ns, "get", "secret", "andara-server-token-key"), check=False).returncode:
         run([os.path.join(REPO, "scripts", "auth_keys.sh")])
         auth = os.environ.get("ANDARA_AUTH_DIR", os.path.join(REPO, ".local", "auth"))
-        run(["kubectl", "-n", ns, "create", "secret", "generic", "andara-server-token-key",
-             "--from-file=token.keys=" + os.path.join(auth, "token-keys")])
+        run(kube.kubectl("-n", ns, "create", "secret", "generic", "andara-server-token-key",
+                         "--from-file=token.keys=" + os.path.join(auth, "token-keys")))
         say("secret andara-server-token-key created from %s" % auth)
     else:
         say("secret andara-server-token-key exists; left as it is")
-    if run(["kubectl", "-n", ns, "get", "secret", "andara-server-bootstrap"], check=False).returncode:
+    if run(kube.kubectl("-n", ns, "get", "secret", "andara-server-bootstrap"), check=False).returncode:
         op = os.environ.get("ANDARA_BOOTSTRAP_OPERATOR", "")
         if not op:
             die("install", "ENV=dev needs ANDARA_BOOTSTRAP_OPERATOR=<user>:<password>; the local default is public")
         # From stdin, never argv: the value must not show in a process listing.
-        run(["kubectl", "-n", ns, "create", "secret", "generic", "andara-server-bootstrap",
-             "--from-file=bootstrap-operator=/dev/stdin"], input=op)
+        run(kube.kubectl("-n", ns, "create", "secret", "generic", "andara-server-bootstrap",
+                         "--from-file=bootstrap-operator=/dev/stdin"), input=op)
         say("secret andara-server-bootstrap created")
     else:
         say("secret andara-server-bootstrap exists; left as it is")
@@ -202,20 +204,20 @@ def application(ns):
             first = json.loads(json.dumps(app_doc))
             first["spec"].pop("syncPolicy", None)
             first["spec"]["source"]["helm"]["parameters"] = [{"name": "image.tag", "value": seed}]
-            run(["kubectl", "create", "-f", "-"], input=json.dumps(first))
+            run(kube.kubectl("create", "-f", "-"), input=json.dumps(first))
             say("application %s created, image.tag seeded %s, sync off" % (name, seed))
         else:
             # Found without the parameter: turn sync off, seed, then the file turns it on.
-            run(["kubectl", "-n", NS, "patch", "application", name, "--type", "json", "-p",
-                 json.dumps([{"op": "remove", "path": "/spec/syncPolicy"}])], check=False)
+            run(kube.kubectl("-n", NS, "patch", "application", name, "--type", "json", "-p",
+                             json.dumps([{"op": "remove", "path": "/spec/syncPolicy"}])), check=False)
             params = [{"name": "image.tag", "value": seed}]
-            run(["kubectl", "-n", NS, "patch", "application", name, "--type", "merge", "-p",
-                 json.dumps({"spec": {"source": {"helm": {"parameters": params}}}})])
+            run(kube.kubectl("-n", NS, "patch", "application", name, "--type", "merge", "-p",
+                             json.dumps({"spec": {"source": {"helm": {"parameters": params}}}})))
             say("application %s had no image.tag; seeded %s" % (name, seed))
     else:
         say("application %s keeps image.tag %s (Image Updater's)" % (name, image_tag_param(live)))
-    run(["kubectl", "apply", "--server-side", "--force-conflicts", "--field-manager", FIELD_MANAGER, "-f", APP_FILE])
-    run(["kubectl", "apply", "--server-side", "--force-conflicts", "--field-manager", FIELD_MANAGER, "-f", UPDATER_FILE])
+    run(kube.kubectl("apply", "--server-side", "--force-conflicts", "--field-manager", FIELD_MANAGER, "-f", APP_FILE))
+    run(kube.kubectl("apply", "--server-side", "--force-conflicts", "--field-manager", FIELD_MANAGER, "-f", UPDATER_FILE))
     say("applied deploy/argocd/: application %s (automated sync, prune, selfHeal) and its image updater" % name)
     return name
 
@@ -265,7 +267,7 @@ def install(env):
             "with Zones (AW-SRV-042). Next: make content-seed ENV=%s" % (name, env))
     # The Helm release's history, now that Argo CD owns its objects. Never `helm uninstall`,
     # which would delete what the Application just adopted.
-    p = run(["kubectl", "-n", ns, "delete", "secret", "-l", "owner=helm,name=andara"], check=False)
+    p = run(kube.kubectl("-n", ns, "delete", "secret", "-l", "owner=helm,name=andara"), check=False)
     gone = [l for l in p.stdout.splitlines() if "deleted" in l]
     say("helm release history in %s: %s" % (ns, "%d record(s) removed" % len(gone) if gone else "none"))
     status(env, waiting_ok=(up == "waiting"))
@@ -331,7 +333,7 @@ def pod_metrics(ns):
     with socket.socket() as sk:
         sk.bind(("127.0.0.1", 0))
         port = sk.getsockname()[1]
-    pf = subprocess.Popen(["kubectl", "-n", ns, "port-forward", "pod/andara-0", "%d:8080" % port],
+    pf = subprocess.Popen(kube.kubectl("-n", ns, "port-forward", "pod/andara-0", "%d:8080" % port),
                           stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True)
     try:
         end = time.monotonic() + 15
@@ -420,8 +422,10 @@ def status(env, waiting_ok=False):
 def ui():
     port = os.environ.get("ARGOCD_UI_PORT", "8090")
     say("UI on http://localhost:%s (user admin)" % port)
-    say("password: kubectl -n %s get secret argocd-initial-admin-secret -o jsonpath='{.data.password}' | base64 -d" % NS)
-    os.execvp("kubectl", ["kubectl", "-n", NS, "port-forward", "svc/argocd-server", "%s:443" % port])
+    say("password: kubectl --context %s -n %s get secret argocd-initial-admin-secret -o jsonpath='{.data.password}' "
+        "| base64 -d" % (kube.context(), NS))
+    argv = kube.kubectl("-n", NS, "port-forward", "svc/argocd-server", "%s:443" % port)
+    os.execvp(argv[0], argv)
 
 
 # --- recover -----------------------------------------------------------------------------
@@ -451,7 +455,7 @@ def recover(env):
     tag = image_tag_param(app)
     if not tag or not want.endswith(":" + tag):
         die("recover", "updateRevision %s runs %s, not the Application's image.tag %s; refusing" % (update, want or "?", tag or "?"))
-    run(["kubectl", "-n", ns, "delete", "pod", "andara-0", "--wait=false"])
+    run(kube.kubectl("-n", ns, "delete", "pod", "andara-0", "--wait=false"))
     say("deleted andara-0 (revision %s); the StatefulSet recreates it at %s (%s)" % (on, update, want))
 
 
@@ -464,16 +468,16 @@ def uninstall(env):
         say("no application %s; nothing to remove" % name)
     else:
         # Without the resources finalizer, deleting the Application cascades to nothing.
-        run(["kubectl", "-n", NS, "patch", "application", name, "--type", "json", "-p",
-             json.dumps([{"op": "remove", "path": "/spec/syncPolicy"}])], check=False)
-        run(["kubectl", "-n", NS, "patch", "application", name, "--type", "merge", "-p",
-             json.dumps({"metadata": {"finalizers": None}})])
-        run(["kubectl", "-n", NS, "delete", "application", name, "--wait=true"])
+        run(kube.kubectl("-n", NS, "patch", "application", name, "--type", "json", "-p",
+                         json.dumps([{"op": "remove", "path": "/spec/syncPolicy"}])), check=False)
+        run(kube.kubectl("-n", NS, "patch", "application", name, "--type", "merge", "-p",
+                         json.dumps({"metadata": {"finalizers": None}})))
+        run(kube.kubectl("-n", NS, "delete", "application", name, "--wait=true"))
         say("application %s removed without cascading" % name)
-    run(["kubectl", "-n", NS, "delete", "imageupdater", name, "--ignore-not-found"], check=False)
+    run(kube.kubectl("-n", NS, "delete", "imageupdater", name, "--ignore-not-found"), check=False)
     # Hand everything the Application tracked to Helm, so `helm upgrade --install` adopts it,
     # including anything the chart gained after the move that Helm never created (AC-10).
-    kinds = run(["kubectl", "api-resources", "--namespaced", "--verbs=list,patch", "-o", "name"]).stdout.split()
+    kinds = run(kube.kubectl("api-resources", "--namespaced", "--verbs=list,patch", "-o", "name")).stdout.split()
     handed = 0
     for kind in kinds:
         items = (kubectl_json("-n", ns, "get", kind) or {}).get("items", [])
@@ -481,9 +485,9 @@ def uninstall(env):
             if TRACKING not in (it["metadata"].get("annotations") or {}):
                 continue
             ref = "%s/%s" % (kind, it["metadata"]["name"])
-            run(["kubectl", "-n", ns, "label", ref, "app.kubernetes.io/managed-by=Helm", "--overwrite"])
-            run(["kubectl", "-n", ns, "annotate", ref, "meta.helm.sh/release-name=andara",
-                 "meta.helm.sh/release-namespace=" + ns, "--overwrite"])
+            run(kube.kubectl("-n", ns, "label", ref, "app.kubernetes.io/managed-by=Helm", "--overwrite"))
+            run(kube.kubectl("-n", ns, "annotate", ref, "meta.helm.sh/release-name=andara",
+                             "meta.helm.sh/release-namespace=" + ns, "--overwrite"))
             handed += 1
     say("%d resource(s) in %s given Helm's ownership metadata; `make helm-install ENV=%s` takes them back" % (handed, ns, env))
 

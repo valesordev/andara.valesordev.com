@@ -145,7 +145,7 @@ class Base(unittest.TestCase):
     def setUp(self):
         self.fake = FakeCluster()
         self.restored = []
-        for name, value in (("Cluster", lambda context: self.fake),
+        for name, value in (("Cluster", lambda context, env=None: self.fake),
                             ("require_context", lambda c: None)):
             p = mock.patch.object(platform_up, name, value)
             p.start()
@@ -426,16 +426,19 @@ class Usage(unittest.TestCase):
         self.assertIn("PROFILE=prod", err.getvalue())
 
     def test_a_missing_context_is_exit_3(self):
-        fake = types.SimpleNamespace(kubectl_path="bin/kubectl", context="kind-nope")
-        with mock.patch.object(platform_up, "run", lambda *a, **k: types.SimpleNamespace(returncode=1, stdout="", stderr="")):
+        with tempfile.TemporaryDirectory() as d:
+            path = os.path.join(d, "kubeconfig")
+            with open(path, "w") as f:
+                f.write("contexts:\n- name: kind-andara\n")
+            fake = types.SimpleNamespace(kubectl_path="bin/kubectl", context="kind-nope", env={"KUBECONFIG": path})
             with self.assertRaises(platform_up.Missing) as e:
                 platform_up.require_context(fake)
-        self.assertIn("kind-nope is missing", str(e.exception))
+        self.assertIn("ANDARA_KUBE_CONTEXT=kind-nope: the kubeconfig has no context kind-nope", str(e.exception))
 
     def test_the_context_is_andara_kube_context(self):
         seen = []
 
-        def cluster(context):
+        def cluster(context, env=None):
             seen.append(context)
             raise platform_up.Missing("stop here")
         with mock.patch.object(platform_up, "Cluster", cluster):
