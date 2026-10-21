@@ -856,6 +856,7 @@ the keep-list (ADR-0014).
 **Keep-list** — The metric series a stack's ingest must not drop because a rule or the dashboard reads them
 (ADR-0012 §13). The allow-list is `deploy/platform/collectors/keep-list.yaml`. It is enforced at the
 `k8s-monitoring` chart's metrics destination, and each Fleet pipeline also keeps only its own names (ADR-0014 §5).
+A `kube_` name is kept only from the namespaces `environments.yaml` maps (ADR-0014 amendment A1).
 `make observe-check ENV=<env> KEEP_LIST=1` extracts the names from the rules and the dashboard and queries each
 **always-present** one, which must have a series on a clean rebuild. A **fault-only** series (the exit-code series,
 the recovery State Hash gauge) exists only after the event it describes, so it is checked against
