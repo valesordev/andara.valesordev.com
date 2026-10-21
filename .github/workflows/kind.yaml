@@ -223,6 +223,16 @@ jobs:
             https://andara.local/andara.admin.v1.Admin/GetServerInfo -d '{}'; }
           admin_calls() { kubectl --context "$ANDARA_KUBE_CONTEXT" -n $NS exec andara-0 -c server -- wget -qO- http://127.0.0.1:8080/metrics \
             | awk '/^andara_grpc_requests_total\{.*andara.admin.v1.Admin/ { s += $NF } END { print s + 0 }'; }
+          # The step above narrowed the allowlist to 203.0.113.0/24 and put it back as its last
+          # command; Traefik reloads a Middleware asynchronously, so until it has, 203.0.113.9 is
+          # still allowed. Poll to the restored allowlist (live-assertions rule 1), then assert.
+          code=""
+          for i in $(seq 1 30); do
+            code=$(admin --haproxy-protocol --haproxy-clientip 203.0.113.9)
+            [[ "$code" == "403" ]] && break
+            sleep 1
+          done
+          [[ "$code" == "403" ]] || { echo "::error::a PROXY client 203.0.113.9 (outside the allowlist) got $code, not 403, for 30 s"; exit 1; }
           before=$(admin_calls)
           code=$(admin --haproxy-protocol --haproxy-clientip 203.0.113.9)
           [[ "$code" == "403" ]] || { echo "::error::a PROXY client 203.0.113.9 (outside the allowlist) got $code, not 403"; exit 1; }
