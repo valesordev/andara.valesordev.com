@@ -368,7 +368,15 @@ class DashboardBreaksTest(NoBoxEnv):
                    for _, _, m in tf.DASHBOARD_BREAKS]
         fake = FakeTerraform(answers)
         self.assertEqual(self.breaks(fake), 0)
-        self.assertEqual([c[0] for c in fake.calls], ["init"] + ["test"] * len(tf.DASHBOARD_BREAKS))
+        self.assertEqual([c[0] for c in fake.calls],
+                         ["init"] + ["test"] * (len(tf.DASHBOARD_BREAKS) + len(tf.DASHBOARD_ACCEPTS)))
+
+    def test_an_accept_terraform_refuses_fails(self):
+        answers = [(["test"], 1, "Error: %s\n" % m) for _, _, m in tf.DASHBOARD_BREAKS]
+        answers.append((["test"], 1, "Error: read a series without\n"))
+        with self.assertRaises(tf.Exit) as e:
+            self.breaks(FakeTerraform(answers))
+        self.assertIn("with an offset: tf-test failed, want a pass", e.exception.msg)
 
     def test_the_breaks_cover_the_reviewed_bypasses(self):
         """A label matched as a substring of another, and a bare name without an underscore (pre-PR review)."""
@@ -379,7 +387,7 @@ class DashboardBreaksTest(NoBoxEnv):
     def test_each_break_changes_the_committed_source(self):
         with open(tf.DASHBOARD) as f:
             source = f.read()
-        for what, breaker, _ in tf.DASHBOARD_BREAKS:
+        for what, breaker in [(w, b) for w, b, _ in tf.DASHBOARD_BREAKS] + list(tf.DASHBOARD_ACCEPTS):
             d = json.loads(source)
             breaker(d)
             self.assertNotEqual(d, json.loads(source), what)

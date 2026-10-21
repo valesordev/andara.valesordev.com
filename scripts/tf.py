@@ -454,11 +454,33 @@ DASHBOARD_BREAKS = (
     ("a query with a bare metric name", _bare_metric, "read a series without"),
     ("a label that only ends in environment", _suffix_label, "read a series without"),
     ("a bare metric name without an underscore", _bare_up, "read a series without"),
+    ("a matcher hidden in a single-quoted value", lambda d: _set_first(
+        d, "andara_ticks_total{namespace=\"$namespace\", job=',%s,'}" % FILTER[0]), "read a series without"),
+    ("a row panel", lambda d: d["panels"].append({"type": "row", "title": "r", "panels": []}), "row panel(s)"),
+)
+
+SELECTOR = "{%s, %s}" % FILTER
+
+
+def _set_first(d, expr):
+    _first_target(d)["expr"] = expr
+
+
+# Valid PromQL the preconditions must still accept (pre-PR review: each was once refused).
+DASHBOARD_ACCEPTS = (
+    ("an offset", lambda d: _set_first(d, "andara_ticks_total%s offset 5m" % SELECTOR)),
+    ("a number in scientific notation", lambda d: _set_first(d, "andara_simulation_lag_seconds%s * 1e3" % SELECTOR)),
+    ("an upper-case grouping clause", lambda d: _set_first(
+        d, "sum(rate(andara_ticks_total%s[1m])) BY (zone_id)" % SELECTOR)),
+    ("single-quoted function arguments", lambda d: _set_first(
+        d, "label_replace(andara_build_info%s, 'v', '$1', 'version', '(.*)')" % SELECTOR)),
+    ("atan2", lambda d: _set_first(d, "andara_ticks_total%s atan2 andara_tick_overruns_total%s" % (SELECTOR, SELECTOR))),
 )
 
 
-def dashboard_breaks(env, breaks=DASHBOARD_BREAKS):
-    """Run solo7dev's tests against a copy of the tree with each break applied; each must fail as named."""
+def dashboard_breaks(env, breaks=DASHBOARD_BREAKS, accepts=DASHBOARD_ACCEPTS):
+    """Run solo7dev's tests against a copy of the tree with each break applied; each must fail as named.
+    Then each accept: valid PromQL the tests must pass."""
     with open(DASHBOARD) as f:
         source = f.read()
     with tempfile.TemporaryDirectory(prefix="tf-dashboard-") as tmp:
@@ -492,6 +514,16 @@ def dashboard_breaks(env, breaks=DASHBOARD_BREAKS):
                 raise Exit(1, "tick-health.json with %s: tf-test %s, want a failure naming %r (AW-INF-049 AC-2)"
                               % (what, "passed" if rc == 0 else "failed for another reason", message))
             say("dashboard: %s is refused" % what)
+        for what, accept in accepts:
+            d = json.loads(source)
+            accept(d)
+            with open(dash, "w") as f:
+                json.dump(d, f)
+            rc, out = run(["test"], root, tenv, capture=True)
+            if rc:
+                sys.stdout.write(out)
+                raise Exit(1, "tick-health.json with %s: tf-test failed, want a pass (AW-INF-049 AC-2)" % what)
+            say("dashboard: %s is accepted" % what)
     return 0
 
 
