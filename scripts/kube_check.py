@@ -9,11 +9,14 @@ or scripts/kube.sh. This scans scripts/ (outside scripts/tests/), the Makefile's
 `run:` steps of .github/workflows/*.yaml, and reports, by file and line:
 
   - a kubectl call without `--context` naming ANDARA_KUBE_CONTEXT, a helm call without
-    `--kube-context` naming it, or a kind call without `--name`. A Python call counts when an argv
-    list, or a call's first argument, starts with the tool; the helpers' kube.kubectl(...) and
-    kube.helm(...) don't, so a converted call passes.
-  - `kubectl config use-context` or `config set-context --current` anywhere: they move the
-    developer's current-context.
+    `--kube-context` naming it, or any kind call but `kind version` (kind's cluster is derived by
+    scripts/kube.py kind-name, so each one is named in ALLOW). A shell call counts at a command's
+    start, after env, command, sudo, nohup, watch, timeout or xargs too, and in a Makefile
+    `$(shell ...)`. A Python call counts when an argv list, or a call's first argument, starts with
+    the tool; the helpers' kube.kubectl(...) and kube.helm(...) don't, so a converted call passes.
+    Commands built as strings (shell=True, os.system, `bash -c`) aren't parsed; none exists today.
+  - `kubectl config use-context`, `config set-context --current` or `config set current-context`
+    anywhere, even through the helpers: they move the developer's current-context.
 
 Calls that reach no cluster pass: helm's template, lint, show, repo, version, dependency, package,
 search and pull; kubectl config get-contexts and view; kubectl version --client; kind version. Every other exception is in
@@ -41,23 +44,26 @@ CONTEXT_VAR = "ANDARA_KUBE_CONTEXT"
 
 # (path, text the logical line contains, why it may skip the helper)
 ALLOW = [
-    ("scripts/cluster.py", "\"config\", \"set\"",
+    ("scripts/cluster.py", "\"config\", \"set\", \"%s.%s.%s\"",
      "cluster-up merges kind-andara into the kubeconfig with `kubectl config set`, which never moves "
      "current-context (AW-INF-052)"),
-    ("scripts/cluster.py", "run(kind_bin, ",
+    ("scripts/cluster.py", "\"--name\", NAME",
      "cluster-up, -down and -rebuild act on the cluster `andara` only; kube.box_only() refuses any "
-     "other ANDARA_KUBE_CONTEXT first, and each call names --name andara or lists clusters"),
+     "other ANDARA_KUBE_CONTEXT first, and each call names --name andara"),
+    ("scripts/cluster.py", "run(kind_bin, \"get\", \"clusters\")",
+     "lists kind's clusters, to find whether `andara` exists; reaches no cluster"),
     ("Makefile", "$(KIND) load docker-image",
      "--name is the cluster `scripts/kube.py kind-name` derives from ANDARA_KUBE_CONTEXT"),
 ]
 
 SEG_START = re.compile(
-    r"(?:^|[;&|({`!]|\$\(|\b(?:then|do|else|elif|if|while|until|time|exec|xargs)\s)\s*"
+    r"(?:^|[;&|({`!]|\$\(|\b(?:then|do|else|elif|if|while|until|time|exec|xargs|env|command|sudo|nohup|watch)\s"
+    r"|\btimeout\s+\S+\s)\s*"
     r"(?:[A-Za-z_][A-Za-z0-9_]*=\S*\s+)*"
     r"(?P<tool>\"?\$\{?(?:KUBECTL|HELM|KIND)\}?\"?|\$\((?:KUBECTL|HELM|KIND)\)"
     r"|\"?(?:[\w./${}()-]*/)?(?:kubectl|helm|kind)\"?)(?=[\s;)|&]|$)")
 SEG_END = re.compile(r"\|\||&&|[;|)`]")
-MOVES = re.compile(r"\buse-context\b|\bset-context\b[^;|&]*--current")
+MOVES = re.compile(r"\buse-context\b|\bset-context\b[^;|&]*--current|\bconfig\s+set\s+current-context\b")
 
 
 def tool_of(token):
@@ -180,7 +186,8 @@ def python_findings(path, source):
         else:
             continue
         words = [const(x) for x in elts]
-        if "use-context" in words or ("set-context" in words and "--current" in words):
+        if "use-context" in words or ("set-context" in words and "--current" in words) \
+                or ("set" in words and "current-context" in words):
             found.append((path, node.lineno, lines[node.lineno - 1], "moves the kubeconfig's current-context"))
         # A tool with no arguments isn't a call: ("kind",) is a tuple of names.
         if len(elts) < 2 or isinstance(getattr(node, "ctx", None), ast.Store):
@@ -237,7 +244,10 @@ def scan(repo):
     if os.path.exists(mk):
         with open(mk) as f:
             lines = f.read().splitlines()
-        recipe = [line if line.startswith("\t") else "" for line in lines]
+        # A recipe line's own prefixes (@ silent, - ignore errors, + always run) aren't the command;
+        # outside recipes, only a $(shell ...) runs anything.
+        recipe = [re.sub(r"^\t[@+-]*", "\t", line) if line.startswith("\t")
+                  else line[line.index("$(shell ") + 8:] if "$(shell " in line else "" for line in lines]
         found += shell_findings("Makefile", recipe, makefile=True)
     wdir = os.path.join(repo, ".github", "workflows")
     if os.path.isdir(wdir):

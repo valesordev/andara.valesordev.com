@@ -32,7 +32,7 @@ import yaml
 
 import kube
 
-REPO =os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+REPO = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 ARGO_REPO = "https://argoproj.github.io/argo-helm"
 # Argo CD's chart and version are deploy/platform/versions.yaml's (AW-INF-054). Image Updater isn't a
 # platform item: it keeps its pin here until AW-INF-059 removes it.

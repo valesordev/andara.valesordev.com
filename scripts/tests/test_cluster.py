@@ -24,6 +24,19 @@ sys.path.insert(0, os.path.join(REPO, "scripts"))
 import cluster  # noqa: E402
 import cluster_secrets  # noqa: E402
 import kube  # noqa: E402
+# The fixture kubeconfig, with ANDARA_KUBE_CONTEXT unset, whatever the shell running the tests has
+# (AW-INF-053): these tests expect the default context, kind-andara.
+_ENV = mock.patch.dict(os.environ, dict({k: v for k, v in os.environ.items() if k != "ANDARA_KUBE_CONTEXT"},
+                                        KUBECONFIG=os.path.join(REPO, "scripts", "tests", "fixtures", "kubeconfig")),
+                       clear=True)
+
+
+def setUpModule():
+    _ENV.start()
+
+
+def tearDownModule():
+    _ENV.stop()
 
 
 def load(path):

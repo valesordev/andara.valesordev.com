@@ -188,6 +188,10 @@ class Sweep(Workdir):
     def assert_named(self, name, p, want):
         calls = [c for c in self.calls() if c[0] in ("kubectl", "helm")]
         self.assertTrue(calls, "%s made no kubectl or helm call: %s" % (name, p.stderr))
+        # The stubs never write the kubeconfig, so a move through them shows only in the call.
+        moves = [c for c in calls if {"use-context", "current-context"} & set(c)
+                 or ("set-context" in c and "--current" in c)]
+        self.assertEqual(moves, [], name)
         for c in calls:
             flag = "--context" if c[0] == "kubectl" else "--kube-context"
             self.assertEqual(c[1:3], [flag, want], "%s: %s" % (name, " ".join(c)))
@@ -271,6 +275,10 @@ class Check(unittest.TestCase):
             "$BIN/kubectl" version --client
             kubectl config get-contexts kind-andara
             kubectl config use-context kind-andara
+            env kubectl get pods
+            timeout 5 kubectl get pods
+            sudo helm list
+            kube_kubectl config set current-context kind-ci
             """})
         self.assertEqual(out, [
             "scripts/a.sh:2: kubectl without --context \"$ANDARA_KUBE_CONTEXT\" (use kube_kubectl or kube.kubectl)",
@@ -278,6 +286,10 @@ class Check(unittest.TestCase):
             "scripts/a.sh:11: kind without --name from ANDARA_KUBE_CONTEXT (scripts/kube.py kind-name)",
             "scripts/a.sh:14: moves the kubeconfig's current-context",
             "scripts/a.sh:14: kubectl without --context \"$ANDARA_KUBE_CONTEXT\" (use kube_kubectl or kube.kubectl)",
+            "scripts/a.sh:15: kubectl without --context \"$ANDARA_KUBE_CONTEXT\" (use kube_kubectl or kube.kubectl)",
+            "scripts/a.sh:16: kubectl without --context \"$ANDARA_KUBE_CONTEXT\" (use kube_kubectl or kube.kubectl)",
+            "scripts/a.sh:17: helm without --kube-context \"$ANDARA_KUBE_CONTEXT\" (use kube_helm or kube.helm)",
+            "scripts/a.sh:18: moves the kubeconfig's current-context",
         ])
 
     def test_set_context_current_is_refused_but_set_is_not(self):
@@ -302,6 +314,7 @@ class Check(unittest.TestCase):
             subprocess.run(["kubectl", "config", "use-context", "x"])
             merge(kubectl_bin, path)
             subprocess.run(["helm", *args])
+            subprocess.run(kube.kubectl("config", "set", "current-context", "x"))
             """})
         self.assertEqual(out, [
             "scripts/c.py:3: kubectl without --context \"$ANDARA_KUBE_CONTEXT\" (use kube_kubectl or kube.kubectl)",
@@ -310,11 +323,13 @@ class Check(unittest.TestCase):
             "scripts/c.py:10: moves the kubeconfig's current-context",
             "scripts/c.py:10: kubectl without --context \"$ANDARA_KUBE_CONTEXT\" (use kube_kubectl or kube.kubectl)",
             "scripts/c.py:12: helm without --kube-context \"$ANDARA_KUBE_CONTEXT\" (use kube_helm or kube.helm)",
+            "scripts/c.py:13: moves the kubeconfig's current-context",
         ])
 
     def test_makefile_recipes_and_workflow_run_steps(self):
         out = self.findings({
-            "Makefile": "x:\n\tkubectl get pods\n\t@echo kubectl\ny := kubectl get pods\nz:\n\t$(KUBECTL) get x\n",
+            "Makefile": "x:\n\tkubectl get pods\n\t@echo kubectl\ny := kubectl get pods\nz:\n\t$(KUBECTL) get x\n"
+                        "\t@kubectl get pods\n\t@-helm list\nw := $(shell kubectl get ns)\n",
             ".github/workflows/w.yaml": textwrap.dedent("""\
                 jobs:
                   j:
@@ -331,6 +346,9 @@ class Check(unittest.TestCase):
         self.assertEqual(out, [
             "Makefile:2: kubectl without --context \"$ANDARA_KUBE_CONTEXT\" (use kube_kubectl or kube.kubectl)",
             "Makefile:6: kubectl without --context \"$ANDARA_KUBE_CONTEXT\" (use kube_kubectl or kube.kubectl)",
+            "Makefile:7: kubectl without --context \"$ANDARA_KUBE_CONTEXT\" (use kube_kubectl or kube.kubectl)",
+            "Makefile:8: helm without --kube-context \"$ANDARA_KUBE_CONTEXT\" (use kube_helm or kube.helm)",
+            "Makefile:9: kubectl without --context \"$ANDARA_KUBE_CONTEXT\" (use kube_kubectl or kube.kubectl)",
             ".github/workflows/w.yaml:5: helm without --kube-context \"$ANDARA_KUBE_CONTEXT\" (use kube_helm or kube.helm)",
             ".github/workflows/w.yaml:9: kubectl without --context \"$ANDARA_KUBE_CONTEXT\" (use kube_kubectl or kube.kubectl)",
         ])

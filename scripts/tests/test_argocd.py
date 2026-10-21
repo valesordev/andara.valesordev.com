@@ -14,10 +14,25 @@ import tempfile
 import unittest
 from contextlib import redirect_stderr, redirect_stdout
 from types import SimpleNamespace
+from unittest import mock
 
 HERE = os.path.dirname(os.path.abspath(__file__))
 SCRIPTS = os.path.dirname(HERE)
 REPO = os.path.dirname(SCRIPTS)
+sys.path.insert(0, SCRIPTS)  # argocd.py imports kube
+
+# Every call argocd.py builds names a context checked against the kubeconfig (AW-INF-053): the
+# fixture's, with ANDARA_KUBE_CONTEXT unset, whatever the shell running the tests has.
+_ENV = mock.patch.dict(os.environ, dict({k: v for k, v in os.environ.items() if k != "ANDARA_KUBE_CONTEXT"},
+                                        KUBECONFIG=os.path.join(HERE, "fixtures", "kubeconfig")), clear=True)
+
+
+def setUpModule():
+    _ENV.start()
+
+
+def tearDownModule():
+    _ENV.stop()
 
 
 def load_argocd():
@@ -384,7 +399,10 @@ def stub_bin(d, log, tools):
             f.write('#!/bin/sh\necho "%s $*" >> "%s"\n'
                     'case "$1" in --context|--kube-context) shift 2;; esac\n%s\n' % (tool, log, body))
         os.chmod(p, os.stat(p).st_mode | stat.S_IEXEC)
-    return dict(os.environ, PATH=d + os.pathsep + os.environ["PATH"])
+    # The fixture kubeconfig and no ANDARA_KUBE_CONTEXT, whatever the caller's shell has (AW-INF-053).
+    env = {k: v for k, v in os.environ.items() if k != "ANDARA_KUBE_CONTEXT"}
+    return dict(env, PATH=d + os.pathsep + os.environ["PATH"],
+                KUBECONFIG=os.path.join(REPO, "scripts", "tests", "fixtures", "kubeconfig"))
 
 
 def calls(log):
