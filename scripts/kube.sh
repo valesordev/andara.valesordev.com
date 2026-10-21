@@ -23,9 +23,11 @@ kube_kubectl() {
 
 # For a call backgrounded with &: bash runs a function there in a subshell, so `$!` would name the
 # subshell and `kill $!` would leave kubectl (a port-forward) running. exec makes the subshell
-# kubectl. In the script's own shell exec would replace the script, so there it refuses, exit 2.
+# kubectl. It refuses, exit 2, in the script's own shell, which exec would replace; in any other
+# subshell it replaces that subshell, so call it only as `kube_kubectl_exec … &` (test_kube.py
+# checks every script for that).
 kube_kubectl_exec() {
-  [[ "$BASHPID" != "$$" ]] || { echo "kube_kubectl_exec: only for a backgrounded call (… &)" >&2; return 2; }
+  [[ "$BASHPID" != "$$" ]] || { echo "kube_kubectl_exec: not in the script's own shell; background it (… &)" >&2; return 2; }
   exec "${KUBECTL:-kubectl}" --context "$ANDARA_KUBE_CONTEXT" "$@"
 }
 

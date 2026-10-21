@@ -133,23 +133,28 @@ class Helper(Workdir):
         self.assertIn("ANDARA_KUBE_CONTEXT=kind-ci", str(e.exception))
 
 
-# A lone & (not &&, >&, &>): the command before it runs in the background.
-BACKGROUND = re.compile(r"(?<![&>])&(?![&>])")
+# A lone & (not &&, >&, <&, &>): something on the line runs in the background.
+BACKGROUND = re.compile(r"(?<![&<>])&(?![&>])")
+QUOTED = re.compile(r"'[^']*'|\"(?:\\.|[^\"\\])*\"")
 
 
 def background_findings(name, text):
-    """Lines that background kube_kubectl or kube_helm (whose $! would be a subshell), or call
-    kube_kubectl_exec anywhere but in the background. Continued lines are joined, comments dropped."""
+    """Logical lines (continuations joined, comments and quoted text dropped) that call kube_kubectl
+    or kube_helm and background anything, or call kube_kubectl_exec and background nothing. A whole
+    line, not a segment: bash's & backgrounds the whole and-or list or pipeline before it, so
+    `kube_kubectl … || true &` is a subshell too. That also refuses `kube_kubectl get x; sleep 1 &`,
+    which errs toward failing. A group spanning lines (`(` … `) &`, a function later backgrounded) is
+    out of its reach; no script has one."""
     out = []
     for n, line in kube_check.logical(text.splitlines()):
-        code = kube_check.strip_comment(line)
-        for m in re.finditer(r"\b(coproc\s+)?kube_(kubectl_exec|kubectl|helm)\b", code):
-            rest = code[m.end():]
-            end = re.search(r"\|\||&&|;|\|(?!\|)", rest)
-            seg = rest[:end.start()] if end else rest
-            bg = bool(BACKGROUND.search(seg)) or bool(m.group(1))
-            if (m.group(2) == "kubectl_exec") != bg:
-                out.append("%s:%d" % (name, n))
+        code = QUOTED.sub("''", kube_check.strip_comment(line))
+        calls = re.findall(r"\b(coproc\s+)?kube_(kubectl_exec|kubectl|helm)\b", code)
+        if not calls:
+            continue
+        bg = bool(BACKGROUND.search(code)) or any(c for c, _ in calls)
+        plain = any(t != "kubectl_exec" for _, t in calls)
+        if (plain and bg) or (not plain and not bg):
+            out.append("%s:%d" % (name, n))
     return out
 
 
@@ -188,7 +193,7 @@ class ShellHelper(Workdir):
     def test_a_foreground_exec_refuses_and_the_script_goes_on(self):
         p = self.sh("kube_kubectl_exec get pods; echo \"rc=$?\"\necho after\n")
         self.assertEqual(p.stdout.split(), ["rc=2", "after"], p.stderr)
-        self.assertIn("only for a backgrounded call", p.stderr)
+        self.assertIn("not in the script's own shell", p.stderr)
         self.assertEqual(self.calls(), [])
 
     def test_the_background_guard(self):
@@ -197,11 +202,19 @@ class ShellHelper(Workdir):
                'kube_kubectl -n x port-forward a 1:1 & # traefik',
                'kube_kubectl -n x \\\n  port-forward a 1:1 &',
                'coproc kube_kubectl -n x port-forward a 1:1',
-               'kube_kubectl_exec get pods || true']
+               'kube_kubectl_exec get pods || true',
+               'kube_kubectl -n x port-forward a 1:1 || true &',
+               'kube_kubectl -n x port-forward a 1:1 && echo ok &',
+               'kube_kubectl -n x port-forward a 1:1 | tee log &',
+               '{ kube_kubectl -n x port-forward a 1:1; } &',
+               'kube_kubectl get x; sleep 1 &']
         good = ['kube_kubectl get x >/dev/null &&\n  true',
                 'kube_kubectl get x >/dev/null 2>&1 || kube_kubectl create x',
                 'kube_kubectl_exec -n x port-forward a 1:1 >"$W/pf.log" 2>&1 &',
-                'kube_kubectl get x &>/dev/null']
+                'kube_kubectl get x &>/dev/null',
+                'kube_kubectl get x  # & later',
+                'kube_kubectl get x -l "a&b" -o \'jsonpath={.a}&\'',
+                'kube_kubectl apply -f - <&3']
         for text in bad:
             with self.subTest(bad=text):
                 self.assertTrue(background_findings("t.sh", text), text)
