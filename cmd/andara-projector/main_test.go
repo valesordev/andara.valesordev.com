@@ -45,7 +45,7 @@ func TestTopicBytesReportLogsAChangeOfState(t *testing.T) {
 	var logs bytes.Buffer
 	log := slog.New(slog.NewTextHandler(&logs, nil))
 	m := projector.NewMetrics(nil)
-	var r topicBytesReport
+	r := topicBytesReport{topic: "it7.andara.state.v1"}
 	boom := errors.New("broker gone")
 
 	r.observe(700, nil, m, log)
@@ -64,5 +64,9 @@ func TestTopicBytesReportLogsAChangeOfState(t *testing.T) {
 	}
 	if n := strings.Count(out, "refreshed again"); n != 1 {
 		t.Errorf("want one recovery line, got:\n%s", out)
+	}
+	// AW-SRV-058: both lines name the state topic as resolved.
+	if n := strings.Count(out, "topic=it7.andara.state.v1"); n != 2 {
+		t.Errorf("want the warn and the recovery line to name it7.andara.state.v1, got:\n%s", out)
 	}
 }

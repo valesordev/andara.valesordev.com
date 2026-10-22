@@ -62,6 +62,8 @@ type (
 	ErrBlobMissing struct {
 		Hash []byte
 		Path string
+		// Topic is the blob topic as the resolver named it.
+		Topic string
 	}
 	// ErrValidation: sim.BuildWorld or sim.BuildTemplates refused it. The
 	// findings are the loader's, unchanged (ADR-0004: one validator).
@@ -175,7 +177,7 @@ func (e *ErrCoreVersion) Error() string {
 }
 
 func (e *ErrBlobMissing) Error() string {
-	return fmt.Sprintf("blob %s for %s is not on %s", hex.EncodeToString(e.Hash), e.Path, TopicBlobs)
+	return fmt.Sprintf("blob %s for %s is not on %s", hex.EncodeToString(e.Hash), e.Path, e.Topic)
 }
 
 func (e *ErrValidation) Error() string {

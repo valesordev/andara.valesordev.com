@@ -58,7 +58,7 @@ type RunOptions struct {
 	Brokers []string
 	// Group is andara-projector-state-<env>.
 	Group string
-	// Topics; empty means the production names. Tests use throwaway ones.
+	// Topics, from kafkaclient.Topics; each is required.
 	CommandsTopic, EventsTopic, StateTopic string
 
 	// The replica is built exactly as the server builds its Engine: from no
@@ -103,6 +103,9 @@ type RunOptions struct {
 // until ctx ends (nil: a clean stop) or the replica cannot go on (an error
 // ExitCode classifies).
 func Run(ctx context.Context, o RunOptions) error {
+	if err := o.requireTopics(); err != nil {
+		return err
+	}
 	o = o.withDefaults()
 	log := o.Log
 
@@ -553,10 +556,22 @@ func (o RunOptions) withDefaults() RunOptions {
 	if o.Now == nil {
 		o.Now = time.Now
 	}
-	if o.StateTopic == "" {
-		o.StateTopic = StateTopic
-	}
 	return o
+}
+
+// requireTopics is an error naming the first topic option left empty: there
+// is no default name to fall back to (AW-SRV-058).
+func (o RunOptions) requireTopics() error {
+	for _, t := range []struct{ name, v string }{
+		{"RunOptions.CommandsTopic", o.CommandsTopic},
+		{"RunOptions.EventsTopic", o.EventsTopic},
+		{"RunOptions.StateTopic", o.StateTopic},
+	} {
+		if t.v == "" {
+			return fmt.Errorf("projector: %s is required", t.name)
+		}
+	}
+	return nil
 }
 
 // after drops boundaries at or before tick: ones the replica already holds.

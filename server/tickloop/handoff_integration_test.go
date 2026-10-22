@@ -74,11 +74,10 @@ func startHandoffLoop(ctx context.Context, brokers []string, commands, events, g
 	if err != nil {
 		return nil, err
 	}
-	pub, err := NewKafkaPublisher(ctx, brokers, "test")
+	pub, err := NewKafkaPublisher(ctx, brokers, "test", commands, events)
 	if err != nil {
 		return nil, err
 	}
-	pub.Commands, pub.Events = commands, events
 	loop, err := New(Options{
 		Engine: e, Source: src, Publisher: &arriveDroppingPublisher{pub, lossy},
 		TickRate: 50, TickBudget: 20 * time.Millisecond, MaxPerTick: 64, DrainTimeout: 5 * time.Second, CheckpointEvery: 5,
@@ -113,13 +112,13 @@ func TestKafkaHandoffChild(t *testing.T) {
 func TestKafka_AHandoffSurvivesASIGKILLWithTheArriveLost(t *testing.T) {
 	bk := brokers(t)
 	commands, events := topics(t, bk)
-	group := "andara-sim-handoff-" + commands[len(commands)-8:]
+	group := "it-sim-handoff-" + commands[len(commands)-8:]
 
-	pub, err := NewKafkaPublisher(context.Background(), bk, "test")
+	// Only Commands are produced; the events topic is never written.
+	pub, err := NewKafkaPublisher(context.Background(), bk, "test", commands, "unused-events")
 	if err != nil {
 		t.Fatal(err)
 	}
-	pub.Commands = commands
 	if err := pub.Produce(context.Background(), []*logv1.LoggedCommand{simtest.Move("town", "alice", "east")}); err != nil {
 		t.Fatal(err)
 	}

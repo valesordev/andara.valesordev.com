@@ -459,6 +459,10 @@
             "brokers": {
               "type": "string",
               "description": "ANDARA_KAFKA_BROKERS (AW-SRV-008). Default when unset: ''."
+            },
+            "topic_prefix": {
+              "type": "string",
+              "description": "ANDARA_KAFKA_TOPIC_PREFIX (AW-SRV-058). Default when unset: ''."
             }
           }
         },

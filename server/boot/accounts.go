@@ -13,12 +13,6 @@ import (
 	"github.com/valesordev/andara/server/recordlog"
 )
 
-// Topics the account store writes.
-const (
-	AccountsTopic = "andara.accounts.v1"
-	AuditTopic    = "andara.audit.v1"
-)
-
 // OpenAccounts builds the account store from configuration: the keyring,
 // the two record logs, the index replayed from the accounts topic, and the
 // bootstrap operator if none exists. A failure here is a failed boot — a
@@ -38,16 +32,18 @@ func (rt *Runtime) OpenAccounts(ctx context.Context) (*auth.Store, error) {
 	}
 
 	var accounts, audit recordlog.Log
+	var accountsTopic string
 	switch cfg.AuthStore {
 	case "memory":
 		rt.Tel.Log.LogAttrs(ctx, slog.LevelWarn, "auth.store=memory: accounts are not persisted and will not survive a restart")
 		accounts, audit = recordlog.NewMemory(), recordlog.NewMemory()
 	case "kafka":
-		accounts, err = recordlog.NewKafka(ctx, recordlog.KafkaOptions{Brokers: cfg.KafkaBrokers, Topic: AccountsTopic, ClientID: cfg.ServiceName})
+		accountsTopic = rt.Topics.Accounts()
+		accounts, err = recordlog.NewKafka(ctx, recordlog.KafkaOptions{Brokers: cfg.KafkaBrokers, Topic: accountsTopic, ClientID: cfg.ServiceName})
 		if err != nil {
 			return nil, err
 		}
-		audit, err = recordlog.NewKafka(ctx, recordlog.KafkaOptions{Brokers: cfg.KafkaBrokers, Topic: AuditTopic, ClientID: cfg.ServiceName})
+		audit, err = recordlog.NewKafka(ctx, recordlog.KafkaOptions{Brokers: cfg.KafkaBrokers, Topic: rt.AuditTopicName, ClientID: cfg.ServiceName})
 		if err != nil {
 			_ = accounts.Close()
 			return nil, err
@@ -61,19 +57,20 @@ func (rt *Runtime) OpenAccounts(ctx context.Context) (*auth.Store, error) {
 		workload = auth.NewJWKSVerifier(cfg.AuthK8sIssuer, cfg.AuthK8sJWKSURL)
 	}
 	store, err := auth.Open(ctx, auth.Options{
-		Accounts:   accounts,
-		Audit:      audit,
-		Keys:       keys,
-		Argon2:     auth.Argon2Params{MemoryKiB: cfg.AuthArgon2MemoryKiB, Time: cfg.AuthArgon2Time, Threads: uint8(cfg.AuthArgon2Threads)},
-		SessionTTL: cfg.AuthSessionTTL,
-		RefreshTTL: cfg.AuthRefreshTTL,
-		InviteTTL:  cfg.AuthInviteTTL,
-		RateLimit:  limit,
-		Workload:   workload,
-		Characters: auth.CharacterOptions{MaxPerAccount: cfg.CharacterMaxPerAccount, NamePattern: cfg.CharacterNamePattern},
-		Log:        rt.Tel.Log,
-		Tracer:     rt.Tel.Tracer,
-		Registry:   rt.Tel.Reg,
+		Accounts:      accounts,
+		Audit:         audit,
+		Keys:          keys,
+		AccountsTopic: accountsTopic,
+		Argon2:        auth.Argon2Params{MemoryKiB: cfg.AuthArgon2MemoryKiB, Time: cfg.AuthArgon2Time, Threads: uint8(cfg.AuthArgon2Threads)},
+		SessionTTL:    cfg.AuthSessionTTL,
+		RefreshTTL:    cfg.AuthRefreshTTL,
+		InviteTTL:     cfg.AuthInviteTTL,
+		RateLimit:     limit,
+		Workload:      workload,
+		Characters:    auth.CharacterOptions{MaxPerAccount: cfg.CharacterMaxPerAccount, NamePattern: cfg.CharacterNamePattern},
+		Log:           rt.Tel.Log,
+		Tracer:        rt.Tel.Tracer,
+		Registry:      rt.Tel.Reg,
 	})
 	if err != nil {
 		_ = accounts.Close()

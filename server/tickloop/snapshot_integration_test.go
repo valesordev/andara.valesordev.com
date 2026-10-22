@@ -36,14 +36,13 @@ import (
 // events topic can tell it apart from an Event and from a TickCompleted.
 func TestSnapshotWrittenRoundTripsThroughTheBroker(t *testing.T) {
 	bs := brokers(t)
-	_, events := topics(t, bs)
+	commands, events := topics(t, bs)
 
-	pub, err := NewKafkaPublisher(context.Background(), bs, "snapshot-test")
+	pub, err := NewKafkaPublisher(context.Background(), bs, "snapshot-test", commands, events)
 	if err != nil {
 		t.Fatal(err)
 	}
 	defer pub.Close()
-	pub.Events = events
 
 	dir := t.TempDir()
 	ws := store.NewFS(dir)
@@ -132,14 +131,13 @@ func TestSnapshotWrittenRoundTripsThroughTheBroker(t *testing.T) {
 // skipped rather than decoded as a TickCompleted.
 func TestSnapshotWrittenIsNotReadAsABoundary(t *testing.T) {
 	bs := brokers(t)
-	_, events := topics(t, bs)
+	commands, events := topics(t, bs)
 
-	pub, err := NewKafkaPublisher(context.Background(), bs, "snapshot-boundary-test")
+	pub, err := NewKafkaPublisher(context.Background(), bs, "snapshot-boundary-test", commands, events)
 	if err != nil {
 		t.Fatal(err)
 	}
 	defer pub.Close()
-	pub.Events = events
 
 	// A Zone on the boundary Partition, so the manifest lands where
 	// ReadBoundaries looks.
@@ -212,14 +210,13 @@ func readSnapshotWritten(t *testing.T, bs []string, topic string, want int) []*l
 // completes.
 func TestSnapshotRoundWaitsForTheBrokersBoundaryAck(t *testing.T) {
 	bs := brokers(t)
-	_, events := topics(t, bs)
+	commands, events := topics(t, bs)
 
-	pub, err := NewKafkaPublisher(context.Background(), bs, "snapshot-ack-test")
+	pub, err := NewKafkaPublisher(context.Background(), bs, "snapshot-ack-test", commands, events)
 	if err != nil {
 		t.Fatal(err)
 	}
 	defer pub.Close()
-	pub.Events = events
 
 	done := make(chan error, 1)
 	now := time.Unix(1758500000, 0)
@@ -292,14 +289,13 @@ func TestSnapshotRoundWaitsForTheBrokersBoundaryAck(t *testing.T) {
 // the window that used to lose it (live-assertions rule 4).
 func TestSnapshotRoundsCompleteAgainAfterALeaderRestart(t *testing.T) {
 	bs := brokers(t)
-	_, events := topics(t, bs)
+	commands, events := topics(t, bs)
 	px := newLeaderProxy(t, bs[0], BoundaryPartition)
-	pub, err := NewKafkaPublisher(context.Background(), []string{px.Addr()}, "snapshot-leader-restart-test")
+	pub, err := NewKafkaPublisher(context.Background(), []string{px.Addr()}, "snapshot-leader-restart-test", commands, events)
 	if err != nil {
 		t.Fatal(err)
 	}
 	defer pub.Close()
-	pub.Events = events
 
 	rounds := make(chan error, 64)
 	var mu sync.Mutex

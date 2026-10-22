@@ -29,6 +29,8 @@ import (
 	gamev1 "github.com/valesordev/andara/gen/go/andara/game/v1"
 	"github.com/valesordev/andara/gen/go/andara/game/v1/gamev1connect"
 	"github.com/valesordev/andara/internal/eventually"
+	"github.com/valesordev/andara/server/config"
+	"github.com/valesordev/andara/server/kafkaclient"
 )
 
 // httpClient trusts the local CA and nothing else.
@@ -122,10 +124,15 @@ func TestLive_AccountsAndAudit(t *testing.T) {
 		t.Fatalf("CreateAccount without a token: %v", err)
 	}
 
-	// Now the broker: the audit record for that CreateAccount is on the topic.
+	// Now the broker: the audit record for that CreateAccount is on the topic,
+	// named under the server's kafka.topic_prefix (AW-SRV-058).
+	tp, err := kafkaclient.TopicsFor(config.Config{KafkaTopicPrefix: env("ANDARA_KAFKA_TOPIC_PREFIX", "")})
+	if err != nil {
+		t.Fatal(err)
+	}
 	cl, err := kgo.NewClient(
 		kgo.SeedBrokers(env("ANDARA_KAFKA_BROKERS", "localhost:9092")),
-		kgo.ConsumeTopics("andara.audit.v1"),
+		kgo.ConsumeTopics(tp.Audit()),
 		kgo.ConsumeResetOffset(kgo.NewOffset().AtStart()),
 	)
 	if err != nil {
@@ -133,7 +140,7 @@ func TestLive_AccountsAndAudit(t *testing.T) {
 	}
 	defer cl.Close()
 	polled := 0
-	eventually.Observed(t, 20*time.Second, "the create_account audit record on andara.audit.v1", func() (bool, string) {
+	eventually.Observed(t, 20*time.Second, "the create_account audit record on "+tp.Audit(), func() (bool, string) {
 		pctx, cancel := context.WithTimeout(ctx, 2*time.Second)
 		fetches := cl.PollFetches(pctx)
 		cancel()

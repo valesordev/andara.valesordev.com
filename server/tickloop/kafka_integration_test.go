@@ -71,12 +71,12 @@ func topics(t *testing.T, brokers []string) (commands, events string) {
 // publisher, one record at a time so the broker's batching is its own.
 func produce(t *testing.T, brokers []string, topic string, n int) int {
 	t.Helper()
-	pub, err := NewKafkaPublisher(context.Background(), brokers, "test")
+	// Only Commands are produced; the events topic is never written.
+	pub, err := NewKafkaPublisher(context.Background(), brokers, "test", topic, "unused-events")
 	if err != nil {
 		t.Fatal(err)
 	}
 	defer pub.Close()
-	pub.Commands = topic
 	total := 0
 	for _, recs := range simtest.Script(n) {
 		for _, r := range recs {
@@ -103,11 +103,10 @@ func startLoop(ctx context.Context, brokers []string, commands, events, group st
 	if err != nil {
 		return nil, nil, err
 	}
-	pub, err := NewKafkaPublisher(ctx, brokers, "test")
+	pub, err := NewKafkaPublisher(ctx, brokers, "test", commands, events)
 	if err != nil {
 		return nil, nil, err
 	}
-	pub.Commands, pub.Events = commands, events
 	loop, err := New(Options{
 		Engine: e, Source: src, Publisher: pub,
 		TickRate: 50, TickBudget: 10 * time.Millisecond, MaxPerTick: 3, DrainTimeout: 5 * time.Second, CheckpointEvery: checkpointEvery,
@@ -146,7 +145,7 @@ func TestKafka_ApplyThenReplay(t *testing.T) {
 	bk := brokers(t)
 	commands, events := topics(t, bk)
 	total := produce(t, bk, commands, 20)
-	group := "andara-sim-test-" + commands[len(commands)-8:]
+	group := "it-sim-test-" + commands[len(commands)-8:]
 
 	ctx, cancel := context.WithCancel(context.Background())
 	loop, e, err := startLoop(ctx, bk, commands, events, group, 5, 5)
@@ -248,7 +247,7 @@ func TestKafkaChild(t *testing.T) {
 func TestKafka_CrashAndRecover(t *testing.T) {
 	bk := brokers(t)
 	commands, events := topics(t, bk)
-	group := "andara-sim-crash-" + commands[len(commands)-8:]
+	group := "it-sim-crash-" + commands[len(commands)-8:]
 	produce(t, bk, commands, 40)
 
 	spawn := func() *exec.Cmd {
