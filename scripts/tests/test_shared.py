@@ -181,16 +181,16 @@ class ListenerPeers(unittest.TestCase):
         listener = next(li for li in kafka["spec"]["kafka"]["listeners"] if li["port"] == 9092)
         return listener["networkPolicyPeers"]
 
-    def test_the_broker_pool_shared_check_uses_is_admitted(self):
-        want = dict(kv.split("=") for kv in ("strimzi.io/cluster=%s" % shared.KAFKA, "strimzi.io/pool-name=broker"))
-        brokers = [p for p in self.peers() if "namespaceSelector" not in p
-                   and p.get("podSelector", {}).get("matchLabels") == want]
-        self.assertEqual(len(brokers), 1, self.peers())
-
-    def test_application_pods_still_need_a_labelled_namespace(self):
-        apps = [p for p in self.peers() if p.get("podSelector", {}).get("matchLabels") == {"app.kubernetes.io/name": "andara"}]
-        self.assertEqual(len(apps), 1)
-        self.assertEqual(apps[0]["namespaceSelector"]["matchExpressions"][0]["values"], ["local", "dev"])
+    def test_the_peers_are_exactly_the_apps_the_toolbox_and_the_broker_pool(self):
+        # The whole list: any extra peer, a widened selector or an operator change fails it.
+        self.assertEqual(self.peers(), [
+            {"namespaceSelector": {"matchExpressions": [
+                {"key": "andara.valesor/env", "operator": "In", "values": ["local", "dev"]}]},
+             "podSelector": {"matchLabels": {"app.kubernetes.io/name": "andara"}}},
+            {"podSelector": {"matchLabels": {"app.kubernetes.io/name": "andara-kafka-tools"}}},
+            # The pool shared-check picks its pod from (shared.broker_pod), in andara-shared only.
+            {"podSelector": {"matchLabels": {"strimzi.io/cluster": shared.KAFKA, "strimzi.io/pool-name": "broker"}}},
+        ])
 
 
 class Down(unittest.TestCase):

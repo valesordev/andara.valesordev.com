@@ -85,9 +85,10 @@ spec:
         # others; within a peer the namespaceSelector and podSelector are ANDed. So: the
         # server and projector pods (the chart's app.kubernetes.io/name: andara) in a namespace
         # labelled andara.valesor/env local or dev, which `make shared-up` labels; the rpk
-        # toolbox in andara-shared; and the brokers themselves, because `make shared-check`
-        # runs kafka-log-dirs in a broker pod and it asks every broker on this listener
-        # (Strimzi admits broker-to-broker traffic on its own internal ports only). Nothing
+        # toolbox in andara-shared; and the brokers themselves, because tools run in a broker
+        # pod reach the other brokers on this listener: `make shared-check`'s kafka-log-dirs
+        # and `make kafka-broker-bounce`'s kafka-topics --under-replicated-partitions (Strimzi
+        # admits broker-to-broker traffic on its own internal ports only). Nothing
         # else, including an `andara` pod in an unlabelled namespace. No TLS or SASL yet: SASL
         # is AW-INF-056's, and traffic never leaves the cluster.
         networkPolicyPeers:

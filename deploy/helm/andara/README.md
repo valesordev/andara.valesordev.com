@@ -212,7 +212,7 @@ destroying `andara-local` or `andara-dev` never touches it.
 - **Who may connect.** The listener's NetworkPolicy, which Strimzi renders from `networkPolicyPeers` in
   `deploy/k8s/kafka/kafka.yaml`, admits a pod labelled `app.kubernetes.io/name: andara` (the server and every
   projector) in a namespace labelled `andara.valesor/env` `local` or `dev`, and the `rpk` toolbox
-  (`app.kubernetes.io/name: andara-kafka-tools`) in `andara-shared`, and the broker pool itself, for `shared-check`'s `kafka-log-dirs`. Nothing else connects, including an `andara` pod
+  (`app.kubernetes.io/name: andara-kafka-tools`) in `andara-shared`, and the broker pool itself, for the tools run in a broker pod (`shared-check`'s `kafka-log-dirs`, `kafka-broker-bounce`'s `kafka-topics`). Nothing else connects, including an `andara` pod
   in an unlabelled namespace. `make shared-up` sets the labels.
 - **Principals.** The per-environment `KafkaUser`s (`andara-server-dev`, `andara-projector-state-local`, …) are
   rendered from `topics.yaml` and checked by `make kafka-users-check`. AW-INF-056 applies them with SASL and the
