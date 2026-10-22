@@ -67,7 +67,7 @@ func NewMetrics(reg prometheus.Registerer) *Metrics {
 		}, []string{"role"}),
 		AuditWriteFailures: prometheus.NewCounter(prometheus.CounterOpts{
 			Name: "andara_audit_write_failures_total",
-			Help: "Audit records that could not be written to andara.audit.v1. Any value above zero is an operator page.",
+			Help: "Audit records that could not be written to the audit topic. Any value above zero is an operator page.",
 		}),
 		CharacterCreations: prometheus.NewCounterVec(prometheus.CounterOpts{
 			Name: "andara_character_creations_total",

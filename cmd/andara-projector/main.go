@@ -38,7 +38,7 @@ var (
 const usage = `usage: andara-projector <projection> [flags]
 
 projections:
-  state    replicate the simulation and write andara.state.v1 (AW-SRV-019)
+  state    replicate the simulation and write the state topic (AW-SRV-019)
 
 exit codes (state): 0 clean stop · 1 config/store · 2 digest divergence · 3 log gap · 4 state_version
 `

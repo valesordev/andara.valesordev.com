@@ -66,7 +66,7 @@ func NewMetrics(reg prometheus.Registerer) *Metrics {
 		}, []string{"kind"}),
 		Tombstones: prometheus.NewCounter(prometheus.CounterOpts{
 			Name: "andara_state_tombstones_total",
-			Help: "Tombstones acknowledged on andara.state.v1.",
+			Help: "Tombstones acknowledged on the state topic.",
 		}),
 		DigestMismatches: prometheus.NewCounter(prometheus.CounterOpts{
 			Name: "andara_state_digest_mismatches_total",
@@ -79,7 +79,7 @@ func NewMetrics(reg prometheus.Registerer) *Metrics {
 		}, []string{"phase"}),
 		TopicBytes: prometheus.NewGauge(prometheus.GaugeOpts{
 			Name: "andara_state_topic_bytes",
-			Help: "Size of andara.state.v1 on the broker, one replica per partition.",
+			Help: "Size of the state topic on the broker, one replica per partition.",
 		}),
 		Restores: prometheus.NewCounterVec(prometheus.CounterOpts{
 			Name: "andara_restore_total",
