@@ -307,6 +307,60 @@ class Promote(unittest.TestCase):
         self.assertEqual(self.remote("refs/tags/dev"), origin_dev)
         self.assertEqual(self.remote("refs/tags/dev-2"), "")
 
+    def refuse_pushes(self):
+        hook = os.path.join(self.origin, "hooks", "pre-receive")
+        with open(hook, "w") as f:
+            f.write("#!/bin/sh\necho refused by the test >&2\nexit 1\n")
+        os.chmod(hook, 0o755)
+
+    def mod_failing(self, *match):
+        """A promote module whose git() leaves out the update-ref calls matching match, as a
+        lock file or a pruned object would make them fail."""
+        mod = self.mod()
+        real = mod.git
+
+        def git(*args, **kw):
+            if args[:1] == ("update-ref",) and all(m in args for m in match):
+                return ""
+            return real(*args, **kw)
+        mod.git = git
+        return mod
+
+    def test_a_failed_dev_restore_says_so_with_the_fix(self):
+        self.run_promote("dev", self.main1, "", "")
+        sh(self.work, "git", "fetch", "-q", "--force", "origin", "+refs/tags/*:refs/tags/*")
+        before = sh(self.work, "git", "rev-parse", "refs/tags/dev")
+        self.refuse_pushes()
+        mod = self.mod_failing("refs/tags/dev", before)
+        code, _, err = self.run_promote("dev", self.main2, "", "", mod=mod)
+        self.assertEqual(code, 1, err)
+        self.assertIn("push refused, nothing promoted", err)
+        self.assertIn("refused by the test", err)
+        self.assertNotIn("%s", err)
+        self.assertNotIn("restored)", err)
+        self.assertRegex(err, r"local tags NOT restored: dev is [0-9a-f]{12}, want %s" % before[:12])
+        self.assertIn("git update-ref refs/tags/dev %s" % before, err)
+
+    def test_a_leftover_history_tag_says_so_with_the_fix(self):
+        self.refuse_pushes()
+        mod = self.mod_failing("-d", "refs/tags/dev-1")
+        code, _, err = self.run_promote("dev", self.main1, "", "", mod=mod)
+        self.assertEqual(code, 1, err)
+        self.assertIn("local tags NOT restored", err)
+        self.assertIn("git update-ref -d refs/tags/dev-1", err)
+        self.assertNotIn("%s", err)
+
+    def test_a_local_release_branch_is_reset_and_named_only_then(self):
+        self.run_promote("dev", self.main1, "", "")
+        sh(self.work, "git", "fetch", "-q", "origin", "release/dev")
+        origin_branch = sh(self.work, "git", "rev-parse", "refs/remotes/origin/release/dev")
+        sh(self.work, "git", "update-ref", "refs/heads/release/dev", self.main2)  # an operator's stray local branch
+        self.refuse_pushes()
+        code, _, err = self.run_promote("dev", self.main2, "", "")
+        self.assertEqual(code, 1, err)
+        self.assertIn("(local dev, dev-2 and release/dev restored)", err)
+        self.assertEqual(sh(self.work, "git", "rev-parse", "refs/heads/release/dev"), origin_branch)
+
     def test_a_refused_first_promotion_leaves_no_local_tags(self):
         hook = os.path.join(self.origin, "hooks", "pre-receive")
         with open(hook, "w") as f:
@@ -314,7 +368,7 @@ class Promote(unittest.TestCase):
         os.chmod(hook, 0o755)
         code, _, err = self.run_promote("dev", self.main1, "", "")
         self.assertEqual(code, 1, err)
-        self.assertIn("(local dev, dev-1 and release/dev restored)", err)
+        self.assertIn("(local dev and dev-1 restored)", err)
         self.assertEqual(sh(self.work, "git", "tag", "-l", "dev", "dev-1"), "")
 
     def test_a_push_refused_for_one_ref_moves_none(self):

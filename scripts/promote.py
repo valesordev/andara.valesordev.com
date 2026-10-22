@@ -285,10 +285,15 @@ def undo_tags(n, before_dev):
     else:
         git("update-ref", "-d", "refs/tags/" + TAG, check=False)
     now = git("rev-parse", "--verify", "--quiet", "refs/tags/" + TAG, check=False)
-    if now != before_dev or git("rev-parse", "--verify", "--quiet", "refs/tags/dev-%d" % n, check=False):
-        return " (local tags NOT restored: dev is %s, want %s; fix with `git fetch --force origin "
-        "'refs/tags/dev*:refs/tags/dev*'`)" % (now[:12] or "absent", before_dev[:12] or "absent")
-    return ""
+    fixes = []
+    if now != before_dev:
+        fixes.append("git update-ref refs/tags/dev %s" % before_dev if before_dev else "git update-ref -d refs/tags/dev")
+    if git("rev-parse", "--verify", "--quiet", "refs/tags/dev-%d" % n, check=False):
+        fixes.append("git update-ref -d refs/tags/dev-%d" % n)
+    if not fixes:
+        return ""
+    return (" (local tags NOT restored: dev is %s, want %s; fix with `%s`)"
+            % (now[:12] or "absent", before_dev[:12] or "absent", "; ".join(fixes)))
 
 
 def push(commit, n, before_dev):
@@ -300,12 +305,19 @@ def push(commit, n, before_dev):
     if p.returncode == 0:
         return time.monotonic()
     note = undo_tags(n, before_dev)
+    # The push names the commit, not a local branch, so a local release/dev exists only if the
+    # operator made one; it's put back to origin's and named only when it was.
+    restored = "dev and dev-%d" % n
     if git("rev-parse", "--verify", "--quiet", "refs/heads/" + BRANCH, check=False):
         remote = git("rev-parse", "--verify", "--quiet", "refs/remotes/%s/%s" % (REMOTE, BRANCH), check=False)
         if remote:
             git("update-ref", "refs/heads/" + BRANCH, remote, check=False)
+            if git("rev-parse", "--verify", "--quiet", "refs/heads/" + BRANCH, check=False) == remote:
+                restored = "dev, dev-%d and %s" % (n, BRANCH)
+            else:
+                note += " (local %s NOT reset; fix with `git update-ref refs/heads/%s %s`)" % (BRANCH, BRANCH, remote)
     raise Fail("push refused, nothing promoted%s: %s"
-               % (note or " (local dev, dev-%d and %s restored)" % (n, BRANCH), (p.stderr or p.stdout).strip()))
+               % (note or " (local %s restored)" % restored, (p.stderr or p.stdout).strip()))
 
 
 # --- Argo CD --------------------------------------------------------------------------------
