@@ -294,8 +294,14 @@ type tagStore struct {
 
 func (s *tagStore) Put(ctx context.Context, key string, b []byte) error {
 	if s.hang && strings.Contains(key, ".tag/") {
-		<-ctx.Done()
-		return ctx.Err()
+		// Bounded, so a tag run outside the round's budget fails the test
+		// as a STORE_ERROR in seconds rather than at the package timeout.
+		select {
+		case <-ctx.Done():
+			return ctx.Err()
+		case <-time.After(5 * time.Second):
+			return fmt.Errorf("put %s: no deadline reached the tag", key)
+		}
 	}
 	if key == s.fail {
 		return fmt.Errorf("put %s: %w", key, sim.ErrStoreUnavailable)
@@ -342,7 +348,7 @@ func TestPrestopOverTheSocket(t *testing.T) {
 		t.Fatalf("Listen: %v", err)
 	}
 	fi, err := os.Stat(path)
-	if err != nil || fi.Mode().Perm() != lifecycle.SocketMode {
+	if err != nil || fi.Mode().Perm() != 0o600 {
 		t.Fatalf("socket mode %v, %v; want 0600", fi.Mode().Perm(), err)
 	}
 	resp, err := lifecycle.Call(context.Background(), path)
