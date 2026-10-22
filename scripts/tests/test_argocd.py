@@ -375,6 +375,7 @@ class HelmInstallRefusal(unittest.TestCase):
             env = stub_bin(d, log, {
                 "kubectl": 'case "$*" in "get crd applications.argoproj.io"|"-n argocd get application andara-dev") exit 0;; esac\nexit 0',
                 "helm": "exit 0"})
+            env = dev_on_shared(d, env)
             p = subprocess.run([os.path.join(SCRIPTS, "helm_install.sh"), "dev", "andara-server", "dev", "", ""],
                                capture_output=True, text=True, env=env)
             self.assertEqual(p.returncode, 1, p.stderr)
@@ -403,6 +404,16 @@ def stub_bin(d, log, tools):
     env = {k: v for k, v in os.environ.items() if k != "ANDARA_KUBE_CONTEXT"}
     return dict(env, PATH=d + os.pathsep + os.environ["PATH"],
                 KUBECONFIG=os.path.join(REPO, "scripts", "tests", "fixtures", "kubeconfig"))
+
+
+def dev_on_shared(d, env):
+    """The values a dev from after AW-INF-059 has, as the AW-INF-055 gate reads them, so a test
+    can reach what comes after the gate."""
+    vd = os.path.join(d, "values")
+    os.makedirs(vd, exist_ok=True)
+    with open(os.path.join(vd, "dev.yaml"), "w") as f:
+        f.write("server:\n  kafka:\n    brokers: andara-log-kafka-bootstrap.andara-shared.svc:9092\n")
+    return dict(env, ANDARA_VALUES_DIR=vd)
 
 
 def calls(log):
@@ -438,7 +449,7 @@ class IssuerRefusal(unittest.TestCase):
                    '  *"clusterissuer andara-ca"*) echo True;;\nesac\nexit 0')
         with tempfile.TemporaryDirectory() as d:
             log = os.path.join(d, "calls")
-            env = stub_bin(d, log, {"kubectl": kubectl, "helm": "exit 0"})
+            env = dev_on_shared(d, stub_bin(d, log, {"kubectl": kubectl, "helm": "exit 0"}))
             p = subprocess.run([os.path.join(SCRIPTS, "helm_install.sh"), "dev", "andara-server", "dev", "", ""],
                                capture_output=True, text=True, env=env)
             self.assertEqual(p.returncode, 1, p.stderr)
@@ -530,6 +541,36 @@ class KafkaOperator(unittest.TestCase):
         self.assertEqual(p.returncode, 2, p.stderr)
         self.assertIn("AW-INF-060", p.stderr)
         self.assertEqual([c for c in calls(log) if c.startswith(("kubectl", "helm"))], [])
+
+    def test_dev_cant_be_deployed_or_bounced_until_its_values_reach_the_shared_kafka(self):
+        # Reviewer on #618: values/dev.yaml keeps its old bootstrap until AW-INF-059, which no
+        # install creates any more, so every dev path refuses (exit 2) before any cluster call.
+        for argv in (["helm_install.sh", "dev", "andara-server", "dev", "", ""], ["kafka.sh", "bounce", "dev"]):
+            with self.subTest(script=argv[0]):
+                d = tempfile.mkdtemp()
+                self.addCleanup(lambda d=d: subprocess.run(["rm", "-rf", d]))
+                log = os.path.join(d, "calls")
+                env = stub_bin(d, log, {"helm": "exit 0", "kubectl": "exit 0"})
+                p = subprocess.run([os.path.join(SCRIPTS, argv[0])] + argv[1:], capture_output=True, text=True, env=env)
+                self.assertEqual(p.returncode, 2, p.stderr)
+                self.assertIn("AW-INF-059", p.stderr)
+                self.assertEqual([c for c in calls(log) if c.startswith(("kubectl", "helm"))], [])
+        c = Cluster()
+        mod = with_cluster(load_argocd(), c)
+        mod.install_argocd = lambda: c.calls.append((["install_argocd"], None))
+        code, _, err = quiet(mod.install, "dev")
+        self.assertEqual(code, 2)
+        self.assertIn("AW-INF-059", err)
+        self.assertEqual(c.calls, [])
+
+    def test_the_gate_reads_the_values_files(self):
+        import shared
+        self.assertTrue(shared.on_shared("local"))
+        self.assertFalse(shared.on_shared("dev"))
+        d = tempfile.mkdtemp()
+        self.addCleanup(lambda: subprocess.run(["rm", "-rf", d]))
+        self.assertTrue(shared.on_shared("dev", values_dir=os.path.join(dev_on_shared(d, {})["ANDARA_VALUES_DIR"])))
+        self.assertFalse(shared.on_shared("staging"))
 
     def test_argocd_install_wants_the_shared_kafka(self):
         # AW-INF-055: dev's broker is in andara-shared, not andara-dev.

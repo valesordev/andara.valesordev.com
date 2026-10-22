@@ -186,9 +186,13 @@ server still runs broker-free until AW-INF-060. So a `dev` install is `make shar
 `ANDARA_BOOTSTRAP_OPERATOR=<user>:<password> make helm-install ENV=dev`. `helm-install` refuses while
 `kafka/andara-log` in `andara-shared` is not Ready. It also refuses without the operator credential, because
 `local`'s default is public and this edge is not. `dev`'s sim and Accounts live on the broker.
-`make kafka-broker-bounce ENV=dev` shows losing one broker costs the World nothing. `values/dev.yaml` still names the
-old in-namespace bootstrap: dev's broker and its `dev` prefix change together in AW-INF-059 (ADR-0013 amendment 16),
-because either alone, synced from `main`, points dev at topics that don't exist.
+`make kafka-broker-bounce ENV=dev` shows losing one broker costs the World nothing.
+
+**Until AW-INF-059, dev can't be deployed.** `values/dev.yaml` still names the old in-namespace bootstrap, which
+nothing installs any more. dev's broker and its `dev` prefix change together in AW-INF-059, as that story's scope
+stages them, because either alone, synced from `main`, points dev at topics that don't exist. Until then
+`helm-install`, `argocd-install` and `kafka-broker-bounce` with `ENV=dev` exit 2 naming AW-INF-059, before touching
+the cluster. The gate reads the values file, so it lifts when 059 lands.
 
 ### Shared services
 
@@ -200,7 +204,7 @@ destroying `andara-local` or `andara-dev` never touches it.
 - **Topics are per environment, by prefix.** Each environment's topics are `<prefix>.<name>`, with the prefix from
   `deploy/kafka/topics.yaml`'s `environments`: `local.andara.commands.v1`, `dev.andara.commands.v1`. The chart's
   `server.kafka.topic_prefix` is `local` in `values/local.yaml`, and a `local` render without it fails. `dev`'s comes
-  with AW-INF-059 (ADR-0013 amendment 16). Partition counts are the same in both. `local`'s topics are RF 1 with
+  with AW-INF-059 (its scope; ADR-0013 amendment 16 stages the prefix). Partition counts are the same in both. `local`'s topics are RF 1 with
   `min.insync.replicas` 1 and bounded to 64 MiB per partition and 7 days; `dev`'s are RF 3, ISR 2, with the
   retention `topics.yaml` declares.
 - **Who may connect.** The listener's NetworkPolicy, which Strimzi renders from `networkPolicyPeers` in

@@ -258,7 +258,6 @@ SWEEP = [
     ("kafka.sh install", ["bash", "scripts/kafka.sh", "install", "dev"]),
     ("kafka.sh up", ["bash", "scripts/kafka.sh", "up"]),
     ("shared.py check", [PY, "scripts/shared.py", "check"]),
-    ("kafka.sh bounce", ["bash", "scripts/kafka.sh", "bounce", "dev"]),
     ("stream_soak.sh", ["bash", "scripts/stream_soak.sh", "dev", "1s"]),
     ("image_check.sh", ["bash", "scripts/image_check.sh", "dev", "ghcr.io/valesordev/andara-server", "t"]),
     ("platform_up.py", [PY, "scripts/platform_up.py", "up", "ci"]),

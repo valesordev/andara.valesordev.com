@@ -489,13 +489,13 @@ def test_label_values():
 
 
 def test_kafka_on_the_box():
-    """AW-INF-014 AC-8, AW-INF-055: dev points at the shared Kafka in andara-shared and prod at its own, and
-    dev runs the sim and the Account store on it (the chart renders only what is set, so
-    the memory switches must be absent, leaving the `kafka` defaults). local stays
-    broker-free."""
-    # dev's broker moves to the shared Kafka together with its prefix, in AW-INF-059 (ADR-0013
-    # amendment 16; Codex on #618): moved alone, a dev that Argo CD syncs from main would ask the
-    # shared broker for unprefixed topics it never creates. prod is on its own cluster's.
+    """AW-INF-014 AC-8, AW-INF-055: dev keeps its in-namespace bootstrap until AW-INF-059, prod is on
+    its own cluster's, and both run the sim and the Account store on Kafka (the chart renders only
+    what is set, so the memory switches must be absent, leaving the `kafka` defaults). local points
+    at the shared Kafka with its prefix, and its sim and Accounts stay in memory."""
+    # dev's broker moves to the shared Kafka together with its prefix, as AW-INF-059's scope
+    # stages them (Codex on #618): moved alone, a dev that Argo CD syncs from main would ask the
+    # shared broker for unprefixed topics it never creates.
     shared = "andara-log-kafka-bootstrap.andara-shared.svc:9092"
     wants = {"dev": "andara-log-kafka-bootstrap:9092",
              "prod": "andara-log-kafka-bootstrap:9092"}

@@ -35,6 +35,13 @@ VALUES="deploy/helm/values/${ENVNAME}.yaml"
 NS="andara-${ENVNAME}"
 
 [[ -f "$VALUES" ]] || { echo "make: helm-install: no values file at $VALUES" >&2; exit 1; }
+# dev's only broker is the shared one now (AW-INF-055), and its values reach it only with its
+# prefix, in AW-INF-059. Until then a dev install would wait out --wait on a server that can't
+# reach a broker, so it refuses before touching the cluster.
+if [[ "$ENVNAME" == dev ]] && ! "${PY:-python3}" scripts/shared.py on-shared dev; then
+  echo "make: helm-install: values/dev.yaml doesn't point at the shared Kafka yet; dev can't be deployed until AW-INF-059 moves its broker and topic prefix together" >&2
+  exit 2
+fi
 for tool in helm kubectl; do
   command -v "$tool" >/dev/null 2>&1 || { echo "make: helm-install: $tool not found" >&2; exit 1; }
 done

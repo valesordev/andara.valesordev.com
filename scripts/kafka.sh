@@ -154,6 +154,10 @@ bounce() {
   # it does touches the brokers, and a bounce would prove nothing while passing.
   [[ "$env" != local ]] \
     || die kafka-broker-bounce "local's server doesn't use the broker yet (sim.source: memory, AW-INF-060); ENV=dev" 2
+  # Likewise dev, until AW-INF-059 points its values at the shared Kafka: a bounce of brokers
+  # its server doesn't use would pass proving nothing.
+  "$PY" scripts/shared.py on-shared "$env" \
+    || die kafka-broker-bounce "values/$env.yaml doesn't point at the shared Kafka yet (AW-INF-059); the bounce would prove nothing" 2
   ns="andara-$env"
   need kubectl
   kube_require kafka-broker-bounce

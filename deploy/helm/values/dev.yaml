@@ -28,8 +28,11 @@ server:
   # default to. dev moves to the shared Kafka in andara-shared (AW-INF-055, `make shared-up`)
   # in one change with its prefix, `brokers: andara-log-kafka-bootstrap.andara-shared.svc:9092`
   # and `topic_prefix: dev`, in AW-INF-059, once Argo CD follows the dev tag rather than main
-  # (ADR-0013 amendment 16). Either alone, synced from main, points dev at topics that don't
-  # exist: the shared broker holds only `dev.`-prefixed ones and creates none on demand.
+  # (AW-INF-059's scope; ADR-0013 amendment 16 stages the prefix). Either alone, synced from
+  # main, points dev at topics that don't exist: the shared broker holds only `dev.`-prefixed
+  # ones and creates none on demand. The bootstrap below names a Kafka nothing installs any
+  # more, so until then `helm-install`, `argocd-install` and `kafka-broker-bounce` refuse dev
+  # (scripts/shared.py on-shared).
   kafka:
     brokers: andara-log-kafka-bootstrap:9092
   # Content comes from the namespace's content store (AW-INF-021): every pack with an Active
