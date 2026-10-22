@@ -169,6 +169,30 @@ class Check(unittest.TestCase):
         self.assertIn("no Ready broker", err)
 
 
+class ListenerPeers(unittest.TestCase):
+    """Codex on #618: shared-check's kafka-log-dirs runs in a broker pod and asks every broker, so
+    the listener's NetworkPolicy must admit the broker pool shared-check picks from. It must
+    admit only that pool in andara-shared, alongside the application peers."""
+
+    def peers(self):
+        import yaml
+        with open(os.path.join(REPO, "deploy", "k8s", "kafka", "kafka.yaml")) as f:
+            kafka = next(d for d in yaml.safe_load_all(f) if d and d["kind"] == "Kafka")
+        listener = next(li for li in kafka["spec"]["kafka"]["listeners"] if li["port"] == 9092)
+        return listener["networkPolicyPeers"]
+
+    def test_the_broker_pool_shared_check_uses_is_admitted(self):
+        want = dict(kv.split("=") for kv in ("strimzi.io/cluster=%s" % shared.KAFKA, "strimzi.io/pool-name=broker"))
+        brokers = [p for p in self.peers() if "namespaceSelector" not in p
+                   and p.get("podSelector", {}).get("matchLabels") == want]
+        self.assertEqual(len(brokers), 1, self.peers())
+
+    def test_application_pods_still_need_a_labelled_namespace(self):
+        apps = [p for p in self.peers() if p.get("podSelector", {}).get("matchLabels") == {"app.kubernetes.io/name": "andara"}]
+        self.assertEqual(len(apps), 1)
+        self.assertEqual(apps[0]["namespaceSelector"]["matchExpressions"][0]["values"], ["local", "dev"])
+
+
 class Down(unittest.TestCase):
     def make(self, *args):
         # PATH without kubectl: a refusal that reached the cluster would fail differently.

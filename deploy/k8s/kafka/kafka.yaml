@@ -84,10 +84,12 @@ spec:
         # Strimzi renders this into the listener's NetworkPolicy. Each peer is ORed with the
         # others; within a peer the namespaceSelector and podSelector are ANDed. So: the
         # server and projector pods (the chart's app.kubernetes.io/name: andara) in a namespace
-        # labelled andara.valesor/env local or dev, which `make shared-up` labels; and the rpk
-        # toolbox in andara-shared. Nothing else, including an `andara` pod in an unlabelled
-        # namespace. No TLS or SASL yet: SASL is AW-INF-056's, and traffic never leaves the
-        # cluster.
+        # labelled andara.valesor/env local or dev, which `make shared-up` labels; the rpk
+        # toolbox in andara-shared; and the brokers themselves, because `make shared-check`
+        # runs kafka-log-dirs in a broker pod and it asks every broker on this listener
+        # (Strimzi admits broker-to-broker traffic on its own internal ports only). Nothing
+        # else, including an `andara` pod in an unlabelled namespace. No TLS or SASL yet: SASL
+        # is AW-INF-056's, and traffic never leaves the cluster.
         networkPolicyPeers:
           - namespaceSelector:
               matchExpressions:
@@ -100,6 +102,10 @@ spec:
           - podSelector:
               matchLabels:
                 app.kubernetes.io/name: andara-kafka-tools
+          - podSelector:
+              matchLabels:
+                strimzi.io/cluster: andara-log
+                strimzi.io/pool-name: broker
     config:
       default.replication.factor: 3
       min.insync.replicas: 2
