@@ -274,6 +274,17 @@ def make_tags(commit, n, message):
             raise Fail("`git tag -v %s` does not verify against .github/allowed_signers: %s" % (t, p.stderr.strip()))
 
 
+def undo_tags(n, before_dev):
+    """Put the local tags back as they were before this run: dev-<n> gone, dev at the exact tag
+    object it named (or gone). update-ref, never `git tag`, which under tag.gpgsign=true (as
+    bootstrap.sh sets it) would make a new signed tag rather than restore the saved one."""
+    git("update-ref", "-d", "refs/tags/dev-%d" % n, check=False)
+    if before_dev:
+        git("update-ref", "refs/tags/" + TAG, before_dev)
+    else:
+        git("update-ref", "-d", "refs/tags/" + TAG, check=False)
+
+
 def push(commit, n, before_dev):
     """One atomic push, so the branch and both tags move together or not at all. On failure the
     local tags this run made are undone and a local release/dev, if any, is reset to origin's."""
@@ -282,11 +293,7 @@ def push(commit, n, before_dev):
     p = subprocess.run(["git", "-C", REPO, "push", "--atomic", REMOTE, *refspecs], capture_output=True, text=True)
     if p.returncode == 0:
         return time.monotonic()
-    git("tag", "-d", "dev-%d" % n, check=False)
-    if before_dev:
-        git("tag", "-f", TAG, before_dev, check=False)
-    else:
-        git("tag", "-d", TAG, check=False)
+    undo_tags(n, before_dev)
     if git("rev-parse", "--verify", "--quiet", "refs/heads/" + BRANCH, check=False):
         remote = git("rev-parse", "--verify", "--quiet", "refs/remotes/%s/%s" % (REMOTE, BRANCH), check=False)
         if remote:
@@ -386,11 +393,7 @@ def promote(env, sha, tag, pin_round):
     try:
         make_tags(commit, n, message)
     except Fail:
-        git("tag", "-d", "dev-%d" % n, check=False)
-        if before_dev:
-            git("tag", "-f", TAG, before_dev, check=False)
-        else:
-            git("tag", "-d", TAG, check=False)
+        undo_tags(n, before_dev)
         raise
     say("tags", "dev and dev-%d at %s, signed" % (n, commit[:12]))
     pushed_at = push(commit, n, before_dev)

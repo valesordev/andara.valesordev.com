@@ -271,6 +271,24 @@ class Promote(unittest.TestCase):
         self.assertEqual(self.remote("refs/tags/dev-2"), "")
         self.assertEqual(self.remote("refs/tags/dev"), before)
 
+    def test_a_refused_push_restores_dev_exactly_under_tag_gpgsign(self):
+        """bootstrap.sh sets tag.gpgsign=true, where `git tag -f dev <old>` makes a new signed tag
+        (or opens an editor) instead of restoring the saved one (Codex on #619). The saved tag
+        object comes back as it was."""
+        self.run_promote("dev", self.main1, "", "")
+        sh(self.work, "git", "fetch", "-q", "--force", "origin", "+refs/tags/*:refs/tags/*")
+        before = sh(self.work, "git", "rev-parse", "refs/tags/dev")  # the tag object, not its commit
+        sh(self.work, "git", "config", "tag.gpgsign", "true")
+        hook = os.path.join(self.origin, "hooks", "pre-receive")
+        with open(hook, "w") as f:
+            f.write("#!/bin/sh\nexit 1\n")
+        os.chmod(hook, 0o755)
+        with mock.patch.dict(os.environ, {"GIT_EDITOR": "false"}):
+            code, _, err = self.run_promote("dev", self.main2, "", "")
+        self.assertEqual(code, 1, err)
+        self.assertEqual(sh(self.work, "git", "rev-parse", "refs/tags/dev"), before)
+        self.assertEqual(sh(self.work, "git", "tag", "-l", "dev-2"), "")
+
     def test_a_push_refused_for_one_ref_moves_none(self):
         """The push is atomic: origin refusing only the history tag (a concurrent promotion took
         dev-<n>, or a ruleset on tags) must not leave release/dev and dev moved without it."""
