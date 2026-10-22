@@ -166,7 +166,7 @@ is not a test.
   the repo's `bin/` and checks the module version with `go version -m`, as it does for the other Go tools;
   `gcx --version` prints the version without the `v`, so it is not the check). **The tag is at least v0.2.13**: v0.2.11, which this ADR was explored with, ignores `--context` in some CRUD-adapter operations, which would let a `solo7dev` check read `solo7` (the v0.2.13 release notes warn of operations on an unintended stack; Codex on PR #520). `AW-INF-046` picks any tag from v0.2.13 up, 1.x included (the changelog lists releases to v1.5.0, 2026-10-05), and the re-run covers the rest: every command, flag and output shape in this decision is **[verify in 046]** against the chosen tag, and a criterion that depends on one is written after the re-run (this includes `--json`, `--limit 0`, the `null` for an empty list, and the version output). It re-records the fixtures and adds a routing test that runs against the pinned binary in `make check`, with no credentials: two local HTTP stubs stand in for `solo7dev` and `solo7` (distinct ports), the config's current-context is set to the other stack, and for each distinct adapter class in the table below (`alert rules`, `alert instances`, `metrics`, `irm`) the test asserts that the stub of the requested `--context` received the request and the other received none. The pin moves only
   by an edit to one line, in a change that re-records the fixtures below. *Verified 2026-10-19 against the pinned
-  v1.5.0 (AW-INF-075). The six shapes that differ from this decision's text are listed in Amendments,
+  v1.5.0 (AW-INF-075). The shapes that differ from this decision's text are listed in Amendments,
   2026-10-22.*
 - **One wrapper.** Every call is made by `scripts/gcx.py` (`AW-INF-046`), which runs `bin/gcx --config
   "$GCX_CONFIG" --context <context> … -o json`, maps a non-zero exit to exit `1` with `gcx`'s message, and
@@ -1190,17 +1190,20 @@ service and a blast radius: a bad pipeline can blind a stack until the next appl
 PR #595). The routing test runs against the pinned binary in `make check`. No decision changes, and decision 2's
 `[verify in 046]` items are closed by what follows.
 
-- **Every command in decision 2's table works as written.** Six shapes differ from the decision's text, and
-  `scripts/gcx.py` handles each:
+- **Every command in decision 2's table works as written.** These shapes differ from the decision's text, and
+  `scripts/gcx.py` handles each (the fixtures README lists every recorded shape):
   - `metrics query` with `--since` is a **range** query (a matrix), and without it an instant one. The table's
     `observe-check` command, with `--since 5m`, returns a matrix. `scripts/observe_check.py` issues the instant
     form. Either way, a series is the answer.
   - `alert rules list` returns **groups with nested `rules`**, and `null` for no rule or an unknown `--group`.
-  - `alert instances list` prints `null` with nothing active, `[]` when `--name` matches nothing, and one
+  - `alert instances list` prints `null` with nothing active in the ruler form (`--datasource
+    grafanacloud-prom`; the Grafana-managed form without `--json` wasn't recorded), `[]` when `--name` matches nothing, and one
     all-null object with `--json` and no `--name`. The wrapper turns all three into `[]`, as "Empty is not an
     error, and not a pass" requires.
   - `alert instances list --json` prints a **bare list**, not `{"items":[…]}` as "Empty is not an error"
     says. Only `irm oncall alert-groups list` wraps its result in `items`.
+  - Not every empty query is `result: []`. `traces query` returns `{"traces": []}`, and `metrics series` and
+    `metrics labels` return `data` as a flat list.
   - `traces get` for an ID that doesn't resolve prints `{}` and **exits 0**. The wrapper returns `[]`
     (`trace_get`), so "does a `trace_id` resolve" is a non-empty result, never the exit code.
   - `logs query` returns `values` as **objects** (`timestamp`, `line`), not pairs.
@@ -1224,7 +1227,7 @@ PR #595). The routing test runs against the pinned binary in `make check`. No de
   `/prometheus/config/v1/rules` to the enforcement bullet's. The bullet's single exception (`alerts_sync.py`) is
   now a per-file list, `scripts/gcx_only_exceptions.txt`, where each line names the story that removes it.
   - **Not caught:** direct reads outside the list. These are Tempo's `/api/traces/` and `/api/search`;
-    Prometheus's `/api/v1/series`, `label`, `rules` and `alerts`; `/api/alertmanager`; `/api/v1/provisioning`;
+    any Prometheus `/api/v1/*` path other than `query` (`series`, `label`, `rules`, `alerts`, `targets`); `/api/alertmanager`; `/api/v1/provisioning`;
     Basic auth; and a token read on one line and sent on the next.
   - No read of a Grafana Cloud stack uses those paths today. The compose drills' localhost Tempo and Prometheus
     reads do (`.github/workflows/stack.yaml`, `scripts/stack_projector_check.sh`).
