@@ -183,6 +183,15 @@ func (s *KafkaSource) fetch(ctx context.Context) {
 			pingErr = recordlog.Ping(pctx, s.client)
 			pcancel()
 		}
+		if kafkaclient.ErrorName(fetchErr) != "" {
+			// The broker refuses the principal the topic: every fetch would
+			// be refused again until an ACL changes, so the fetch stops here,
+			// counted once (AW-SRV-044 AC-8), and Poll reports it.
+			s.mu.Lock()
+			s.fetchErr = fetchErr
+			s.mu.Unlock()
+			return
+		}
 		s.mu.Lock()
 		if outOfRange != nil && s.gap == nil {
 			s.gap = fmt.Errorf("%w: partition %d: the broker no longer has offset %d (%v)", sim.ErrOffsetGap, outOfRange.Partition, s.expected[outOfRange.Partition], outOfRange.Err)
@@ -266,7 +275,7 @@ func (s *KafkaSource) Poll(frozen []int32, max int) ([]sim.Record, error) {
 	}
 	out := selectRoundRobin(s.buffers, frozen, max)
 	if len(out) == 0 && s.fetchErr != nil {
-		return nil, fmt.Errorf("%w: %v", ErrStarved, s.fetchErr)
+		return nil, fmt.Errorf("%w: %w", ErrStarved, s.fetchErr)
 	}
 	return out, nil
 }
