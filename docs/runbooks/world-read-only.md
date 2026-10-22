@@ -28,12 +28,17 @@ later. Detection takes at most the probe interval (one second), so that is the w
 ```
 curl -s http://<server>:8080/metrics | grep andara_ingress_degraded        # 1 while read-only
 kubectl --context kind-andara -n andara-<env> logs statefulset/andara | grep 'command log'          # "unreachable" with the broker error; "reachable" on exit
-kubectl --context kind-andara -n andara-<env> get kafka andara-log                                   # Strimzi's Ready condition for the cluster
-kubectl --context kind-andara -n andara-<env> get pods -l strimzi.io/cluster=andara-log              # andara-log-broker-{0,1,2}
-kubectl --context kind-andara -n andara-<env> exec andara-log-broker-1 -c kafka -- \
+kubectl --context kind-andara -n <broker-ns> get kafka andara-log                                    # Strimzi's Ready condition for the cluster
+kubectl --context kind-andara -n <broker-ns> get pods -l strimzi.io/cluster=andara-log               # andara-log-broker-{0,1,2}
+kubectl --context kind-andara -n <broker-ns> exec andara-log-broker-1 -c kafka -- \
   /opt/kafka/bin/kafka-topics.sh --bootstrap-server localhost:9092 --describe --under-replicated-partitions
-kubectl --context kind-andara -n andara-<env> exec deploy/andara-kafka-tools -- rpk topic list      # rpk, through the toolbox
+kubectl --context kind-andara -n andara-prod exec deploy/andara-kafka-tools -- rpk topic list       # rpk, through prod's toolbox
 ```
+
+`<broker-ns>` is where the environment's broker runs: `andara-prod` for prod, `andara-shared` for dev
+(its `server.kafka.brokers` names `andara-log-kafka-bootstrap.andara-shared.svc`, AW-INF-059). The
+shared broker's rpk toolbox is AW-INF-055's; until it lands, the broker pod's own
+`kafka-topics.sh` above is the way in.
 
 Locally: `make up`, `docker compose -f deploy/compose/docker-compose.yaml stop redpanda`, and the
 gauge flips within a second; `start redpanda` and it clears within a second of the first

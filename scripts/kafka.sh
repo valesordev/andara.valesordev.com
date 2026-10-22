@@ -2,7 +2,7 @@
 # SPDX-License-Identifier: Apache-2.0
 # Copyright 2026 Valesor Development
 
-# Apache Kafka on the box for dev and prod, via Strimzi (AW-INF-014).
+# Apache Kafka on the box for prod, via Strimzi (AW-INF-014); dev uses the shared broker (AW-INF-059).
 #
 #   kafka.sh install <env>     make kafka-install: namespace, deploy/k8s/kafka/*.yaml, wait Ready,
 #                              then deploy/kafka/topics.yaml through topics.py. The Strimzi operator
@@ -38,8 +38,8 @@ need() {
 env_ns() {
   case "${1:-}" in
     dev|prod) echo "andara-$1" ;;
-    local) die "$CMD" "local has no cluster broker (values/local.yaml runs broker-free); ENV=dev or ENV=prod" 2 ;;
-    *) die "$CMD" "usage: make kafka-$CMD ENV=<dev|prod>" 2 ;;
+    local) die "$CMD" "local has no cluster broker (values/local.yaml runs broker-free); ENV=prod" 2 ;;
+    *) die "$CMD" "usage: make kafka-$CMD ENV=prod" 2 ;;
   esac
 }
 

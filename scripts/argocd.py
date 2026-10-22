@@ -158,8 +158,7 @@ def preconditions(ns):
     k = kubectl_json("-n", kns, "get", "kafka", "andara-log") or {}
     ready = [c for c in k.get("status", {}).get("conditions", []) if c.get("type") == "Ready"]
     if not ready or ready[0].get("status") != "True":
-        hint = "make kafka-install ENV=dev" if kns == ns else "the shared broker (AW-INF-055)"
-        die("install", "no Ready kafka/andara-log in %s; it comes from %s" % (kns, hint))
+        die("install", "no Ready kafka/andara-log in %s; it comes from the shared broker (AW-INF-055)" % kns)
     say("preconditions: traefik, cert-manager, ClusterIssuers %s, kafka/andara-log in %s"
         % (", ".join(dict.fromkeys(("andara-ca", edge))), kns))
 

@@ -1,9 +1,10 @@
 # The command log for one Andara environment: Apache Kafka via Strimzi (AW-INF-014).
 #
 # ADR-0002 §7 puts Kafka in production and Redpanda only on a laptop; dev and prod on the
-# box are the production path, so this is Kafka (decided 2026-09-24, Brian). One cluster
-# per `andara-<env>` namespace: `make kafka-install ENV=<env>` applies this file unchanged
-# with `kubectl -n andara-<env> apply`, so nothing here names a namespace.
+# box are the production path, so this is Kafka (decided 2026-09-24, Brian). `make
+# kafka-install ENV=prod` applies this file unchanged with `kubectl -n andara-prod apply`, so
+# nothing here names a namespace; dev's broker is the shared one in andara-shared (AW-INF-059,
+# AW-INF-055), and kafka-install refuses ENV=dev.
 #
 # Three combined controller+broker nodes, because deploy/kafka/topics.yaml declares
 # replication factor 3 and min.insync.replicas 2 for dev and prod: one broker can be lost
