@@ -39,9 +39,11 @@ Locally: `make up`, `docker compose -f deploy/compose/docker-compose.yaml stop r
 gauge flips within a second; `start redpanda` and it clears within a second of the first
 successful ping.
 
-On the box (`dev`, `prod`), one broker down is **not** this condition. Each namespace runs three
-brokers with `min.insync.replicas` 2 (AW-INF-014), so writes are still acknowledged, and `make
-kafka-broker-bounce ENV=<env>` proves the server never degrades while one is gone. Read-only on
+On the box, one broker down is **not** this condition. `prod` runs three brokers in its namespace and
+`dev` uses the shared three in `andara-shared` (AW-INF-059, AW-INF-055), each with
+`min.insync.replicas` 2 (AW-INF-014), so writes are still acknowledged; `make kafka-broker-bounce
+ENV=prod` proves the server never degrades while one is gone (the shared broker's bounce is
+AW-INF-055's). Read-only on
 the box means two brokers are down, or the server cannot reach the bootstrap Service at all. Start
 from the Strimzi `Ready` condition and the under-replicated count above.
 

@@ -10,8 +10,9 @@
 #   kafka.sh bounce <env>      make kafka-broker-bounce: lose one broker, prove the server never
 #                              left service while it was gone (AC-5)
 #
-# local has no cluster broker by design (values/local.yaml runs broker-free), so the
-# environment commands take dev or prod only.
+# local has no cluster broker by design (values/local.yaml runs broker-free). dev's broker is the
+# shared one in andara-shared (AW-INF-059): install refuses dev because Strimzi doesn't watch
+# andara-dev, and bounce refuses it outright, so both act on prod.
 #
 # Exit: 0 ok · 1 a step failed, or the bounce degraded the server · 2 bad usage or env ·
 # 3 a tool is missing.
@@ -114,7 +115,7 @@ bounce() {
   need kubectl
   kube_require kafka-broker-bounce
   read -r ready0 since0 restarts0 < <(ready_since "$ns") \
-    || die broker-bounce "no andara-0 in $ns to observe; run \`make helm-install ENV=$env$([[ $env == dev ]] && echo " TAG=<sha-…@sha256:…>")\` first"
+    || die broker-bounce "no andara-0 in $ns to observe; run \`make helm-install ENV=$env\` first"
   [[ "$ready0" == "True" ]] || die broker-bounce "andara-0 in $ns is not Ready before the bounce"
   local unavail0 uid0 t0
   unavail0="$(unavailable_count "$ns")"
