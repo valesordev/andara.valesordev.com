@@ -57,11 +57,10 @@ func TestPrestopRoundIsTaggedCommittedAndRecovered(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	pub, err := tickloop.NewKafkaPublisher(ctx, bk, "recovery-it-prestop")
+	pub, err := tickloop.NewKafkaPublisher(ctx, bk, "recovery-it-prestop", commands, events)
 	if err != nil {
 		t.Fatal(err)
 	}
-	pub.Commands, pub.Events = commands, events
 	log := slog.New(slog.NewJSONHandler(os.Stderr, &slog.HandlerOptions{Level: slog.LevelWarn}))
 	// No periodic round inside the test: the only round is pre-stop's.
 	snap, err := tickloop.NewSnapshotter(tickloop.SnapshotOptions{Store: store.NewFS(dir), Interval: time.Hour, MaxStall: time.Second, UploadTimeout: 10 * time.Second, AwaitBoundaryAck: true, Log: log})
