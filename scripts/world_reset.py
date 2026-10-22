@@ -35,7 +35,8 @@ Steps, in order, each named on failure:
   6. Both scale back to what they were, and the server is waited on until Ready.
 Projector steps are skipped with a line saying so while the environment runs no projector.
 
-Exit codes: 0 reset; 1 a step failed; 2 usage or refusal.
+Exit codes: 0 reset; 1 a step failed; 2 usage or refusal (ENV=dev before AW-INF-059); 3
+deploy/helm/values/dev.yaml can't be read.
 """
 
 import json

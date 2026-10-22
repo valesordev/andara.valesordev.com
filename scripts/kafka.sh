@@ -17,7 +17,7 @@
 # (ADR-0013 decision 10), so the environments are local and dev.
 #
 # Exit: 0 ok · 1 a step failed, or the bounce degraded the server · 2 bad usage or env ·
-# 3 a tool or the cluster context is missing.
+# 3 a tool or the cluster context is missing, or deploy/helm/values/<env>.yaml can't be read.
 set -euo pipefail
 
 REPO="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"

@@ -30,7 +30,8 @@ the Deployment's pods. It keeps `app.kubernetes.io/name=andara`, which the broke
 NetworkPolicy admits.
 
 Progress goes to stderr as `projector-<cmd>: <step>`; the final line names the outcome and the
-elapsed time. Exit codes: 0 done; 1 a precondition, a step or a bound failed; 2 usage.
+elapsed time. Exit codes: 0 done; 1 a precondition, a step or a bound failed; 2 usage or refusal
+(ENV=dev before AW-INF-059); 3 deploy/helm/values/dev.yaml can't be read.
 """
 
 import json

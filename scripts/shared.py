@@ -29,7 +29,8 @@ is the namespace. The namespace itself stays: `make platform-up` creates it for 
 Resetting or destroying andara-local or andara-dev never reaches it.
 
 Every line is `shared: …`. Exit codes: 0 ok; 1 a PVC over the threshold, a stray topic, or a
-failed step; 2 usage or refusal; 3 the cluster context or kubectl missing.
+failed step; 2 usage or refusal; 3 the cluster context or kubectl missing. `on-shared`: 0 yes,
+1 no, 3 the values file can't be read.
 """
 
 import json
@@ -278,7 +279,8 @@ def on_shared(env, values_dir=None):
             values = yaml.safe_load(f) or {}
     except OSError:
         return False
-    except yaml.YAMLError as e:
+    except (yaml.YAMLError, ValueError) as e:
+        # ValueError covers a file that isn't UTF-8 (UnicodeDecodeError).
         raise Unreadable("can't read %s: %s" % (path, e))
     if not isinstance(values, dict):
         raise Unreadable("can't read %s: not a YAML mapping" % path)
@@ -291,10 +293,11 @@ def main(argv):
     if cmd == "on-shared" and len(args) == 1:
         # Offline: exit 0 when the values point at the shared Kafka, 1 when they don't, 3 when
         # the values file can't be read.
+        # 1 must mean only "not on the shared Kafka": any other failure is 3.
         try:
             return 0 if on_shared(args[0]) else 1
-        except Unreadable as e:
-            print("shared: %s" % e, file=sys.stderr)
+        except Exception as e:  # noqa: BLE001
+            print("shared: on-shared %s: %s" % (args[0], e), file=sys.stderr)
             return 3
     try:
         if cmd == "check" and not args:

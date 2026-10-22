@@ -594,20 +594,31 @@ class KafkaOperator(unittest.TestCase):
                 self.assertIn("AW-INF-059", p.stderr)
                 self.assertEqual([c for c in calls(log) if c.startswith(("kubectl", "helm"))], [])
 
-    def test_an_unreadable_values_file_is_exit_3_naming_it(self):
-        d = tempfile.mkdtemp()
-        self.addCleanup(lambda: subprocess.run(["rm", "-rf", d]))
-        vd = os.path.join(d, "values")
-        os.makedirs(vd)
-        with open(os.path.join(vd, "dev.yaml"), "w") as f:
-            f.write("server: [\n")
-        log = os.path.join(d, "calls")
-        env = dict(stub_bin(d, log, {"helm": "exit 0", "kubectl": "exit 0"}), ANDARA_TEST_GATE_VALUES_DIR=vd)
-        p = subprocess.run([os.path.join(SCRIPTS, "helm_install.sh"), "dev", "andara-server", "dev", "", ""],
-                           capture_output=True, text=True, env=env)
-        self.assertEqual(p.returncode, 3, p.stderr)
-        self.assertIn("can't read", p.stderr)
-        self.assertNotIn("doesn't point at the shared Kafka", p.stderr)
+    def test_an_unreadable_values_file_is_exit_3_naming_it_on_every_gated_path(self):
+        callers = (
+            [os.path.join(SCRIPTS, "helm_install.sh"), "dev", "andara-server", "dev", "", ""],
+            [os.path.join(SCRIPTS, "kafka.sh"), "bounce", "dev"],
+            [sys.executable, os.path.join(SCRIPTS, "world_reset.py"), "dev", "andara-dev"],
+            [sys.executable, os.path.join(SCRIPTS, "projector.py"), "stop", "dev"],
+            [sys.executable, os.path.join(SCRIPTS, "argocd.py"), "install", "dev"],
+        )
+        for body in (b"server: [\n", b"- a\n", b"\xff\xfe\n"):
+            for argv in callers:
+                with self.subTest(values=body, script=os.path.basename(argv[-3] if argv[0] == sys.executable else argv[0])):
+                    d = tempfile.mkdtemp()
+                    self.addCleanup(lambda d=d: subprocess.run(["rm", "-rf", d]))
+                    vd = os.path.join(d, "values")
+                    os.makedirs(vd)
+                    with open(os.path.join(vd, "dev.yaml"), "wb") as f:
+                        f.write(body)
+                    log = os.path.join(d, "calls")
+                    env = dict(stub_bin(d, log, {"helm": "exit 0", "kubectl": "exit 0"}),
+                               ANDARA_TEST_GATE_VALUES_DIR=vd)
+                    p = subprocess.run(argv, capture_output=True, text=True, env=env)
+                    self.assertEqual(p.returncode, 3, p.stderr)
+                    self.assertIn("can't read", p.stderr)
+                    self.assertNotIn("doesn't point at the shared Kafka", p.stderr)
+                    self.assertEqual([c for c in calls(log) if c.startswith(("kubectl", "helm"))], [])
 
     def test_the_gate_reads_the_values_files(self):
         import shared
@@ -617,6 +628,20 @@ class KafkaOperator(unittest.TestCase):
         self.addCleanup(lambda: subprocess.run(["rm", "-rf", d]))
         self.assertTrue(shared.on_shared("dev", values_dir=os.path.join(dev_on_shared(d, {})["ANDARA_TEST_GATE_VALUES_DIR"])))
         self.assertFalse(shared.on_shared("staging", values_dir=shared.VALUES_DIR))
+        # Shapes that aren't a broker setting are "not on the shared Kafka"; a file that isn't
+        # a mapping at all can't be read.
+        vd = os.path.join(d, "shapes")
+        os.makedirs(vd)
+        for env, text, want in (("a", "server: x\n", False), ("b", "server:\n  kafka: x\n", False),
+                                ("c", "", False), ("d", "- a\n", shared.Unreadable)):
+            with open(os.path.join(vd, env + ".yaml"), "w") as f:
+                f.write(text)
+            with self.subTest(values=text):
+                if want is shared.Unreadable:
+                    with self.assertRaises(shared.Unreadable):
+                        shared.on_shared(env, values_dir=vd)
+                else:
+                    self.assertIs(shared.on_shared(env, values_dir=vd), want)
 
     def test_argocd_install_wants_the_shared_kafka(self):
         # AW-INF-055: dev's broker is in andara-shared, not andara-dev.
