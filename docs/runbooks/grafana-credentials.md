@@ -146,12 +146,12 @@ entry.
   - `solo7`: not made yet.
 - **Stored:** a repository secret for each stack, read-only like the stack read tokens. Today only
   `solo7dev`'s is made: a repository secret, and `.local/box.env`.
-- **Read by:** nothing yet.
-  - The `plan`, `drift` and `plan-prod` jobs pass it along. No root has a Fleet provider until
-    `AW-INF-051`, and `scripts/tf.py` gives Terraform no `GRAFANA_*_TOKEN` but the one as `GRAFANA_AUTH`.
-  - Until then, no run can show that a rotated token works. Check it in the access policy's token list
-    instead.
-  - The IRM root will have no Fleet resources.
+- **Read by:** the Fleet provider in `solo7dev`'s `plan` and `drift` jobs and `make tf-plan STACK=solo7dev`
+  (`AW-INF-051`), as `GRAFANA_FLEET_MANAGEMENT_AUTH`, `<fleet_user>:<token>`, which `scripts/tf.py`
+  composes from the committed `fleet_user`. A plan without it exits 3 naming it.
+  - `solo7`'s root has no Fleet provider until `AW-INF-078`, so `plan-prod` passes `solo7`'s along unread.
+  - The IRM root has no Fleet resources.
+- **Check after a rotation:** `make tf-plan STACK=solo7dev` succeeds.
 
 ### `GRAFANA_SOLO7DEV_FLEET_APPLY_TOKEN`, `GRAFANA_SOLO7_FLEET_APPLY_TOKEN`
 
@@ -164,9 +164,11 @@ entry.
 - **Stored:**
   - `solo7dev`: a secret of `andara-main`, and `.local/box.env`;
   - `solo7`: a secret of `andara-prod-apply`, *not made yet*.
-- **Read by:** nothing yet. From `AW-INF-051`, the Fleet provider in `apply`, `apply-prod` and
-  `make tf-apply STACK=solo7dev` receives it as `user:token`, composed from the committed `fleet_user`.
-  Until then, a rotation is checked in the access policy's token list, not by a run.
+- **Read by:** the Fleet provider in `apply` and `make tf-apply STACK=solo7dev` (`AW-INF-051`), as
+  `GRAFANA_FLEET_MANAGEMENT_AUTH`, `<fleet_user>:<token>`, composed from the committed `fleet_user`. An
+  apply without it exits 3 naming it. `apply-prod` reads `solo7`'s from `AW-INF-078`.
+- **Check after a rotation:** the next `apply` run on `main` (or `make tf-apply STACK=solo7dev`) ends with
+  an empty second plan.
 
 ### `GRAFANA_SOLO7_IRM_TOKEN` (the provider reads it as `GRAFANA_ONCALL_ACCESS_TOKEN`)
 

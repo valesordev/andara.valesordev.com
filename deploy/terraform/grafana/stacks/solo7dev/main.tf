@@ -9,9 +9,12 @@ terraform {
   }
 }
 
-# The token reaches the provider only as GRAFANA_AUTH (ADR-0012 decision 4).
+# The token reaches the provider only as GRAFANA_AUTH, and the Fleet token only as
+# GRAFANA_FLEET_MANAGEMENT_AUTH, `<fleet_user>:<token>`, which scripts/tf.py composes (ADR-0012
+# decision 4, AW-INF-051).
 provider "grafana" {
-  url = var.grafana_url
+  url                  = var.grafana_url
+  fleet_management_url = var.fleet_url
 }
 
 module "stack" {

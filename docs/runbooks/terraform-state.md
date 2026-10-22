@@ -35,6 +35,8 @@ worktree (`.claude/worktrees/<name>`) with no `.local/box.env` of its own reads 
 |---|---|
 | `GRAFANA_SOLO7DEV_READ_TOKEN` | `make tf-plan STACK=solo7dev` |
 | `GRAFANA_SOLO7DEV_APPLY_TOKEN` | `make tf-apply STACK=solo7dev`, `make tf-test-alert` |
+| `GRAFANA_SOLO7DEV_FLEET_READ_TOKEN` | `make tf-plan STACK=solo7dev`, `make tf-drift STACK=solo7dev` (the Fleet provider, `AW-INF-051`) |
+| `GRAFANA_SOLO7DEV_FLEET_APPLY_TOKEN` | `make tf-apply STACK=solo7dev` (the Fleet provider) |
 | `SLACK_WEBHOOK_DEV` | both (`TF_VAR_slack_webhook`) |
 | `GCP_STATE_PROJECT`, `GCP_DEVBOX_IDENTITY` | `make tf-bootstrap-gcp` |
 | `GCP_STATE_REGION` | `make tf-bootstrap-gcp`, only when it creates the bucket |
@@ -42,7 +44,10 @@ worktree (`.claude/worktrees/<name>`) with no `.local/box.env` of its own reads 
 
 The tokens are made by hand (`ADR-0012` decision 4; the click paths are `AW-INF-076`'s
 `grafana-credentials.md`). A missing one exits 3 and names it, before any network call. The token reaches
-Terraform only as `GRAFANA_AUTH`. State is reached with Application Default Credentials: on the dev box,
+Terraform only as `GRAFANA_AUTH`, and the Fleet token only as `GRAFANA_FLEET_MANAGEMENT_AUTH`, which
+`scripts/tf.py` composes as `<fleet_user>:<token>` from the root's committed `fleet_user`. A root needs a
+Fleet token only when its provider block sets `fleet_management_url` (`solo7dev` today; `solo7` in
+`AW-INF-078`). State is reached with Application Default Credentials: on the dev box,
 `gcloud auth application-default login --disable-quota-project` signed in as `GCP_DEVBOX_IDENTITY`, never
 as the owner. Without `--disable-quota-project` the login records gcloud's current project as the quota
 project, on which `GCP_DEVBOX_IDENTITY` has no role, and every state request is refused (403,
