@@ -497,6 +497,48 @@ class KafkaOperator(unittest.TestCase):
         self.assertIn("run `make platform-up`", p.stderr)
         self.assertFalse([c for c in made if c.startswith("helm upgrade") or " apply " in c], made)
 
+    def test_shared_up_labels_both_namespaces_and_puts_locals_topics_on_the_cluster(self):
+        # AW-INF-055 AC-2 and AC-3: the labels the listener admits, and local's topics applied to
+        # the shared Kafka, never to the compose Redpanda that `--broker`'s default would pick.
+        d = tempfile.mkdtemp()
+        self.addCleanup(lambda: subprocess.run(["rm", "-rf", d]))
+        log = os.path.join(d, "calls")
+        values = json.dumps({"watchNamespaces": ["andara-shared"]})
+        helm = 'case "$1" in get) echo \'%s\'; exit 0;; esac\nexit 0' % values
+        # PY is a stub too: it runs the inline JSON read and kube.py, and logs the topics.py calls.
+        py = 'case "$1" in -c|*/kube.py) exec python3 "$@";; esac\nexit 0'
+        env = stub_bin(d, log, {"helm": helm, "kubectl": "exit 0", "pystub": py})
+        env["PY"] = os.path.join(d, "pystub")
+        p = subprocess.run([os.path.join(SCRIPTS, "kafka.sh"), "up"], capture_output=True, text=True, env=env)
+        self.assertEqual(p.returncode, 0, p.stderr)
+        made = calls(log)
+        for e in ("local", "dev"):
+            self.assertIn("kubectl --context kind-andara label namespace andara-%s andara.valesor/env=%s --overwrite"
+                          % (e, e), made)
+        topic_calls = [c for c in made if "topics.py" in c]
+        self.assertEqual(topic_calls, ["pystub scripts/topics.py apply --env local --broker cluster",
+                                       "pystub scripts/topics.py apply --env dev"])
+        self.assertTrue([c for c in made if "-n andara-shared apply -f deploy/k8s/kafka/" in c], made)
+
+    def test_argocd_install_wants_the_shared_kafka(self):
+        # AW-INF-055: dev's broker is in andara-shared, not andara-dev.
+        c = Cluster()
+        mod = with_cluster(load_argocd(), c)
+        ready = {"status": {"conditions": [{"type": "Ready", "status": "True"}]}}
+        seen = []
+
+        def kubectl_json(*a):
+            seen.append(a)
+            if "kafka" in a:
+                return ready if a[:2] == ("-n", "andara-shared") else None
+            return ready
+        mod.kubectl_json = kubectl_json
+        mod.VALUES = os.path.join(REPO, "deploy", "helm", "values", "dev.yaml")
+        code, out, err = quiet(mod.preconditions, "andara-dev")
+        self.assertEqual(code, 0, err)
+        self.assertIn("kafka/andara-log in andara-shared", out)
+        self.assertEqual([a[:2] for a in seen if "kafka" in a], [("-n", "andara-shared")])
+
     def test_no_install_path_carries_another_watch_list(self):
         """AC-5's grep: kafka-operator and kafka.sh's WATCHED list are gone."""
         for path in ("Makefile", os.path.join("scripts", "kafka.sh")):

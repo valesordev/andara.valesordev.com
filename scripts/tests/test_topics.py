@@ -314,6 +314,8 @@ PREFIXED = textwrap.dedent("""\
         prefix: local
         retention.bytes: 67108864
         retention.ms: 604800000
+        segment.bytes: 16777216
+        segment.ms: 86400000
       dev:
         prefix: dev
       prod:
@@ -399,9 +401,16 @@ class Prefixed(unittest.TestCase):
             with self.subTest(topic=name):
                 self.assertEqual(cmd[5:7], ["-r", "1"])
                 self.assertIn("min.insync.replicas=1", cmd)
-                # local's bound wins over the topic's own retention (-1 on the log).
-                self.assertIn("retention.bytes=67108864", cmd)
-                self.assertIn("retention.ms=604800000", cmd)
+                # Every local topic rolls segments at 16 MiB and at most a day (the contract's
+                # segment.ms <= 86400000), or no bound touches the active segment.
+                self.assertIn("segment.bytes=16777216", cmd)
+                self.assertIn("segment.ms=86400000", cmd)
+        log, kv = made["local.andara.log.v1"], made["local.andara.kv.v1"]
+        # local's bound wins over the delete topic's own retention (-1 on the log) …
+        self.assertIn("retention.bytes=67108864", log)
+        self.assertIn("retention.ms=604800000", log)
+        # … and a compacted topic declares no retention (broker-contract.md, `local.` bounds).
+        self.assertFalse([a for a in kv if a.startswith("retention.")], kv)
         # Kafka, not Redpanda: no Redpanda cluster setting is written to the shared broker.
         self.assertFalse([c for c in b.calls if c[:3] == ["cluster", "config", "set"]])
 
@@ -447,7 +456,7 @@ class Prefixed(unittest.TestCase):
         self.assertEqual(envs["prod"]["prefix"], "")
         self.assertEqual(envs["local"]["config"],
                          {"retention.bytes": "67108864", "retention.ms": "604800000",
-                          "segment.bytes": "16777216"})
+                          "segment.bytes": "16777216", "segment.ms": "86400000"})
         self.assertEqual(envs["dev"]["config"], {})
 
 
@@ -465,6 +474,18 @@ class Usage(unittest.TestCase):
         code, err = self.main("apply", "--env", "dev", "--broker", "cluster")
         self.assertEqual(code, 2)
         self.assertIn("only for local", err)
+
+    def test_prod_is_refused_before_any_broker(self):
+        # Its unprefixed names would be strays on the shared broker (ADR-0013 decision 10).
+        code, err = self.main("apply", "--env", "prod")
+        self.assertEqual(code, 2)
+        self.assertIn("prod's Kafka is not on this cluster", err)
+
+    def test_the_reserved_groups_are_the_environments(self):
+        groups = topics.consumer_groups("dev")
+        self.assertIn("andara-sim-dev", groups)
+        self.assertIn("andara-projector-state-dev", groups)
+        self.assertTrue(all(g.endswith("-dev") for g in groups), groups)
 
     def test_an_unknown_broker_is_a_usage_error(self):
         code, err = self.main("apply", "--env", "local", "--broker", "laptop")

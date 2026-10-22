@@ -5,10 +5,13 @@
 """make env-destroy ENV=<env> CONFIRM=andara-<env> — delete an environment's namespace (AW-INF-021).
 
 The first step of AW-INF-021 AC-7's rebuild from nothing. It deletes andara-<env> and waits until
-it's gone: the server, the projector, the object store and its bucket, every Secret and PVC. The
-cluster-wide pieces stay: Argo CD, Strimzi's operator, cert-manager and Traefik. So does the shared
-Kafka in andara-shared, with the environment's prefixed topics on it (AW-INF-055): a World to
-start over is `make world-reset`. So the environment comes back with its install targets.
+it's gone: the server, the projector, the object store and its bucket, every Secret and PVC. Then,
+on the shared Kafka in andara-shared, the environment's own topics (every declared topic under its
+prefix, `dev.andara.…`) and its reserved consumer groups (`andara-sim-dev`, …), so the rebuild
+starts from nothing, as it did when the Kafka lived in the namespace (AW-INF-055). The other
+environment's topics are never named. The cluster-wide pieces stay: Argo CD, Strimzi's operator,
+cert-manager, Traefik and the shared Kafka itself. So the environment comes back with its install
+targets, `make kafka-install ENV=<env>` recreating its topics.
 
 Before the namespace, it removes the Argo CD Application without cascading. With automated sync
 and selfHeal, Argo CD would otherwise recreate the namespace's objects while it's being deleted.
@@ -26,6 +29,7 @@ import sys
 import time
 
 import kube
+import topics
 
 ARGO_NS = "argocd"
 DELETE_DEADLINE = 600
@@ -100,11 +104,37 @@ def delete_namespace(ns, deadline=DELETE_DEADLINE, sleep=time.sleep, clock=time.
         sleep(2)
 
 
+def delete_topics(env, run=None, decl=None):
+    """The environment's declared topics and reserved groups on the shared broker. Idempotent:
+    what's already gone is skipped. Never an unprefixed name, which could be another's."""
+    decl = decl or topics.DECL
+    prefix = topics.environment(decl, env)["prefix"]
+    if not prefix:
+        raise StepFailed("environment %s has no topic prefix; refusing to delete unprefixed topics" % env)
+    run = run or topics.rpk_runner(env, "cluster")
+    names = [topics.topic_name(prefix, t["name"]) for t in topics.parse_declaration(decl)[1]]
+    live = topics.existing_topics(run)
+    gone = [n for n in names if n in live]
+    for name in gone:
+        res = run(["topic", "delete", name])
+        if res.returncode != 0:
+            raise StepFailed("delete %s on the shared broker: %s" % (name, (res.stderr or res.stdout).strip()))
+    for group in topics.consumer_groups(env, decl):
+        res = run(["group", "delete", group])
+        out = (res.stderr + res.stdout).lower()
+        if res.returncode != 0 and "not found" not in out and "not_found" not in out \
+                and "does not exist" not in out:
+            raise StepFailed("delete consumer group %s: %s" % (group, (res.stderr or res.stdout).strip()))
+    say("deleted %s's %d topic(s) and its consumer groups on the shared broker (%s.*)"
+        % (env, len(gone), prefix))
+
+
 def main(argv):
     env, ns = check_args(argv)
     try:
         remove_application(ns)
         delete_namespace(ns)
+        delete_topics(env)
     except StepFailed as e:
         print("env-destroy: %s" % e, file=sys.stderr)
         return 1

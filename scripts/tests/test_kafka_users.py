@@ -118,12 +118,28 @@ class Breaks(unittest.TestCase):
                   {"resource": {"type": "topic", "name": "andara.test.", "patternType": "prefix"},
                    "operations": ["Create", "Delete", "Read", "Write"]},
                   {"resource": {"type": "topic", "name": "it", "patternType": "prefix"},
-                   "operations": ["Create", "Delete", "Read", "Write"]}]}}}
+                   "operations": ["Create", "Delete", "Read", "Write"]},
+                  {"resource": {"type": "group", "name": "it-", "patternType": "prefix"},
+                   "operations": ["Read", "Delete"]}]}}}
         self.assertEqual(self.errors(self.users + [it]), [])
         # On any other topic, the suite's principal is held to the rule.
         bad = copy.deepcopy(it)
         bad["spec"]["authorization"]["acls"][0]["resource"]["name"] = "dev."
         self.assertFails("andara-it: topic prefix dev. Create,Delete,Read,Write: Create,Delete", self.users + [bad])
+        # The exception is for PREFIXED names: a LITERAL andara.test. is held to the rule.
+        bad = copy.deepcopy(it)
+        bad["spec"]["authorization"]["acls"][0]["resource"]["patternType"] = "literal"
+        self.assertFails("andara-it: topic literal andara.test. Create,Delete,Read,Write: Create,Delete", self.users + [bad])
+        # Read and Write on an environment's topics, or its groups, fail even without Create.
+        bad = copy.deepcopy(it)
+        bad["spec"]["authorization"]["acls"].append(
+            {"resource": {"type": "topic", "name": "dev.", "patternType": "prefix"}, "operations": ["Read", "Write"]})
+        self.assertFails("andara-it: topic prefix dev. Read,Write: andara-it's topics are PREFIXED", self.users + [bad])
+        bad = copy.deepcopy(it)
+        bad["spec"]["authorization"]["acls"].append(
+            {"resource": {"type": "group", "name": "andara-sim-dev", "patternType": "prefix"}, "operations": ["Read"]})
+        self.assertFails("andara-it: group prefix andara-sim-dev Read: andara-it's groups are PREFIXED it- only",
+                         self.users + [bad])
         # And another principal can't borrow it.
         self.add("andara-server-dev", {"type": "topic", "name": "andara.test.", "patternType": "prefix"}, ["Create"])
         self.assertFails("andara-server-dev: topic prefix andara.test. Create: Create on a topic")

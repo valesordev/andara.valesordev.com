@@ -427,7 +427,7 @@ shared-check:
 kafka-install:
 	@PY=$(PY) $(SCRIPTS)/kafka.sh install "$(ENV)"
 
-## kafka-broker-bounce: delete one shared broker and prove ENV's server never left service while it was gone — ENV=<local|dev> (AW-INF-014 AC-5)
+## kafka-broker-bounce: delete one shared broker and prove ENV's server never left service while it was gone — ENV=dev (local once AW-INF-060 puts its server on the broker) (AW-INF-014 AC-5)
 kafka-broker-bounce:
 	@PY=$(PY) $(SCRIPTS)/kafka.sh bounce "$(ENV)"
 
@@ -471,7 +471,7 @@ server-start:
 world-reset:
 	@$(PY) $(SCRIPTS)/world_reset.py "$(if $(filter command line,$(origin ENV)),$(ENV))" "$(CONFIRM)" $(if $(BROKER),--broker "$(BROKER)")
 
-## env-destroy: delete ENV's namespace and wait until it's gone — Argo CD's Application (non-cascading), the object store, every Secret and PVC; the cluster-wide operators and the shared Kafka with ENV's topics stay — ENV=<env> CONFIRM=andara-<env> (AW-INF-021 AC-7)
+## env-destroy: delete ENV's namespace and wait until it's gone — Argo CD's Application (non-cascading), the object store, every Secret and PVC — then ENV's prefixed topics and consumer groups on the shared Kafka; the cluster-wide operators and the shared Kafka stay — ENV=<env> CONFIRM=andara-<env> (AW-INF-021 AC-7)
 env-destroy:
 	@$(PY) $(SCRIPTS)/env_destroy.py "$(if $(filter command line,$(origin ENV)),$(ENV))" "$(CONFIRM)"
 

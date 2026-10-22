@@ -139,6 +139,26 @@ class Check(unittest.TestCase):
         self.assertEqual(code, 0)
         self.assertIn("pvc data-andara-log-broker-1 unmeasured", out)
 
+    def test_a_broker_that_cannot_be_measured_is_named_and_the_rest_still_report(self):
+        # A full disk crash-loops the broker: its pod stays Running and exec into it fails.
+        c = FakeCluster({"andara-log-broker-0": 2 * GI, "andara-log-broker-2": GI}, self.DIRS)
+        c.pods[1]["status"]["containerStatuses"] = [{"ready": False}]
+        real = c.__call__
+
+        def run(cmd, capture_output=True, text=True):
+            if "andara-log-broker-1" in cmd and "du" in cmd:
+                return types.SimpleNamespace(returncode=1, stdout="",
+                                             stderr='error: container not found ("kafka")')
+            return real(cmd)
+
+        code, out, err = self.run_check(run)
+        self.assertEqual(code, 1)
+        self.assertIn("pvc data-andara-log-broker-1 unmeasured: measuring it in andara-log-broker-1 failed", out)
+        self.assertIn("pvc data-andara-log-broker-0 2.0 GiB of 20.0 GiB (10.0%)", out)
+        self.assertIn("pvc data-andara-log-broker-2", out)
+        self.assertIn("broker 0 dev.=", out)
+        self.assertIn("not measured, so not known to be under 80%: data-andara-log-broker-1", err)
+
     def test_no_ready_broker_fails(self):
         pods = [pod("andara-log-broker-0", "data-andara-log-broker-0", ready=False)]
         for p in pods:

@@ -19,8 +19,10 @@ one refuses (ADR-0013 amendment 19).
   - a principal holds Create, Alter, AlterConfigs, Delete or All on a topic, or anything but
     Describe on the cluster: topics are the operator's alone (ADR-0011). The one exception is
     the integration suite's `andara-it` (AW-INF-060), which may hold Create and Delete on the
-    PREFIXED topics `andara.test.` and `it` (ADR-0013 amendment 17), and only those; the
-    exception is by that exact name, so no other principal can borrow it;
+    PREFIXED topics `andara.test.` and `it` (ADR-0013 amendment 17); the exception is by that
+    exact name, so no other principal can borrow it. `andara-it` is scoped positively too: its
+    topics are those two PREFIXED names only and its groups PREFIXED `it-` only (Delete
+    included), so it never reaches an environment's topics or groups;
   - a principal holds Delete on a group other than andara-projector-state's own
     (`andara-projector --rebuild` deletes it);
   - a topic or group ACL names a literal `*`, or reaches outside its environment: a topic not
@@ -48,6 +50,7 @@ CLUSTER_ALLOWED = {"Describe"}
 IT_PRINCIPAL = "andara-it"
 IT_PREFIXES = {"andara.test.", "it"}
 IT_ALLOWED = {"Create", "Delete"}
+IT_GROUP_PREFIX = "it-"
 GROUP_DELETER = "andara-projector-state"
 
 
@@ -121,20 +124,31 @@ def check(users, doc):
             if rtype in ("topic", "group") and (rname == "*" or "*" in rname):
                 errors.append("%s: a wildcard name" % what)
                 continue
+            it = name == IT_PRINCIPAL
             if rtype == "topic":
                 bad = ops & TOPIC_FORBIDDEN
-                if name == IT_PRINCIPAL and pattern == "prefix" and rname in IT_PREFIXES:
+                in_suite = pattern == "prefix" and rname in IT_PREFIXES
+                if it and in_suite:
                     bad -= IT_ALLOWED
                 if bad:
                     errors.append("%s: %s on a topic is the operator's alone" % (what, ",".join(sorted(bad))))
-                if name != IT_PRINCIPAL and (prefix is None or not rname.startswith(prefix + ".")):
+                if it and not in_suite:
+                    # The suite never touches an environment's data (ADR-0013 amendment 17).
+                    errors.append("%s: %s's topics are PREFIXED %s only" % (what, IT_PRINCIPAL,
+                                                                           " and ".join(sorted(IT_PREFIXES))))
+                if not it and (prefix is None or not rname.startswith(prefix + ".")):
                     errors.append("%s: outside environment %s's prefix %s." % (what, env or "(none)", prefix))
             elif rtype == "group":
-                if "Delete" in ops and not (principal == GROUP_DELETER and rname == "%s-%s" % (GROUP_DELETER, env)):
+                own = (principal == GROUP_DELETER and rname == "%s-%s" % (GROUP_DELETER, env)) \
+                    or (it and pattern == "prefix" and rname.startswith(IT_GROUP_PREFIX))
+                if "Delete" in ops and not own:
                     errors.append("%s: Delete on a group other than %s-<env>'s own" % (what, GROUP_DELETER))
                 if ops & {"All", "Alter", "AlterConfigs", "Create"}:
                     errors.append("%s: %s on a group" % (what, ",".join(sorted(ops & {"All", "Alter", "AlterConfigs", "Create"}))))
-                if name != IT_PRINCIPAL and not rname.endswith("-" + env):
+                if it and not (pattern == "prefix" and rname.startswith(IT_GROUP_PREFIX)):
+                    # A principal that can join andara-sim-dev can move dev's offsets.
+                    errors.append("%s: %s's groups are PREFIXED %s only" % (what, IT_PRINCIPAL, IT_GROUP_PREFIX))
+                if not it and not rname.endswith("-" + env):
                     errors.append("%s: a group outside environment %s" % (what, env or "(none)"))
             elif rtype == "cluster":
                 if ops - CLUSTER_ALLOWED:

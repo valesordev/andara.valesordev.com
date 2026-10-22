@@ -26,19 +26,24 @@
 # local's are the bound on what one environment can take of the shared brokers' disks
 # (ADR-0013 amendment 4: until AW-INF-056 applies the principals' quotas, they're the only
 # bound). 64 MiB per partition and 7 days are the ADR's starting values; AW-INF-055 measures
-# a local soak and records the values it keeps here. They apply to compacted topics too,
-# where the broker ignores them.
+# a local soak and records the values it keeps here. The retention.* keys apply to the topics
+# whose cleanup.policy includes delete; compacted topics declare no retention, since without
+# delete the broker ignores it (docs/specs/kafka/broker-contract.md, `local.` bounds). The
+# segment.* keys apply to every topic.
 #
-# segment.bytes is what makes retention.bytes a bound: the broker deletes whole closed
-# segments only, so with Kafka's default 1 GiB segment a partition would hold about 1 GiB
-# before 64 MiB took effect. At 16 MiB a delete-policy partition holds at most about 80 MiB:
-# local's 134 such partitions come to about 10.5 GiB at RF 1, spread over three 20 GiB PVCs.
+# The segment values are what make the bounds bite: neither retention nor compaction touches
+# the active segment, so with Kafka's defaults (1 GiB, 7 days) a partition would hold about
+# 1 GiB, for up to a week, before either took effect. At 16 MiB and at most a day, a delete
+# partition holds about 80 MiB: local's 134 of them come to about 10.5 GiB at RF 1, spread over
+# three 20 GiB PVCs. The contract requires segment.bytes <= retention.bytes / 4 and
+# segment.ms <= 86400000.
 environments:
   local:
     prefix: local
     retention.bytes: 67108864     # 64 MiB per partition
     retention.ms: 604800000       # 7 days
     segment.bytes: 16777216       # 16 MiB
+    segment.ms: 86400000          # 1 day
   dev:
     prefix: dev
   prod:

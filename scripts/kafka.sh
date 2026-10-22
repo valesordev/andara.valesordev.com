@@ -150,6 +150,10 @@ bounce() {
   # for every environment on them (ADR-0013; the drill lock is AW-INF-063's).
   local env="$1" ns victim="$KAFKA-broker-0"
   check_env "$env"
+  # local's server runs the sim and the Account store in memory until AW-INF-060, so nothing
+  # it does touches the brokers, and a bounce would prove nothing while passing.
+  [[ "$env" != local ]] \
+    || die kafka-broker-bounce "local's server doesn't use the broker yet (sim.source: memory, AW-INF-060); ENV=dev" 2
   ns="andara-$env"
   need kubectl
   kube_require kafka-broker-bounce

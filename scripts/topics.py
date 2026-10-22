@@ -54,10 +54,11 @@ COMPOSE = os.path.join(REPO, "deploy", "compose", "docker-compose.yaml")
 # max.message.bytes is andara.content.blobs.v1's (AW-SRV-013): the largest blob the broker takes.
 # Raising or lowering it deletes nothing, so it's never a data-loss change.
 # retention.bytes is local's bound on the shared brokers' disks (AW-INF-055); a lower one deletes
-# data, like a lower retention.ms. segment.bytes is what makes that bound bite (the broker
-# deletes whole segments only); changing it deletes nothing by itself.
-COMPARED = ["cleanup.policy", "retention.ms", "retention.bytes", "segment.bytes", "min.insync.replicas",
-            "min.compaction.lag.ms", "max.message.bytes"]
+# data, like a lower retention.ms. segment.bytes and segment.ms are what make that bound bite
+# (retention and compaction never touch the active segment); changing them deletes nothing by
+# itself.
+COMPARED = ["cleanup.policy", "retention.ms", "retention.bytes", "segment.bytes", "segment.ms",
+            "min.insync.replicas", "min.compaction.lag.ms", "max.message.bytes"]
 
 BROKERS = ("compose", "cluster")
 KAFKA_NAMESPACE_ENV = "ANDARA_KAFKA_NAMESPACE"
@@ -216,8 +217,10 @@ def replication_factor(defaults, env):
 def declared_config(defaults, topic, env, overrides=None):
     """The full config this topic should carry in this environment.
 
-    `overrides` is the environment's own config (local's retention bound), which wins over
-    the topic's: it is the limit one environment may take of a shared broker.
+    `overrides` is the environment's own config (local's bound), which wins over the topic's:
+    it is the limit one environment may take of a shared broker. Its retention.* keys apply
+    only to a topic whose cleanup.policy includes delete: a compacted topic declares no
+    retention (docs/specs/kafka/broker-contract.md, `local.` bounds).
     """
     cfg = {}
     for key, per_env in defaults["config"].items():
@@ -227,9 +230,28 @@ def declared_config(defaults, topic, env, overrides=None):
         if key in ("name", "partitions", "why"):
             continue
         cfg[key] = str(val)
+    deletes = "delete" in policies(cfg.get("cleanup.policy", "delete"))
     for key, val in (overrides or {}).items():
+        if key.startswith("retention.") and not deletes:
+            continue
         cfg[key] = str(val)
     return cfg
+
+
+def consumer_groups(env, path=DECL):
+    """The declaration's reserved consumer groups for `env`: `andara-sim-<env>`, and so on."""
+    groups, section = [], None
+    with open(path, "r", encoding="utf-8") as fh:
+        for raw in fh.read().split("\n"):
+            line = raw.split("#")[0].rstrip()
+            if not line.strip():
+                continue
+            if not line.startswith(" "):
+                section = line.strip().rstrip(":")
+                continue
+            if section == "consumer_groups" and line.strip().startswith("- "):
+                groups.append(line.strip()[2:].strip().replace("<env>", env))
+    return groups
 
 
 # The broker on the box (AW-INF-014, AW-INF-055): Strimzi's bootstrap Service for Kafka
@@ -530,6 +552,9 @@ def main():
     args = ap.parse_args()
     if args.allow_data_loss and args.action != "apply":
         die("--allow-data-loss applies only to `apply`")
+    if args.env == "prod":
+        # Its unprefixed names would land on the shared broker as strays (ADR-0013 decision 10).
+        die("prod's Kafka is not on this cluster; ENV=local or ENV=dev", 2)
     if args.broker and args.broker not in BROKERS:
         die("--broker is compose or cluster, not '%s'" % args.broker, 2)
     if args.broker and args.env != "local":

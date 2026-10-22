@@ -18,7 +18,9 @@ broker, and fails the check.
 
 A PVC's use is `du` of its mount in the pod that mounts it, against the PVC's capacity: on kind,
 a volume's own filesystem is the host's, so the kubelet's numbers are the host disk's, not the
-claim's. A PVC that no running pod mounts is printed as unmeasured, and doesn't fail the check.
+claim's. A PVC that no running pod mounts is printed as unmeasured, and doesn't fail the check. A
+mounted one that can't be measured (a crash-looping broker, which is what a full disk looks like)
+is printed with the reason, the rest are still reported, and the check fails naming it.
 
 `down` removes the Kafka `andara-log`, its toolbox and its PVCs, which are the environments'
 Command history, with no way back. It refuses with exit 2, removing nothing, unless CONFIRM
@@ -115,29 +117,42 @@ def mounts(pods):
 
 
 def pvc_rows(pvcs, where, used):
-    """[(claim, used_bytes or None, capacity_bytes)]. `used(pod, container, path)` measures."""
+    """[(claim, used_bytes or None, capacity_bytes, why_unmeasured)]. `used(pod, container, path)`
+    measures; a measurement that fails (a crash-looping broker can't be exec'd into, which is
+    the disk-full case) is a reason, not an abort, so every other claim is still reported."""
     rows = []
     for pvc in pvcs.get("items", []):
         name = pvc["metadata"]["name"]
         cap = (pvc.get("status", {}).get("capacity") or {}).get("storage") \
             or pvc["spec"]["resources"]["requests"]["storage"]
-        rows.append((name, used(*where[name]) if name in where else None, quantity(cap)))
+        n, why = None, None
+        if name not in where:
+            why = "no running pod mounts it"
+        else:
+            try:
+                n = used(*where[name])
+            except (Failed, ValueError, IndexError) as e:
+                why = "measuring it in %s failed: %s" % (where[name][0], str(e)[:200])
+        rows.append((name, n, quantity(cap), why))
     return rows
 
 
 def pvc_report(rows, threshold=THRESHOLD):
-    """Print each PVC; the claims over the threshold."""
-    over = []
-    for name, used, cap in sorted(rows):
+    """Print each PVC; return (claims over the threshold, mounted claims that couldn't be measured).
+    An unmounted claim is reported and left: nothing is writing to it."""
+    over, unmeasured = [], []
+    for name, used, cap, why in sorted(rows):
         if used is None:
-            say("pvc %s unmeasured: no running pod mounts it (capacity %s)" % (name, human(cap)))
+            say("pvc %s unmeasured: %s (capacity %s)" % (name, why, human(cap)))
+            if not why.startswith("no running pod"):
+                unmeasured.append(name)
             continue
         pct = 100.0 * used / cap
         flag = " OVER %d%%" % threshold if pct > threshold else ""
         say("pvc %s %s of %s (%.1f%%)%s" % (name, human(used), human(cap), pct, flag))
         if pct > threshold:
             over.append((name, pct))
-    return over
+    return over, unmeasured
 
 
 def du(ns, run=subprocess.run):
@@ -202,8 +217,9 @@ def check(ns=None, run=subprocess.run, decl=topics.DECL):
     ns = ns or topics.kafka_namespace()
     pvcs = kubectl_json(ns, "get", "pvc", run=run)
     pods = kubectl_json(ns, "get", "pods", run=run)
-    over = pvc_report(pvc_rows(pvcs, mounts(pods), du(ns, run)))
+    over, unmeasured = pvc_report(pvc_rows(pvcs, mounts(pods), du(ns, run)))
 
+    # The prefixes are read even when a claim is over, so the operator sees whose bytes they are.
     prefixes = sorted(e["prefix"] for e in topics.parse_environments(decl).values() if e["prefix"])
     pod = broker_pod(ns, run)
     text = kubectl(ns, "exec", pod, "-c", "kafka", "--", "/opt/kafka/bin/kafka-log-dirs.sh",
@@ -212,6 +228,9 @@ def check(ns=None, run=subprocess.run, decl=topics.DECL):
 
     if over:
         raise Failed("over %d%%: %s" % (THRESHOLD, ", ".join("%s (%.1f%%)" % o for o in over)))
+    if unmeasured:
+        raise Failed("mounted but not measured, so not known to be under %d%%: %s"
+                     % (THRESHOLD, ", ".join(unmeasured)))
     if stray:
         raise Failed("unprefixed topics on the shared broker: %s" % ", ".join(stray))
     say("ok: every PVC in %s is at or under %d%%" % (ns, THRESHOLD))
