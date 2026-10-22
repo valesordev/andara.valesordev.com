@@ -28,9 +28,13 @@ const ConfigKey = "config/registration"
 
 // Options configures a Store.
 type Options struct {
-	Accounts recordlog.Log // andara.accounts.v1
-	Audit    recordlog.Log // andara.audit.v1
+	Accounts recordlog.Log // the accounts topic
+	Audit    recordlog.Log // the audit topic
 	Keys     *Keyring
+
+	// AccountsTopic is the resolved name of the topic behind Accounts, used
+	// to name it in replay errors. Empty for a store with no topic (memory).
+	AccountsTopic string
 
 	Argon2     Argon2Params
 	SessionTTL time.Duration
@@ -50,6 +54,15 @@ type Options struct {
 
 	// Now is the clock. Tests set it; nil means time.Now.
 	Now func() time.Time
+}
+
+// accountsName is how replay errors name the accounts log: its resolved
+// topic, or a description when the store has none.
+func accountsName(topic string) string {
+	if topic == "" {
+		return "the accounts log"
+	}
+	return topic
 }
 
 // WorkloadVerifier checks a projected service-account token and returns
@@ -152,7 +165,7 @@ func Open(ctx context.Context, o Options) (*Store, error) {
 		}
 		var rec accountsv1.AccountRecord
 		if err := proto.Unmarshal(r.Value, &rec); err != nil {
-			return fmt.Errorf("auth: record %q on andara.accounts.v1 does not decode: %w", r.Key, err)
+			return fmt.Errorf("auth: record %q on %s does not decode: %w", r.Key, accountsName(o.AccountsTopic), err)
 		}
 		switch v := rec.Record.(type) {
 		case *accountsv1.AccountRecord_Account:
@@ -168,7 +181,7 @@ func Open(ctx context.Context, o Options) (*Store, error) {
 			}
 			s.indexReservation(r.Key, v.NameReservation)
 		default:
-			return fmt.Errorf("auth: record %q on andara.accounts.v1 is neither Account, AuthConfig, nor NameReservation", r.Key)
+			return fmt.Errorf("auth: record %q on %s is neither Account, AuthConfig, nor NameReservation", r.Key, accountsName(o.AccountsTopic))
 		}
 		return nil
 	})

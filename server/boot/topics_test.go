@@ -15,6 +15,7 @@ import (
 	"github.com/valesordev/andara/server/config"
 	"github.com/valesordev/andara/server/content"
 	"github.com/valesordev/andara/server/kafkaclient"
+	"github.com/valesordev/andara/server/sim"
 	"github.com/valesordev/andara/server/telemetry"
 	"github.com/valesordev/andara/server/tickloop"
 )
@@ -165,5 +166,27 @@ func TestPublishFailureKind_FollowsTheResolvedCommandsTopic(t *testing.T) {
 	}
 	if got := publishFailureKind(kp, "andara.commands.v1"); got != "events" {
 		t.Errorf("the unprefixed name is not this publisher's commands topic: kind %q", got)
+	}
+}
+
+// Recovery names the events topic it replays in LogGapError: the resolved
+// one, so under a prefix the error names the topic that has the gap.
+func TestRecoverOptions_CarryTheResolvedEventsTopic(t *testing.T) {
+	rt, _ := runtime(t, fixture(t, "valid"), false)
+	rt.replay = &memLog{}
+	rt.Cfg.SnapshotInterval = 0
+	tp, err := kafkaclient.TopicsFor(config.Config{KafkaTopicPrefix: "it7"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	rt.Topics = tp
+	var inEffect bool
+	o, release, err := rt.RecoverOptions(context.Background(), sim.Config{}, &inEffect)
+	if err != nil {
+		t.Fatal(err)
+	}
+	release()
+	if o.EventsTopic != "it7.andara.events.v1" {
+		t.Errorf("EventsTopic %q, want it7.andara.events.v1", o.EventsTopic)
 	}
 }

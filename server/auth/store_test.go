@@ -728,6 +728,35 @@ func TestOpen_RejectsBadRecord(t *testing.T) {
 	}
 }
 
+// AW-SRV-058: a replay error names the resolved accounts topic, so under a
+// prefix it names the topic the process actually reads.
+func TestOpen_ReplayErrorsNameTheResolvedAccountsTopic(t *testing.T) {
+	for _, tc := range []struct {
+		name, value string
+	}{
+		{"undecodable", "\xff\xff\xff"},
+		{"no record kind", ""},
+	} {
+		for _, topic := range []string{"it7.andara.accounts.v1", ""} {
+			f := newFixture(t, nil)
+			if err := f.accounts.Append(context.Background(), "junk", []byte(tc.value)); err != nil {
+				t.Fatal(err)
+			}
+			_, err := Open(context.Background(), Options{
+				Accounts: f.accounts, Audit: f.audit, Keys: f.keys, AccountsTopic: topic, Argon2: testArgon,
+				SessionTTL: time.Hour, RefreshTTL: time.Hour, InviteTTL: time.Hour, Log: slog.New(slog.DiscardHandler),
+			})
+			want := topic
+			if want == "" {
+				want = "the accounts log"
+			}
+			if err == nil || !strings.Contains(err.Error(), "on "+want+" ") || strings.Contains(err.Error(), "on andara.accounts.v1") {
+				t.Errorf("%s, AccountsTopic %q: got %v, want it to name %q", tc.name, topic, err, want)
+			}
+		}
+	}
+}
+
 func TestOpen_FailedWriteLeavesIndexUntouched(t *testing.T) {
 	f := newFixture(t, nil)
 	opCtx, _ := f.bootstrapOperator("oper", "operator-password")
