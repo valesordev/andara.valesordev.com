@@ -1,0 +1,77 @@
+// shared-kafka (ADR-0014 §3 and §6, AW-INF-051): the andara-shared brokers' own metrics, from the
+// Strimzi Metrics Reporter on :9404, forwarded into the k8s-monitoring chart's receiver. The chart's
+// destination stamps environment and applies keep-list.yaml (AW-INF-065), so this pipeline sets only
+// namespace and job, and names no endpoint but the receiver and no credential.
+
+discovery.kubernetes "shared_kafka" {
+	role = "pod"
+
+	namespaces {
+		names = ["andara-shared"]
+	}
+}
+
+discovery.relabel "shared_kafka" {
+	targets = discovery.kubernetes.shared_kafka.targets
+
+	// The brokers' running pods, by the annotation kafka.yaml sets.
+	rule {
+		source_labels = ["__meta_kubernetes_pod_annotation_k8s_grafana_com_job"]
+		regex         = "andara-kafka"
+		action        = "keep"
+	}
+
+	rule {
+		source_labels = ["__meta_kubernetes_pod_phase"]
+		regex         = "Running"
+		action        = "keep"
+	}
+
+	// The reporter's port, whether or not the pod declares it. Discovery yields a target per declared
+	// port; with the same address and labels they are one target to the scrape.
+	rule {
+		source_labels = ["__meta_kubernetes_pod_ip"]
+		target_label  = "__address__"
+		replacement   = "$1:9404"
+	}
+
+	// The chart's environment stamp keys on namespace (ADR-0014 §4).
+	rule {
+		source_labels = ["__meta_kubernetes_namespace"]
+		target_label  = "namespace"
+	}
+
+	rule {
+		source_labels = ["__meta_kubernetes_pod_annotation_k8s_grafana_com_job"]
+		target_label  = "job"
+	}
+
+	// The pod's name, not its IP, so a restarted broker keeps its series.
+	rule {
+		source_labels = ["__meta_kubernetes_pod_name"]
+		target_label  = "instance"
+	}
+}
+
+prometheus.scrape "shared_kafka" {
+	targets    = discovery.relabel.shared_kafka.output
+	forward_to = [prometheus.relabel.shared_kafka.receiver]
+}
+
+// ADR-0014 §6's allow-list, spelled as the reporter serves it (AW-INF-051 AC-12), and this job's up.
+// Per-topic series (kafka_server_brokertopicmetrics_*) never cross the hop.
+prometheus.relabel "shared_kafka" {
+	forward_to = [prometheus.remote_write.receiver.receiver]
+
+	rule {
+		source_labels = ["__name__"]
+		regex         = "kafka_server_replicamanager_underreplicatedpartitions|kafka_server_replicamanager_underminisrpartitioncount|kafka_server_replicamanager_atminisrpartitioncount|kafka_server_replicamanager_isrshrinkspersec_total|kafka_server_replicamanager_isrexpandspersec_total|kafka_controller_kafkacontroller_offlinepartitionscount|kafka_controller_kafkacontroller_activecontrollercount|up"
+		action        = "keep"
+	}
+}
+
+prometheus.remote_write "receiver" {
+	endpoint {
+		url = "http://k8s-monitoring-alloy-receiver.observability.svc:9090/api/v1/metrics/write"
+	}
+}

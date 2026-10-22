@@ -17,7 +17,8 @@ Routing is code. The contact points and the notification policy tree of each sta
 |---|---|
 | Contact points `slack-dev` / `slack-prod` and `blackhole`, mute timing `always`, the policy tree | `deploy/terraform/grafana/modules/stack/main.tf` |
 | Which environments a stack holds, and its page receiver (`page_contact_point`) | `deploy/terraform/grafana/stacks/<stack>/terraform.tfvars` |
-| `irm-prod`, the IRM integration, schedule and escalation chain | `deploy/terraform/grafana/stacks/solo7-irm/` (`AW-INF-051`) |
+| `irm-prod`, the IRM integration, schedule and escalation chain | `deploy/terraform/grafana/stacks/solo7-irm/` (`AW-INF-078`) |
+| The Fleet Management pipelines, and their sources | `deploy/terraform/grafana/stacks/<stack>/pipelines.tf`, `deploy/terraform/grafana/pipelines/*.alloy` (`AW-INF-051`) |
 | A test of every route in the tree, against the committed `terraform.tfvars` | `deploy/terraform/grafana/stacks/<stack>/tests/*.tftest.hcl` (`make tf-test`) |
 
 The policy tree is one Terraform resource that owns the whole tree. A routing change is a pull request:
@@ -37,12 +38,12 @@ These are the trees as committed. Every alert lands in exactly one row of its st
 | `solo7dev` | `local` | any | `blackhole` | Muted by `always`: nothing is sent. The rules still evaluate, and `gcx` shows them. |
 | `solo7dev` | `dev`, `staging` | any | `slack-dev` | The root receiver posts to `#andaras-world-dev`. `page` does not page in this stack. |
 | `solo7dev` | none, or any other | any | `slack-dev` | The root receiver: a rule that loses its `environment` label is loud, not silent. |
-| `solo7` | `prod` | `page` | `irm-prod` | From AW-INF-051. The first child, with `continue`, so the next row also matches. |
+| `solo7` | `prod` | `page` | `irm-prod` | From AW-INF-078. The first child, with `continue`, so the next row also matches. |
 | `solo7` | `prod` | `page` | `slack-prod` | The second child posts to `#andaras-world`. One page is one IRM alert group plus one Slack post. |
 | `solo7` | `prod` | any other | `slack-prod` | The root receiver. |
 | `solo7` | none, or any other | any | `slack-prod` | The root receiver: Slack only, never IRM. |
 
-The `irm-prod` row exists once `AW-INF-051` sets `page_contact_point = "irm-prod"` in `solo7`'s
+The `irm-prod` row exists once `AW-INF-078` sets `page_contact_point = "irm-prod"` in `solo7`'s
 `terraform.tfvars`. Until then that stack's `page` alerts go to `slack-prod` alone.
 `scripts/tests/test_runbook_credentials.py` checks that the receivers in this table are the committed
 trees' receivers.
@@ -56,6 +57,30 @@ trees' receivers.
 
 To check a route end to end, run `make tf-test-alert STACK=solo7dev ENV=<local|dev|staging>`, then
 `make tf-test-alert-clean STACK=solo7dev ENV=<the same>` (`terraform-state.md`).
+
+## The shared services: `environment="unknown"` and the Fleet pipelines
+
+`andara-shared`'s brokers belong to no environment, so the chart's stamp gives every series they ship
+`environment="unknown"` (`ADR-0014` §4). In `solo7dev`, `unknown` matches no child of the tree and reaches
+the root receiver, `slack-dev` (`#andaras-world-dev`): never `blackhole`, and there is no IRM in this stack
+(`AW-INF-046` AC-6). No rule reads the brokers' series yet, so nothing is routed by them today. A rule
+on a shared service lands in that row until it has an SLO of its own (CLAUDE.md §7).
+
+The brokers' series reach Grafana Cloud through a Fleet Management pipeline, `shared-kafka`
+(`deploy/terraform/grafana/pipelines/shared-kafka.alloy`, `AW-INF-051`). The `fleet` collector
+(`AW-INF-065`) pulls it and forwards to the chart's `receiver`, which ships it with the chart's stamp and
+keep-list. Where to look:
+
+| What | Where |
+|---|---|
+| The pipelines, as applied | `gcx --context solo7dev fleet pipelines list`, or the stack's Fleet Management page |
+| The `fleet` collector, its attributes (`cluster`, `stack`) and last check-in | `gcx --context solo7dev fleet collectors list`, or the Fleet Management page's collector inventory |
+| What the pipeline should be | the `.alloy` file, applied by the `terraform` workflow on merge; a hand edit is drift (`drift:solo7dev`) |
+| A pipeline the collector failed to load or forward | the `fleet` collector's pod logs in `observability` |
+
+`gcx` reads both with the stack's read token (`GRAFANA_SOLO7DEV_READ_TOKEN`, via `make gcx-config`).
+A `fleet` collector that stops checking in is visible only in the inventory: no rule watches it
+(`AW-INF-065`, `AW-INF-047`).
 
 ## Reading rule state
 

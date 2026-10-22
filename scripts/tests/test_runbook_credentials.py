@@ -215,7 +215,7 @@ class Routing(unittest.TestCase):
             for row in rows:
                 if row[0] != "`%s`" % stack:
                     continue
-                if pcp is None and "From AW-INF-051" in row[4]:
+                if pcp is None and "From AW-INF-078" in row[4]:
                     continue
                 got |= set(re.findall(r"`([a-z0-9-]+)`", row[3]))
             with self.subTest(stack=stack):

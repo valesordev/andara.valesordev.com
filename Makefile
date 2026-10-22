@@ -66,7 +66,7 @@ HAS_GO := $(shell find . -name '*.go' -not -path './.git/*' -not -path './bin/*'
         objectstore-install projector-stop projector-start projector-rebuild server-stop server-start core-versions-check \
         builder-reference builder-reference-check guide-check \
         stack-boundary-lost cli-offline-check stack-projector-check recovery-timing recovery-timing-previous recovery-timing-summary startup-budget-check alerts-sync alerts-diff update-agents \
-        tf-plan tf-apply tf-unlock tf-test-alert tf-test-alert-clean tf-fmt-check tf-validate tf-test tf-lock tf-bootstrap-gcp tf-drift tf-plan-show tf-workflow-check tf-ci-environments tf-plan-key tf-replan tf-credentials-check
+        tf-plan tf-apply tf-unlock tf-test-alert tf-test-alert-clean tf-fmt-check tf-validate tf-test tf-lock tf-bootstrap-gcp tf-drift tf-plan-show tf-workflow-check tf-ci-environments tf-plan-key tf-replan tf-credentials-check pipelines-check
 
 ## help: print this target list
 help:
@@ -137,7 +137,7 @@ CHECK_TARGETS := fmt-check vet lint test proto-check schemas-check \
                  license-check content-grammar-check content-conformance scripts-test \
                  core-versions-check builder-reference-check guide-check \
                  tf-fmt-check tf-validate tf-test tf-workflow-check gcx-only-check platform-check \
-                 kube-context-check
+                 kube-context-check pipelines-check
 
 ## check: fmt, vet, lint, test, proto, manifests — what CI runs
 check: $(CHECK_TARGETS)
@@ -546,6 +546,10 @@ tf-workflow-check:
 	@if ! command -v actionlint >/dev/null 2>&1; then echo "make: tf-workflow-check: actionlint not found (run \`make bootstrap\`)" >&2; exit 1; fi
 	actionlint .github/workflows/terraform.yaml .github/workflows/credentials.yaml
 	$(PY) $(SCRIPTS)/tf_workflow_check.py
+
+## pipelines-check: every Fleet pipeline under deploy/terraform/grafana/pipelines validates (bin/alloy) and writes only to the chart's receiver: no secret, templatefile, other remote_write URL, otelcol exporter, loki.write, or sys.env outside env-allow.txt (AW-INF-051)
+pipelines-check:
+	@$(PY) $(SCRIPTS)/pipelines_check.py
 
 ## tf-lock: re-pin the grafana provider hashes in every root's .terraform.lock.hcl, for linux and darwin on amd64 and arm64
 tf-lock:

@@ -45,6 +45,9 @@ TERRAFORM_VERSION="1.16.4"
 # stays within one of it, checked below.
 KIND_VERSION="v0.33.0"
 KUBECTL_VERSION="v1.36.4"
+# alloy validates the Fleet Management pipelines in `make pipelines-check` (AW-INF-051). A release
+# zip, verified against checksums pinned below from the release's SHA256SUMS.
+ALLOY_VERSION="v1.20.1"
 
 fail() { echo "make: bootstrap: $*" >&2; exit 1; }
 ok()   { printf '  %-22s %s\n' "$1" "$2"; }
@@ -386,6 +389,44 @@ install_kind_kubectl() {
     "https://dl.k8s.io/release/$KUBECTL_VERSION/bin/$os/$arch/kubectl" "$kubectl_sum"
 }
 install_kind_kubectl
+
+# alloy backs `make pipelines-check` (AW-INF-051): `alloy validate` over every Fleet pipeline source. A
+# release zip, verified against a checksum pinned here from the release's SHA256SUMS; only the binary is
+# extracted, as bin/alloy.
+install_alloy() {
+  local want="$ALLOY_VERSION" have="" os arch sum name tmp
+  [[ -x "$BIN/alloy" ]] && have="$("$BIN/alloy" --version 2>/dev/null | awk 'NR==1{print $3}' || true)"
+  if [[ "$have" == "$want" ]]; then
+    ok alloy "${have#v} (pinned)"
+    return 0
+  fi
+  os="$(uname -s | tr '[:upper:]' '[:lower:]')"
+  case "$(uname -m)" in
+    x86_64|amd64) arch=amd64 ;;
+    aarch64|arm64) arch=arm64 ;;
+    *) fail "no pinned alloy for $(uname -m)" ;;
+  esac
+  case "$os-$arch" in
+    linux-amd64)  sum=451fe650e8277d22d69cb8db50bba809f581fe78decba7fce4027ef185457be9 ;;
+    linux-arm64)  sum=396827d58158f181c98d5776c908348b38b4099f1d18a1e7554f2fda0fcb9203 ;;
+    darwin-amd64) sum=8ae0c7f56e4658093d15e5dea8ca5cfa4ed382bd99fca059418cf3d647ea956e ;;
+    darwin-arm64) sum=9709de08e15ef4307ce52dd5c306edf0d115db02119a712c39c00a04e013e88d ;;
+    *) fail "no pinned alloy for $os-$arch" ;;
+  esac
+  name="alloy-$os-$arch"
+  tmp="$(mktemp -d)"
+  echo "  installing alloy $want ..."
+  curl -fsSL -o "$tmp/$name.zip" "https://github.com/grafana/alloy/releases/download/$want/$name.zip" \
+    || { rm -rf "$tmp"; fail "could not download alloy $want; check network access to github.com"; }
+  sha256_ok "$sum" "$tmp/$name.zip" \
+    || { rm -rf "$tmp"; fail "alloy $want zip does not match its pinned checksum"; }
+  ${PY:-python3} -c 'import sys, zipfile; zipfile.ZipFile(sys.argv[1]).extract(sys.argv[2], sys.argv[3])' "$tmp/$name.zip" "$name" "$tmp" \
+    || { rm -rf "$tmp"; fail "could not unpack alloy $want"; }
+  install -m 0755 "$tmp/$name" "$BIN/alloy"
+  rm -rf "$tmp"
+  ok alloy "${want#v} (installed)"
+}
+install_alloy
 
 # Git hooks: run the cheap checks before a commit lands, not after CI says so.
 #
