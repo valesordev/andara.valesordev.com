@@ -7,14 +7,16 @@ import (
 	"context"
 	"strings"
 	"testing"
+
+	"github.com/valesordev/andara/server/kafkaclient"
 )
 
 // AW-SRV-058 AC-5a: every constructor that takes a topic refuses an empty
 // one, naming the option, before it reaches for a broker.
 func TestConstructors_RequireTheirTopic(t *testing.T) {
 	ctx := context.Background()
-	dark := []string{"127.0.0.1:1"}
-	full := RunOptions{Brokers: dark, Group: "it-g", CommandsTopic: "it7.c", EventsTopic: "it7.e", StateTopic: "it7.s"}
+	dark := kafkaclient.Config{Brokers: []string{"127.0.0.1:1"}}
+	full := RunOptions{Kafka: dark, Group: "it-g", CommandsTopic: "it7.c", EventsTopic: "it7.e", StateTopic: "it7.s"}
 	for _, c := range []struct {
 		option string
 		call   func() error

@@ -31,6 +31,7 @@ import (
 	"github.com/valesordev/andara/internal/eventually"
 	"github.com/valesordev/andara/server/config"
 	"github.com/valesordev/andara/server/kafkaclient"
+	"github.com/valesordev/andara/server/kafkaclient/kafkatest"
 )
 
 // httpClient trusts the local CA and nothing else.
@@ -130,8 +131,7 @@ func TestLive_AccountsAndAudit(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	cl, err := kgo.NewClient(
-		kgo.SeedBrokers(env("ANDARA_KAFKA_BROKERS", "localhost:9092")),
+	cl, err := kafkaclient.New(kafkatest.Config([]string{env("ANDARA_KAFKA_BROKERS", "localhost:9092")}).For("andara-it"),
 		kgo.ConsumeTopics(tp.Audit()),
 		kgo.ConsumeResetOffset(kgo.NewOffset().AtStart()),
 	)

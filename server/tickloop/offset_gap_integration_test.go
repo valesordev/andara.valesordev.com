@@ -12,8 +12,8 @@ import (
 	"time"
 
 	"github.com/twmb/franz-go/pkg/kadm"
-	"github.com/twmb/franz-go/pkg/kgo"
 
+	"github.com/valesordev/andara/server/kafkaclient"
 	"github.com/valesordev/andara/server/sim"
 )
 
@@ -25,7 +25,7 @@ func TestKafkaSource_AnOffsetTheBrokerNoLongerHasIsAGap(t *testing.T) {
 	commands, _ := topics(t, bk)
 	produce(t, bk, commands, 6)
 
-	cl, err := kgo.NewClient(kgo.SeedBrokers(bk...))
+	cl, err := kafkaclient.New(bk.For("andara-it"))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -49,7 +49,7 @@ func TestKafkaSource_AnOffsetTheBrokerNoLongerHasIsAGap(t *testing.T) {
 	// The source resumes past the log's end, as after an unclean leader
 	// election that cut the log below the checkpoint: the broker answers
 	// OFFSET_OUT_OF_RANGE to every fetch.
-	src, err := NewKafkaSource(ctx, KafkaSourceOptions{Brokers: bk, Group: "it-gap", Start: map[int32]int64{part: end + 5}, Topic: commands,
+	src, err := NewKafkaSource(ctx, KafkaSourceOptions{Kafka: bk, Group: "it-gap", Start: map[int32]int64{part: end + 5}, Topic: commands,
 		LagEvery: 200 * time.Millisecond})
 	if err != nil {
 		t.Fatal(err)

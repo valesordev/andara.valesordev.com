@@ -40,7 +40,7 @@ func TestKafka_RecoveryAcrossAContentSwap(t *testing.T) {
 
 	ctx, cancel := context.WithCancel(context.Background())
 	e := sim.NewEngine(sim.EmptyWorld(), nil, sim.Config{Seed: 5, Partitions: simtest.AllPartitions(), Handlers: sim.Handlers(), Content: content})
-	src, err := NewKafkaSource(ctx, KafkaSourceOptions{Brokers: bk, Group: group, Start: e.State().Offsets, Topic: commands, LagEvery: 200 * time.Millisecond})
+	src, err := NewKafkaSource(ctx, KafkaSourceOptions{Kafka: bk, Group: group, Start: e.State().Offsets, Topic: commands, LagEvery: 200 * time.Millisecond})
 	if err != nil {
 		t.Fatal(err)
 	}

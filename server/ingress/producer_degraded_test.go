@@ -24,6 +24,7 @@ import (
 	"go.opentelemetry.io/otel/sdk/trace/tracetest"
 
 	logv1 "github.com/valesordev/andara/gen/go/andara/log/v1"
+	"github.com/valesordev/andara/server/kafkaclient"
 	"github.com/valesordev/andara/server/sim"
 )
 
@@ -79,7 +80,7 @@ func newProducerFixture(t *testing.T, mutate func(*ProducerOptions)) *producerFi
 	logs := &syncBuffer{}
 	metrics := NewMetrics(prometheus.NewRegistry())
 	o := ProducerOptions{
-		Brokers: []string{b.addr()}, Topic: fixtureTopic, Deadline: time.Second, ProbeInterval: 500 * time.Millisecond,
+		Kafka: kafkaclient.Config{Brokers: []string{b.addr()}}, Topic: fixtureTopic, Deadline: time.Second, ProbeInterval: 500 * time.Millisecond,
 		Metrics: metrics, Log: slog.New(slog.NewJSONHandler(logs, &slog.HandlerOptions{Level: slog.LevelDebug})),
 		manualProbe: true,
 	}
@@ -530,7 +531,7 @@ func TestProbe_ADarkBrokerInMetadataIsNotTheLogBeingUnreachable(t *testing.T) {
 	var dials sync.Map
 	f := newProducerFixture(t, func(o *ProducerOptions) {
 		o.ProbeInterval = 400 * time.Millisecond
-		o.Dialer = func(ctx context.Context, network, host string) (net.Conn, error) {
+		o.Kafka.Dialer = func(ctx context.Context, network, host string) (net.Conn, error) {
 			if host == dark {
 				dials.Store(host, true)
 				<-ctx.Done() // a SYN that is never answered
@@ -603,7 +604,7 @@ func TestProduce_TheSubmitSpanNamesTheDegradedPartition(t *testing.T) {
 
 // The floor is the producer's to refuse as well as config load's.
 func TestNewKafkaProducer_RefusesAHoldBelowTheFloor(t *testing.T) {
-	_, err := NewKafkaProducer(ProducerOptions{Brokers: []string{"127.0.0.1:1"}, Topic: fixtureTopic, Deadline: time.Second, DegradedHold: 89 * time.Second})
+	_, err := NewKafkaProducer(ProducerOptions{Kafka: kafkaclient.Config{Brokers: []string{"127.0.0.1:1"}}, Topic: fixtureTopic, Deadline: time.Second, DegradedHold: 89 * time.Second})
 	if err == nil || !strings.Contains(err.Error(), "floor") {
 		t.Fatalf("err = %v", err)
 	}
@@ -611,7 +612,7 @@ func TestNewKafkaProducer_RefusesAHoldBelowTheFloor(t *testing.T) {
 
 // AW-SRV-058 AC-5a: there is no default commands topic to fall back to.
 func TestNewKafkaProducer_RequiresTheTopic(t *testing.T) {
-	_, err := NewKafkaProducer(ProducerOptions{Brokers: []string{"127.0.0.1:1"}, Deadline: time.Second})
+	_, err := NewKafkaProducer(ProducerOptions{Kafka: kafkaclient.Config{Brokers: []string{"127.0.0.1:1"}}, Deadline: time.Second})
 	if err == nil || !strings.Contains(err.Error(), "ProducerOptions.Topic") {
 		t.Fatalf("err = %v, want one naming ProducerOptions.Topic", err)
 	}

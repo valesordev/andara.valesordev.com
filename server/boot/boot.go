@@ -74,6 +74,9 @@ type Runtime struct {
 	// Topics names every topic this process uses, resolved once from
 	// kafka.topic_prefix by New (AW-SRV-058).
 	Topics kafkaclient.Topics
+	// Kafka is the configuration every Kafka client this process builds is
+	// built from (AW-SRV-044): New fills it from cfg and telemetry.
+	Kafka kafkaclient.Config
 	// ContentTopics and AuditTopicName are the content store's topics and the
 	// audit topic. New fills them from Topics; a test against a live broker
 	// that must not write into the stack's replaces them.
@@ -205,15 +208,37 @@ func (rt *Runtime) LoadVerbs(ctx context.Context) error {
 	return nil
 }
 
-// New constructs a Runtime and resolves its topic names. Telemetry must
-// already be set up. A malformed kafka.topic_prefix is an error, logged; the
-// caller exits ExitFail.
+// New constructs a Runtime, resolves its topic names and builds the Kafka
+// client configuration every client is built from (AW-SRV-044). Telemetry
+// must already be set up. A malformed kafka.topic_prefix, or a SASL username
+// whose password file is missing, unreadable or empty, is an error, logged
+// before any client connects; the caller exits ExitFail.
 func New(cfg config.Config, tel *telemetry.Telemetry) (*Runtime, error) {
 	t, err := ResolveTopics(cfg, tel.Log)
 	if err != nil {
 		return nil, err
 	}
-	return &Runtime{Cfg: cfg, Tel: tel, Topics: t, ContentTopics: content.TopicsFrom(t), AuditTopicName: t.Audit()}, nil
+	kc := KafkaConfig(cfg, tel)
+	if len(cfg.KafkaBrokers) > 0 {
+		if err := kc.Validate(); err != nil {
+			tel.Log.Error("kafka client credentials", "kafka.sasl_username", cfg.KafkaSASLUsername, "detail", err.Error())
+			return nil, err
+		}
+	}
+	return &Runtime{Cfg: cfg, Tel: tel, Topics: t, Kafka: kc, ContentTopics: content.TopicsFrom(t), AuditTopicName: t.Audit()}, nil
+}
+
+// KafkaConfig is the process's Kafka client configuration from cfg: its
+// brokers and credentials, with the auth-failure counter on tel's registry
+// and the client lines in tel's log. Each site names its client with For.
+func KafkaConfig(cfg config.Config, tel *telemetry.Telemetry) kafkaclient.Config {
+	return kafkaclient.Config{
+		Brokers:          cfg.KafkaBrokers,
+		SASLUsername:     cfg.KafkaSASLUsername,
+		SASLPasswordFile: cfg.KafkaSASLPasswordFile,
+		Metrics:          kafkaclient.NewMetrics(tel.Reg),
+		Log:              tel.Log,
+	}
 }
 
 // ResolveTopics is kafkaclient.TopicsFor with the startup lines AW-SRV-058
@@ -531,7 +556,7 @@ func (rt *Runtime) contentOptions() content.Options {
 	return content.Options{
 		Source:        rt.Cfg.ContentSource,
 		Path:          rt.Cfg.ContentPath,
-		Brokers:       rt.Cfg.KafkaBrokers,
+		Kafka:         rt.Kafka,
 		Packs:         rt.Cfg.ContentPacks,
 		CacheDir:      rt.Cfg.ContentCacheDir,
 		MaxBlobBytes:  rt.Cfg.ContentMaxBlobBytes,

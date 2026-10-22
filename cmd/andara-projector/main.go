@@ -20,10 +20,10 @@ import (
 
 	"github.com/prometheus/client_golang/prometheus/promhttp"
 	"github.com/twmb/franz-go/pkg/kadm"
-	"github.com/twmb/franz-go/pkg/kgo"
 
 	"github.com/valesordev/andara/server/boot"
 	"github.com/valesordev/andara/server/config"
+	"github.com/valesordev/andara/server/kafkaclient"
 	"github.com/valesordev/andara/server/projector"
 	"github.com/valesordev/andara/server/sim"
 	"github.com/valesordev/andara/server/store"
@@ -104,7 +104,8 @@ func runState(cfg config.Projector, stderr io.Writer) int {
 	// the audit topic (#326).
 	rt, err := boot.New(cfg.Config, tel)
 	if err != nil {
-		// New logged it at error, naming kafka.topic_prefix.
+		// New logged it at error, naming kafka.topic_prefix or the password
+		// file.
 		return projector.ExitConfig
 	}
 	rt.ContentReadOnly = true
@@ -136,10 +137,10 @@ func runState(cfg config.Projector, stderr io.Writer) int {
 		tel.Log.Error("snapshot store", "detail", err.Error())
 		return projector.ExitConfig
 	}
-	go topicBytes(ctx, cfg.KafkaBrokers, rt.Topics.State(), metrics, tel.Log)
+	go topicBytes(ctx, rt.Kafka, rt.Topics.State(), metrics, tel.Log)
 
 	err = projector.Run(ctx, projector.RunOptions{
-		Brokers:        cfg.KafkaBrokers,
+		Kafka:          rt.Kafka,
 		Group:          config.ProjectorGroup(cfg.Environment),
 		CommandsTopic:  rt.Topics.Commands(),
 		EventsTopic:    rt.Topics.Events(),
@@ -206,8 +207,8 @@ func handler(tel *telemetry.Telemetry, ready *atomic.Bool) http.Handler {
 // every 30s, and the gauge keeps its last good value in between: the runbook
 // reads this gauge, and a silent 0 is what it read before (AW-SRV-019 feedback
 // §1).
-func topicBytes(ctx context.Context, brokers []string, stateTopic string, m *projector.Metrics, log *slog.Logger) {
-	cl, err := kgo.NewClient(projector.MetaOpts(brokers)...)
+func topicBytes(ctx context.Context, kc kafkaclient.Config, stateTopic string, m *projector.Metrics, log *slog.Logger) {
+	cl, err := kafkaclient.Build(projector.MetaOpts(kc))
 	if err != nil {
 		log.Warn("andara_state_topic_bytes will not be reported", "topic", stateTopic, "detail", err.Error())
 		return

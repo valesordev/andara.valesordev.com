@@ -70,7 +70,7 @@ func TestKafka_APointerMoveSwapsTheWorldThroughTheLog(t *testing.T) {
 	p.publish(CorePack, 2, 0, with(`{"formatVersion":1,"id":"town","name":"Town","fallbackRoom":"plaza","rooms":[
 		{"id":"plaza","title":"Plaza","description":"d"}]}`))
 
-	resolver, err := NewKafkaResolver(KafkaOptions{Brokers: bk, Topics: topics})
+	resolver, err := NewKafkaResolver(KafkaOptions{Kafka: bk, Topics: topics})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -84,7 +84,7 @@ func TestKafka_APointerMoveSwapsTheWorldThroughTheLog(t *testing.T) {
 	tp := sdktrace.NewTracerProvider(sdktrace.WithSpanProcessor(spans))
 	defer func() { _ = tp.Shutdown(context.Background()) }()
 	loader := NewLoader(LoaderOptions{Store: resolver, Packs: []string{CorePack}, Metrics: m, Tracer: tp.Tracer("test")})
-	prod, err := ingress.NewKafkaProducer(ingress.ProducerOptions{Brokers: bk, Topic: commands, Deadline: 10 * time.Second})
+	prod, err := ingress.NewKafkaProducer(ingress.ProducerOptions{Kafka: bk, Topic: commands, Deadline: 10 * time.Second})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -96,7 +96,7 @@ func TestKafka_APointerMoveSwapsTheWorldThroughTheLog(t *testing.T) {
 
 	// The tick loop, as boot builds it: no content, the Loader as its source.
 	e := sim.NewEngine(sim.EmptyWorld(), nil, sim.Config{Seed: 5, Partitions: simtest.AllPartitions(), Handlers: sim.Handlers(), Content: loader})
-	src, err := tickloop.NewKafkaSource(ctx, tickloop.KafkaSourceOptions{Brokers: bk, Group: "it-sim-" + commands, Start: e.State().Offsets, Topic: commands, LagEvery: 200 * time.Millisecond})
+	src, err := tickloop.NewKafkaSource(ctx, tickloop.KafkaSourceOptions{Kafka: bk, Group: "it-sim-" + commands, Start: e.State().Offsets, Topic: commands, LagEvery: 200 * time.Millisecond})
 	if err != nil {
 		t.Fatal(err)
 	}

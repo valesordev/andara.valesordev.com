@@ -114,7 +114,7 @@ func (rt *Runtime) StartTickLoop(ctx context.Context) (*tickloop.Loop, error) {
 			slog.String("trace_id", rep.TraceID),
 		)
 		source, err = tickloop.NewKafkaSource(ctx, tickloop.KafkaSourceOptions{
-			Brokers:  cfg.KafkaBrokers,
+			Kafka:    rt.Kafka,
 			Group:    "andara-sim-" + cfg.Environment,
 			ClientID: cfg.ServiceName,
 			Start:    engine.State().Offsets,
@@ -123,7 +123,7 @@ func (rt *Runtime) StartTickLoop(ctx context.Context) (*tickloop.Loop, error) {
 		if err != nil {
 			return nil, err
 		}
-		kp, err := tickloop.NewKafkaPublisher(ctx, cfg.KafkaBrokers, cfg.ServiceName, rt.Topics.Commands(), rt.Topics.Events())
+		kp, err := tickloop.NewKafkaPublisher(ctx, rt.Kafka, cfg.ServiceName, rt.Topics.Commands(), rt.Topics.Events())
 		if err != nil {
 			_ = source.Close()
 			return nil, err
@@ -331,27 +331,27 @@ type replayLog interface {
 
 // kafkaLog is replayLog over the broker.
 type kafkaLog struct {
-	brokers []string
-	topics  kafkaclient.Topics
+	kafka  kafkaclient.Config
+	topics kafkaclient.Topics
 }
 
 func (k kafkaLog) Boundaries(ctx context.Context) ([]sim.TickCompleted, error) {
-	return tickloop.ReadBoundaries(ctx, k.brokers, k.topics.Events())
+	return tickloop.ReadBoundaries(ctx, k.kafka, k.topics.Events())
 }
 
 func (k kafkaLog) Fetch(p int32, from, to int64) ([]sim.Record, error) {
-	return tickloop.KafkaRecords{Brokers: k.brokers, Topic: k.topics.Commands()}.Fetch(p, from, to)
+	return tickloop.KafkaRecords{Kafka: k.kafka, Topic: k.topics.Commands()}.Fetch(p, from, to)
 }
 
 func (k kafkaLog) End(ctx context.Context, p int32) (int64, error) {
-	return tickloop.EndOffset(ctx, k.brokers, k.topics.Commands(), p)
+	return tickloop.EndOffset(ctx, k.kafka, k.topics.Commands(), p)
 }
 
 func (rt *Runtime) recoveryLog() replayLog {
 	if rt.replay != nil {
 		return rt.replay
 	}
-	return kafkaLog{brokers: rt.Cfg.KafkaBrokers, topics: rt.Topics}
+	return kafkaLog{kafka: rt.Kafka, topics: rt.Topics}
 }
 
 // publishFailureKind is the andara_publish_failures_total kind of a record kp
@@ -637,7 +637,7 @@ func (rt *Runtime) worldEnd(ctx context.Context) (int64, error) {
 	if rt.memSource != nil {
 		return rt.memSource.End(sim.WorldPartition), nil
 	}
-	return tickloop.EndOffset(ctx, rt.Cfg.KafkaBrokers, rt.Topics.Commands(), sim.WorldPartition)
+	return tickloop.EndOffset(ctx, rt.Kafka, rt.Topics.Commands(), sim.WorldPartition)
 }
 
 // FollowContent applies Active Pointer moves until ctx ends. The Loader logs

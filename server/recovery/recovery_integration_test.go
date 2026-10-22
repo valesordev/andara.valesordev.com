@@ -31,6 +31,8 @@ import (
 	logv1 "github.com/valesordev/andara/gen/go/andara/log/v1"
 	statev1 "github.com/valesordev/andara/gen/go/andara/state/v1"
 	"github.com/valesordev/andara/internal/eventually"
+	"github.com/valesordev/andara/server/kafkaclient"
+	"github.com/valesordev/andara/server/kafkaclient/kafkatest"
 	"github.com/valesordev/andara/server/recovery"
 	"github.com/valesordev/andara/server/sim"
 	"github.com/valesordev/andara/server/simtest"
@@ -40,22 +42,22 @@ import (
 
 var canonical = proto.MarshalOptions{Deterministic: true}
 
-func brokers(t *testing.T) []string {
+func brokers(t *testing.T) kafkaclient.Config {
 	t.Helper()
 	v := os.Getenv("ANDARA_KAFKA_BROKERS")
 	if v == "" {
 		t.Skip("ANDARA_KAFKA_BROKERS not set; run `make up` and `make test-integration`")
 	}
-	return strings.Split(v, ",")
+	return kafkatest.Config(strings.Split(v, ","))
 }
 
 // topics creates a throwaway commands topic and events topic, deleted when the
 // test ends.
-func topics(t *testing.T, bk []string, tag string) (commands, events string) {
+func topics(t *testing.T, bk kafkaclient.Config, tag string) (commands, events string) {
 	t.Helper()
 	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
 	defer cancel()
-	cl, err := kgo.NewClient(kgo.SeedBrokers(bk...))
+	cl, err := kafkaclient.New(bk.For("andara-it"))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -91,7 +93,7 @@ const (
 
 // options is recovery over the broker and the store at dir, the way boot builds
 // it; the returned func closes the readers.
-func options(t *testing.T, fix string, bk []string, commands, events, dir string) (recovery.Options, func()) {
+func options(t *testing.T, fix string, bk kafkaclient.Config, commands, events, dir string) (recovery.Options, func()) {
 	t.Helper()
 	reg, err := simtest.Templates()
 	if err != nil {
@@ -152,7 +154,7 @@ func TestRecoveryChild(t *testing.T) {
 		t.Skip("child mode only")
 	}
 	parts := strings.Split(spec, "|")
-	bk, commands, events, dir, fix := strings.Split(parts[0], ","), parts[1], parts[2], parts[3], parts[4]
+	bk, commands, events, dir, fix := kafkatest.Config(strings.Split(parts[0], ",")), parts[1], parts[2], parts[3], parts[4]
 	ctx := context.Background()
 	o, closeReader := options(t, fix, bk, commands, events, dir)
 	var e *sim.Engine
@@ -173,7 +175,7 @@ func TestRecoveryChild(t *testing.T) {
 	if fix == fixtureSizing {
 		interval, rate = 180*time.Second, 1000
 	}
-	src, err := tickloop.NewKafkaSource(ctx, tickloop.KafkaSourceOptions{Brokers: bk, Group: "it-rec-" + commands[len(commands)-8:], Start: e.State().Offsets, Topic: commands, LagEvery: 200 * time.Millisecond})
+	src, err := tickloop.NewKafkaSource(ctx, tickloop.KafkaSourceOptions{Kafka: bk, Group: "it-rec-" + commands[len(commands)-8:], Start: e.State().Offsets, Topic: commands, LagEvery: 200 * time.Millisecond})
 	if err != nil {
 		fmt.Fprintln(os.Stderr, "child:", err)
 		os.Exit(3)
@@ -227,10 +229,10 @@ func (p *arriveDropping) Produce(ctx context.Context, cmds []*logv1.LoggedComman
 	return p.KafkaPublisher.Produce(ctx, keep)
 }
 
-func spawn(t *testing.T, fix, mode string, bk []string, commands, events, dir string) *exec.Cmd {
+func spawn(t *testing.T, fix, mode string, bk kafkaclient.Config, commands, events, dir string) *exec.Cmd {
 	t.Helper()
 	cmd := exec.Command(os.Args[0], "-test.run", "^TestRecoveryChild$", "-test.v")
-	cmd.Env = append(os.Environ(), "ANDARA_RECOVERY_CHILD="+strings.Join(bk, ",")+"|"+commands+"|"+events+"|"+dir+"|"+fix+"|"+mode)
+	cmd.Env = append(os.Environ(), "ANDARA_RECOVERY_CHILD="+strings.Join(bk.Brokers, ",")+"|"+commands+"|"+events+"|"+dir+"|"+fix+"|"+mode)
 	cmd.Stderr = os.Stderr
 	if err := cmd.Start(); err != nil {
 		t.Fatal(err)
@@ -247,7 +249,7 @@ type ack struct {
 
 // submit produces the scripted log through its own client, as a Gateway's
 // producer does, and records every acknowledgement's partition and offset.
-func submit(t *testing.T, bk []string, commands string, n int) []ack {
+func submit(t *testing.T, bk kafkaclient.Config, commands string, n int) []ack {
 	t.Helper()
 	var cmds []*logv1.LoggedCommand
 	for _, recs := range simtest.Script(n) {
@@ -259,9 +261,9 @@ func submit(t *testing.T, bk []string, commands string, n int) []ack {
 }
 
 // produceCommands produces cmds in order, each to its own Partition.
-func produceCommands(t *testing.T, bk []string, commands string, cmds []*logv1.LoggedCommand) []ack {
+func produceCommands(t *testing.T, bk kafkaclient.Config, commands string, cmds []*logv1.LoggedCommand) []ack {
 	t.Helper()
-	cl, err := kgo.NewClient(kgo.SeedBrokers(bk...), kgo.RecordPartitioner(kgo.ManualPartitioner()), kgo.RequiredAcks(kgo.AllISRAcks()))
+	cl, err := kafkaclient.New(bk.For("andara-it"), kgo.RecordPartitioner(kgo.ManualPartitioner()), kgo.RequiredAcks(kgo.AllISRAcks()))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -284,7 +286,7 @@ func produceCommands(t *testing.T, bk []string, commands string, cmds []*logv1.L
 // history is what a SIGKILLed process left: its log, its store, and the
 // acknowledgements its clients hold.
 type history struct {
-	bk                 []string
+	bk                 kafkaclient.Config
 	commands, events   string
 	dir                string
 	acks               []ack
@@ -400,7 +402,7 @@ func TestRecoveryAgainstTheBroker(t *testing.T) {
 
 		// AC-8: every acknowledged Command is below the replayed head of its
 		// Partition, and the record at that offset is the one acknowledged.
-		ks := tickloop.KafkaRecords{Brokers: h.bk, Topic: h.commands}
+		ks := tickloop.KafkaRecords{Kafka: h.bk, Topic: h.commands}
 		for _, a := range h.acks {
 			if head := e.State().Offsets[a.partition]; a.offset >= head {
 				t.Fatalf("partition %d: acked offset %d is not below the replayed head %d", a.partition, a.offset, head)
@@ -597,7 +599,7 @@ func TestRecoveryAgainstTheBroker(t *testing.T) {
 		if target.Offset == 0 {
 			t.Skip("no Partition has a Command past the oldest round's offset to truncate below")
 		}
-		cl, err := kgo.NewClient(kgo.SeedBrokers(h.bk...))
+		cl, err := kafkaclient.New(h.bk.For("andara-it"))
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -627,7 +629,7 @@ func republish(t *testing.T, h *history, tick sim.Tick) string {
 	_, events2 := topics(t, h.bk, "doctored")
 	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
 	defer cancel()
-	cl, err := kgo.NewClient(kgo.SeedBrokers(h.bk...), kgo.RecordPartitioner(kgo.ManualPartitioner()),
+	cl, err := kafkaclient.New(h.bk.For("andara-it"), kgo.RecordPartitioner(kgo.ManualPartitioner()),
 		kgo.ConsumePartitions(map[string]map[int32]kgo.Offset{h.events: {tickloop.BoundaryPartition: kgo.NewOffset().AtStart()}}))
 	if err != nil {
 		t.Fatal(err)
@@ -727,7 +729,7 @@ func TestRecoveryWithAHandoffInFlight(t *testing.T) {
 	// retry from the recovered Transit.
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
-	src, err := tickloop.NewKafkaSource(ctx, tickloop.KafkaSourceOptions{Brokers: bk, Group: "it-rec-second-" + commands[len(commands)-8:], Start: r.State().Offsets, Topic: commands, LagEvery: 200 * time.Millisecond})
+	src, err := tickloop.NewKafkaSource(ctx, tickloop.KafkaSourceOptions{Kafka: bk, Group: "it-rec-second-" + commands[len(commands)-8:], Start: r.State().Offsets, Topic: commands, LagEvery: 200 * time.Millisecond})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -995,7 +997,7 @@ func TestRecoveryAC12Child(t *testing.T) {
 		t.Skip("child mode only")
 	}
 	parts := strings.Split(spec, "|")
-	o, closeReader := options(t, parts[4], strings.Split(parts[0], ","), parts[1], parts[2], parts[3])
+	o, closeReader := options(t, parts[4], kafkatest.Config(strings.Split(parts[0], ",")), parts[1], parts[2], parts[3])
 	defer closeReader()
 	_, rep, err := recovery.Recover(context.Background(), o)
 	if err != nil {
@@ -1009,10 +1011,10 @@ func TestRecoveryAC12Child(t *testing.T) {
 
 type ac12Run struct{ load, seek, replay, total, replayed, round, rss int64 }
 
-func runAC12Child(t *testing.T, fix string, bk []string, commands, events, dir string) ac12Run {
+func runAC12Child(t *testing.T, fix string, bk kafkaclient.Config, commands, events, dir string) ac12Run {
 	t.Helper()
 	cmd := exec.Command(os.Args[0], "-test.run", "^TestRecoveryAC12Child$", "-test.v")
-	cmd.Env = append(os.Environ(), "ANDARA_RECOVERY_AC12_CHILD="+strings.Join(bk, ",")+"|"+commands+"|"+events+"|"+dir+"|"+fix)
+	cmd.Env = append(os.Environ(), "ANDARA_RECOVERY_AC12_CHILD="+strings.Join(bk.Brokers, ",")+"|"+commands+"|"+events+"|"+dir+"|"+fix)
 	cmd.Stderr = os.Stderr
 	out, err := cmd.Output()
 	if err != nil {
@@ -1115,7 +1117,7 @@ func TestSeekIsBoundedByTheRoundNotTheHistory(t *testing.T) {
 	commands, withHistory := topics(t, bk, "ac12-history")
 	_, quiet := topics(t, bk, "ac12-quiet")
 
-	cl, err := kgo.NewClient(kgo.SeedBrokers(bk...), kgo.RecordPartitioner(kgo.ManualPartitioner()), kgo.ProducerBatchMaxBytes(1<<20))
+	cl, err := kafkaclient.New(bk.For("andara-it"), kgo.RecordPartitioner(kgo.ManualPartitioner()), kgo.ProducerBatchMaxBytes(1<<20))
 	if err != nil {
 		t.Fatal(err)
 	}

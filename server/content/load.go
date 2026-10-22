@@ -14,6 +14,7 @@ import (
 	"go.opentelemetry.io/otel/trace"
 
 	logv1 "github.com/valesordev/andara/gen/go/andara/log/v1"
+	"github.com/valesordev/andara/server/kafkaclient"
 	"github.com/valesordev/andara/server/sim"
 )
 
@@ -37,11 +38,11 @@ type Options struct {
 	Path   string // content.path, dir source only
 
 	// Kafka source.
-	Brokers      []string      // the broker list the rest of the server uses
-	Packs        []string      // content.packs; a single "*" follows every pointer
-	CacheDir     string        // content.cache_dir
-	MaxBlobBytes int64         // content.max_blob_bytes
-	Debounce     time.Duration // content.reload_debounce
+	Kafka        kafkaclient.Config // the Kafka client configuration the rest of the server uses
+	Packs        []string           // content.packs; a single "*" follows every pointer
+	CacheDir     string             // content.cache_dir
+	MaxBlobBytes int64              // content.max_blob_bytes
+	Debounce     time.Duration      // content.reload_debounce
 
 	StrictOrphans bool
 	// SpawnRoom is character.spawn_room: a version whose World lacks it,
@@ -93,7 +94,7 @@ func Open(ctx context.Context, o Options) (*Content, []sim.ValidationError) {
 
 func openKafka(ctx context.Context, o Options) (*Content, []sim.ValidationError) {
 	resolver, err := NewKafkaResolver(KafkaOptions{
-		Brokers:      o.Brokers,
+		Kafka:        o.Kafka,
 		Topics:       o.Topics,
 		Cache:        BlobCache{Dir: o.CacheDir},
 		MaxBlobBytes: o.MaxBlobBytes,

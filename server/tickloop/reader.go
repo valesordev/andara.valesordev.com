@@ -15,6 +15,7 @@ import (
 	"google.golang.org/protobuf/proto"
 
 	logv1 "github.com/valesordev/andara/gen/go/andara/log/v1"
+	"github.com/valesordev/andara/server/kafkaclient"
 	"github.com/valesordev/andara/server/sim"
 )
 
@@ -66,7 +67,7 @@ type BoundaryReader struct {
 	// (the intermittent projector timeouts after AW-SRV-007, #422).
 	client   *kgo.Client
 	consumer *kgo.Client
-	brokers  []string
+	kc       kafkaclient.Config
 	topic    string
 	clientID string
 	buf      []Boundary
@@ -94,11 +95,11 @@ type BoundaryReader struct {
 }
 
 // NewBoundaryReader starts reading the boundary Partition from its start.
-func NewBoundaryReader(ctx context.Context, brokers []string, eventsTopic, clientID string) (*BoundaryReader, error) {
+func NewBoundaryReader(ctx context.Context, kc kafkaclient.Config, eventsTopic, clientID string) (*BoundaryReader, error) {
 	if eventsTopic == "" {
 		return nil, errors.New("tickloop: NewBoundaryReader eventsTopic is required")
 	}
-	client, err := kgo.NewClient(boundaryAdminOpts(brokers, clientID)...)
+	client, err := kafkaclient.Build(boundaryAdminOpts(kc, clientID))
 	if err != nil {
 		return nil, err
 	}
@@ -106,7 +107,7 @@ func NewBoundaryReader(ctx context.Context, brokers []string, eventsTopic, clien
 		client.Close()
 		return nil, err
 	}
-	return &BoundaryReader{client: client, brokers: brokers, topic: eventsTopic, clientID: clientID}, nil
+	return &BoundaryReader{client: client, kc: kc, topic: eventsTopic, clientID: clientID}, nil
 }
 
 // SeekAfter moves the reader to where the boundary for tick+1 is, or just
@@ -122,11 +123,11 @@ func (r *BoundaryReader) SeekAfter(ctx context.Context, tick sim.Tick) (int64, e
 	adm := kadm.NewClient(r.client)
 	starts, err := adm.ListStartOffsets(ctx, r.topic)
 	if err != nil {
-		return 0, fmt.Errorf("boundary start offset: %w", err)
+		return 0, fmt.Errorf("boundary start offset: %w", r.check(err))
 	}
 	ends, err := adm.ListEndOffsets(ctx, r.topic)
 	if err != nil {
-		return 0, fmt.Errorf("boundary end offset: %w", err)
+		return 0, fmt.Errorf("boundary end offset: %w", r.check(err))
 	}
 	so, _ := starts.Lookup(r.topic, BoundaryPartition)
 	eo, _ := ends.Lookup(r.topic, BoundaryPartition)
@@ -171,11 +172,11 @@ func (r *BoundaryReader) HeadTick(ctx context.Context) (sim.Tick, error) {
 	adm := kadm.NewClient(r.client)
 	starts, err := adm.ListStartOffsets(ctx, r.topic)
 	if err != nil {
-		return 0, fmt.Errorf("boundary start offset: %w", err)
+		return 0, fmt.Errorf("boundary start offset: %w", r.check(err))
 	}
 	ends, err := adm.ListEndOffsets(ctx, r.topic)
 	if err != nil {
-		return 0, fmt.Errorf("boundary end offset: %w", err)
+		return 0, fmt.Errorf("boundary end offset: %w", r.check(err))
 	}
 	so, _ := starts.Lookup(r.topic, BoundaryPartition)
 	eo, _ := ends.Lookup(r.topic, BoundaryPartition)
@@ -215,7 +216,7 @@ func (r *BoundaryReader) lastBoundary(ctx context.Context, from, end int64) (sim
 			return 0, false, ctx.Err()
 		}
 		if err := fetches.Err0(); err != nil {
-			return 0, false, fmt.Errorf("read the boundary head at %d: %w", from, OffsetGap(err))
+			return 0, false, fmt.Errorf("read the boundary head at %d: %w", from, OffsetGap(r.check(err)))
 		}
 		fetches.EachRecord(func(rec *kgo.Record) {
 			next = rec.Offset + 1
@@ -237,7 +238,7 @@ func (r *BoundaryReader) lastBoundary(ctx context.Context, from, end int64) (sim
 // offset, not a megabyte, and a 1 MiB fetch per probe was tens of MB of peak
 // RSS in a recovery over a long history (AW-SRV-007 AC-12).
 func (r *BoundaryReader) probeClient(offset int64) (*kgo.Client, error) {
-	return kgo.NewClient(boundaryProbeOpts(r.brokers, r.clientID, r.topic, offset)...)
+	return kafkaclient.Build(boundaryProbeOpts(r.kc, r.clientID, r.topic, offset))
 }
 
 // probe reads from offset until the first boundary, returning its tick and
@@ -256,7 +257,7 @@ func (r *BoundaryReader) probe(ctx context.Context, offset, end int64) (sim.Tick
 			return 0, 0, false, ctx.Err()
 		}
 		if err := fetches.Err0(); err != nil {
-			return 0, 0, false, fmt.Errorf("probe boundaries at %d: %w", offset, OffsetGap(err))
+			return 0, 0, false, fmt.Errorf("probe boundaries at %d: %w", offset, OffsetGap(r.check(err)))
 		}
 		var (
 			found bool
@@ -301,7 +302,7 @@ func (r *BoundaryReader) Next(ctx context.Context, max int, wait time.Duration) 
 		}
 		for _, fe := range fetches.Errors() {
 			if !errors.Is(fe.Err, context.DeadlineExceeded) && !errors.Is(fe.Err, context.Canceled) {
-				return nil, fmt.Errorf("read boundaries: %w", OffsetGap(fe.Err))
+				return nil, fmt.Errorf("read boundaries: %w", OffsetGap(r.check(fe.Err)))
 			}
 		}
 		fetches.EachPartition(func(p kgo.FetchTopicPartition) {
@@ -346,7 +347,7 @@ func (r *BoundaryReader) Next(ctx context.Context, max int, wait time.Duration) 
 func (r *BoundaryReader) positionAtStart(ctx context.Context) error {
 	starts, err := kadm.NewClient(r.client).ListStartOffsets(ctx, r.topic)
 	if err != nil {
-		return fmt.Errorf("boundary start offset: %w", err)
+		return fmt.Errorf("boundary start offset: %w", r.check(err))
 	}
 	so, ok := starts.Lookup(r.topic, BoundaryPartition)
 	if !ok || so.Err != nil {
@@ -366,7 +367,7 @@ func (r *BoundaryReader) consume(offset int64) error {
 		r.consumer.Close()
 		r.consumer = nil
 	}
-	c, err := kgo.NewClient(boundaryConsumerOpts(r.brokers, r.clientID, r.topic, offset)...)
+	c, err := kafkaclient.Build(boundaryConsumerOpts(r.kc, r.clientID, r.topic, offset))
 	if err != nil {
 		return fmt.Errorf("boundary consumer at %d: %w", offset, err)
 	}
@@ -406,6 +407,7 @@ func (r *BoundaryReader) Close() {
 // tick rate.
 type CommandSource struct {
 	client  *kgo.Client
+	kc      kafkaclient.Config // the consumer's, for Check
 	topic   string
 	timeout time.Duration
 	buf     map[int32][]sim.Record
@@ -414,7 +416,7 @@ type CommandSource struct {
 // NewCommandSource consumes every Partition in start from its offset. A
 // Partition whose log begins past its start offset is history the log no
 // longer has: ErrLogGap, naming both.
-func NewCommandSource(ctx context.Context, brokers []string, topic, clientID string, start map[int32]int64) (*CommandSource, error) {
+func NewCommandSource(ctx context.Context, kc kafkaclient.Config, topic, clientID string, start map[int32]int64) (*CommandSource, error) {
 	if topic == "" {
 		return nil, errors.New("tickloop: NewCommandSource topic is required")
 	}
@@ -422,14 +424,15 @@ func NewCommandSource(ctx context.Context, brokers []string, topic, clientID str
 	for p, off := range start {
 		assign[p] = kgo.NewOffset().At(off)
 	}
-	client, err := kgo.NewClient(commandSourceOpts(brokers, clientID, topic, assign)...)
+	cc, copts := commandSourceOpts(kc, clientID, topic, assign)
+	client, err := kafkaclient.New(cc, copts...)
 	if err != nil {
 		return nil, err
 	}
 	starts, err := kadm.NewClient(client).ListStartOffsets(ctx, topic)
 	if err != nil {
 		client.Close()
-		return nil, fmt.Errorf("commands start offsets: %w", err)
+		return nil, fmt.Errorf("commands start offsets: %w", cc.Check(topic, err))
 	}
 	for p, off := range start {
 		if so, ok := starts.Lookup(topic, p); ok && so.Offset > off {
@@ -437,7 +440,7 @@ func NewCommandSource(ctx context.Context, brokers []string, topic, clientID str
 			return nil, &LogGapError{Topic: topic, Partition: p, Need: off, Have: so.Offset}
 		}
 	}
-	return &CommandSource{client: client, topic: topic, timeout: 30 * time.Second, buf: map[int32][]sim.Record{}}, nil
+	return &CommandSource{client: client, kc: cc, topic: topic, timeout: 30 * time.Second, buf: map[int32][]sim.Record{}}, nil
 }
 
 // Fetch implements sim.RecordSource. Ranges on a Partition are requested in
@@ -464,7 +467,7 @@ func (c *CommandSource) Fetch(p int32, from, to int64) ([]sim.Record, error) {
 			return nil, fmt.Errorf("fetch %s partition %d [%d,%d): %w", c.topic, p, from, to, ctx.Err())
 		}
 		if err := fetches.Err0(); err != nil {
-			return nil, OffsetGap(err)
+			return nil, OffsetGap(c.kc.Check(c.topic, err))
 		}
 		var derr error
 		fetches.EachRecord(func(r *kgo.Record) {
@@ -496,4 +499,10 @@ func OffsetGap(err error) error {
 		return fmt.Errorf("%w: the broker no longer has the offset: %w", ErrLogGap, err)
 	}
 	return err
+}
+
+// check is Check on the reader's topic, for a fetch or admin error.
+func (r *BoundaryReader) check(err error) error {
+	c, _ := boundaryAdminOpts(r.kc, r.clientID)
+	return c.Check(r.topic, err)
 }

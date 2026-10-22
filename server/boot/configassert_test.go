@@ -113,12 +113,12 @@ func TestConfigAssert_CompressionWarnsAndExitsZero(t *testing.T) {
 	}
 }
 
-var newClient = regexp.MustCompile(`kgo\.NewClient\(([^)]*)\)`)
+var newClient = regexp.MustCompile(`kafkaclient\.(?:New|Build)\(([^)]*)\)`)
 
-// Until AW-SRV-044's single constructor, every kgo.NewClient call in the tree
-// builds from an options function or list that a Site also describes. A call
-// with its options written inline (kgo.SeedBrokers(...) in the call) has no
-// Site, so the check could not see it.
+// Every client the code builds goes through kafkaclient.New or Build
+// (AW-SRV-044) from an options function or list that a Site also describes.
+// A call with its options written inline (kgo.… in the call) has no Site, so
+// the check could not see it.
 func TestConfigAssert_EveryKafkaClientTheCodeBuildsHasASite(t *testing.T) {
 	root := filepath.Join("..", "..")
 	want := map[string]int{
@@ -153,7 +153,7 @@ func TestConfigAssert_EveryKafkaClientTheCodeBuildsHasASite(t *testing.T) {
 		for _, m := range newClient.FindAllStringSubmatch(string(src), -1) {
 			got[rel]++
 			if arg := m[1]; strings.Contains(arg, "kgo.") {
-				t.Errorf("%s: kgo.NewClient(%s) takes its options inline, so config-assert cannot see them", rel, arg)
+				t.Errorf("%s: a client built with options inline (%s), so config-assert cannot see them", rel, arg)
 			}
 		}
 		return nil

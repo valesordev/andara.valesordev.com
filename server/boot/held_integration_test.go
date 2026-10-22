@@ -22,6 +22,7 @@ import (
 	contentv1 "github.com/valesordev/andara/gen/go/andara/content/v1"
 	logv1 "github.com/valesordev/andara/gen/go/andara/log/v1"
 	"github.com/valesordev/andara/server/content"
+	"github.com/valesordev/andara/server/kafkaclient"
 	"github.com/valesordev/andara/server/sim"
 )
 
@@ -62,7 +63,7 @@ func heldServer(t *testing.T, ctx context.Context, tp storeTopicsT, log *memLog)
 type storeTopicsT struct {
 	tp      content.Topics
 	audit   string
-	brokers []string
+	brokers kafkaclient.Config
 }
 
 func newStore(t *testing.T) storeTopicsT {

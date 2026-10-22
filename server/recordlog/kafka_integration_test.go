@@ -16,16 +16,18 @@ import (
 	"time"
 
 	"github.com/twmb/franz-go/pkg/kadm"
-	"github.com/twmb/franz-go/pkg/kgo"
+
+	"github.com/valesordev/andara/server/kafkaclient"
+	"github.com/valesordev/andara/server/kafkaclient/kafkatest"
 )
 
-func brokers(t *testing.T) []string {
+func brokers(t *testing.T) kafkaclient.Config {
 	t.Helper()
 	v := os.Getenv("ANDARA_KAFKA_BROKERS")
 	if v == "" {
 		t.Skip("ANDARA_KAFKA_BROKERS not set; run `make up` and `make test-integration`")
 	}
-	return strings.Split(v, ",")
+	return kafkatest.Config(strings.Split(v, ","))
 }
 
 // throwawayTopic creates a compacted topic that is deleted when the test ends.
@@ -33,7 +35,7 @@ func throwawayTopic(t *testing.T, partitions int32) string {
 	t.Helper()
 	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
 	defer cancel()
-	cl, err := kgo.NewClient(kgo.SeedBrokers(brokers(t)...))
+	cl, err := kafkaclient.New(brokers(t).For("andara-it"))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -57,7 +59,7 @@ func TestKafka_AppendAndReplay(t *testing.T) {
 	defer cancel()
 	topic := throwawayTopic(t, 3)
 
-	log, err := NewKafka(ctx, KafkaOptions{Brokers: brokers(t), Topic: topic, ClientID: "recordlog-test"})
+	log, err := NewKafka(ctx, KafkaOptions{Kafka: brokers(t), Topic: topic, ClientID: "recordlog-test"})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -98,7 +100,7 @@ func TestKafka_AppendAndReplay(t *testing.T) {
 	}
 
 	// A second Kafka over the same topic — a restarted server — sees the same.
-	again, err := NewKafka(ctx, KafkaOptions{Brokers: brokers(t), Topic: topic})
+	again, err := NewKafka(ctx, KafkaOptions{Kafka: brokers(t), Topic: topic})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -125,7 +127,7 @@ func TestKafka_AppendAndReplay(t *testing.T) {
 func TestKafka_MissingTopic(t *testing.T) {
 	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
 	defer cancel()
-	_, err := NewKafka(ctx, KafkaOptions{Brokers: brokers(t), Topic: "andara.test.does-not-exist"})
+	_, err := NewKafka(ctx, KafkaOptions{Kafka: brokers(t), Topic: "andara.test.does-not-exist"})
 	if err == nil || !strings.Contains(err.Error(), "does not exist") {
 		t.Fatalf("missing topic: %v", err)
 	}

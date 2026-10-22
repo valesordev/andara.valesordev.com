@@ -43,7 +43,7 @@ func (rt *Runtime) StartIngress(ctx context.Context) error {
 	switch cfg.SimSource {
 	case "kafka":
 		kp, err := ingress.NewKafkaProducer(ingress.ProducerOptions{
-			Brokers:      cfg.KafkaBrokers,
+			Kafka:        rt.Kafka,
 			Topic:        rt.Topics.Commands(),
 			ClientID:     cfg.ServiceName,
 			Deadline:     cfg.IngressProduceDeadline,

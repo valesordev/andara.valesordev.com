@@ -35,7 +35,11 @@ var canonical = proto.MarshalOptions{Deterministic: true}
 
 // ProducerOptions configures a KafkaProducer.
 type ProducerOptions struct {
-	Brokers []string
+	// Kafka is the process's client configuration. Its Dialer, when set,
+	// replaces the clients' dialer (a test injects a fault with it) and must
+	// return a conn that is not encrypted by the dialer's caller (see tap.go;
+	// a tls.Dialer's DialContext is fine): the produce tap wraps it.
+	Kafka kafkaclient.Config
 	// Topic is where Commands go, the topic tickloop consumes
 	// (kafkaclient.Topics.Commands); required.
 	Topic string
@@ -58,10 +62,6 @@ type ProducerOptions struct {
 	// is refused (the floor config load enforces).
 	DegradedHold time.Duration
 
-	// Dialer replaces the client's dialer; a test injects a fault with it.
-	// It must return a conn that is not encrypted by the dialer's caller
-	// (see tap.go); a tls.Dialer's DialContext is fine.
-	Dialer func(ctx context.Context, network, host string) (net.Conn, error)
 	// ClientLogger receives the Kafka client's own log; nil for none.
 	ClientLogger kgo.Logger
 
@@ -118,6 +118,7 @@ const minISRRefresh = 60 * time.Second
 // moment may be in the log; every Submit after detection is ErrUnavailable,
 // nothing written.
 type KafkaProducer struct {
+	kc       kafkaclient.Config // the per-Partition clients', tap included
 	opts     []kgo.Opt
 	topic    string
 	deadline time.Duration
@@ -159,10 +160,8 @@ type brokerError struct {
 
 // producerOpts are the options every Partition's client is built with, short
 // of the hook and the tapped dialer that bind it to one producer.
-func producerOpts(o ProducerOptions) []kgo.Opt {
-	return []kgo.Opt{
-		kgo.SeedBrokers(o.Brokers...),
-		kgo.ClientID(o.ClientID + "-ingress"),
+func producerOpts(o ProducerOptions) (kafkaclient.Config, []kgo.Opt) {
+	return o.Kafka.For(o.ClientID + "-ingress"), []kgo.Opt{
 		kgo.RequiredAcks(kgo.AllISRAcks()),
 		kgo.RecordPartitioner(kgo.ManualPartitioner()),
 		kgo.ProducerBatchCompression(kgo.ZstdCompression()),
@@ -181,10 +180,8 @@ func producerOpts(o ProducerOptions) []kgo.Opt {
 }
 
 // probeClientOpts are the options of the probe's metadata client.
-func probeClientOpts(o ProducerOptions) []kgo.Opt {
-	return []kgo.Opt{
-		kgo.SeedBrokers(o.Brokers...),
-		kgo.ClientID(o.ClientID + "-ingress-probe"),
+func probeClientOpts(o ProducerOptions) (kafkaclient.Config, []kgo.Opt) {
+	return o.Kafka.For(o.ClientID + "-ingress-probe"), []kgo.Opt{
 		kgo.MetadataMinAge(o.ProbeInterval / 2),
 	}
 }
@@ -203,8 +200,8 @@ func Sites(o ProducerOptions) []kafkaclient.Site {
 		o.ProbeInterval = time.Second
 	}
 	return []kafkaclient.Site{
-		{Name: "ingress producer", Role: kafkaclient.Producer, Opts: producerOpts(o), Partitioning: kafkaclient.Manual, DeliveryTimeout: o.Deadline},
-		{Name: "ingress probe", Role: kafkaclient.Admin, Opts: probeClientOpts(o)},
+		{Name: "ingress producer", Role: kafkaclient.Producer, Opts: kafkaclient.SiteOpts(producerOpts(o)), Partitioning: kafkaclient.Manual, DeliveryTimeout: o.Deadline},
+		{Name: "ingress probe", Role: kafkaclient.Admin, Opts: kafkaclient.SiteOpts(probeClientOpts(o))},
 	}
 }
 
@@ -212,7 +209,7 @@ func Sites(o ProducerOptions) []kafkaclient.Site {
 // the tick loop already fails the boot when they are unreachable, and an
 // outage after boot is the degraded state, not an error here.
 func NewKafkaProducer(o ProducerOptions) (*KafkaProducer, error) {
-	if len(o.Brokers) == 0 {
+	if len(o.Kafka.Brokers) == 0 {
 		return nil, errors.New("ingress: no brokers configured")
 	}
 	if o.Topic == "" {
@@ -250,26 +247,24 @@ func NewKafkaProducer(o ProducerOptions) (*KafkaProducer, error) {
 	k.minISR.Store(1)
 	k.health = newPartitionHealth(o.now, o.DegradedHold, k.onHealthChange)
 
-	opts := append(producerOpts(o),
-		kgo.WithHooks(retryHook{k}),
-		kgo.Dialer(tapDialer(o.Dialer, k.noteProduceResponse, k.tapLost)),
-	)
+	kc, opts := producerOpts(o)
+	// The tap wraps every connection, the SASL handshake's included, so it
+	// composes as the client's Dialer (client-contract.md).
+	kc.Dialer = tapDialer(o.Kafka.Dialer, k.noteProduceResponse, k.tapLost)
+	opts = append(opts, kgo.WithHooks(retryHook{k}))
 	if o.ClientLogger != nil {
 		opts = append(opts, kgo.WithLogger(o.ClientLogger))
 	}
-	k.opts = opts
+	k.kc, k.opts = kc, opts
 
 	if o.source != nil {
 		k.source = o.source
 	} else {
-		probeOpts := probeClientOpts(o)
-		if o.Dialer != nil {
-			probeOpts = append(probeOpts, kgo.Dialer(o.Dialer))
-		}
+		pc, probeOpts := probeClientOpts(o)
 		if o.ClientLogger != nil {
 			probeOpts = append(probeOpts, kgo.WithLogger(o.ClientLogger))
 		}
-		cl, err := kgo.NewClient(probeOpts...)
+		cl, err := kafkaclient.New(pc, probeOpts...)
 		if err != nil {
 			return nil, fmt.Errorf("ingress: producer: %w", err)
 		}
@@ -333,7 +328,7 @@ func (k *KafkaProducer) clientFor(partition int32) (*kgo.Client, error) {
 	if c := k.clients[partition].Load(); c != nil {
 		return c, nil
 	}
-	c, err := kgo.NewClient(k.opts...)
+	c, err := kafkaclient.New(k.kc, k.opts...)
 	if err != nil {
 		return nil, fmt.Errorf("ingress: producer client: %w", err)
 	}
@@ -443,6 +438,21 @@ func (k *KafkaProducer) Produce(ctx context.Context, cmd *logv1.LoggedCommand) (
 	wait := time.Since(enqueued)
 	retries := k.retries.Load() - retriesBefore
 	span.SetAttributes(attribute.Int64("retries", int64(retries)), attribute.Float64("acks_wait_ms", float64(wait.Microseconds())/1000))
+	if err != nil && fired {
+		// A broker that refuses the principal the topic wrote nothing: the
+		// record is not in the log, the Partition is healthy, and a retry
+		// would be refused again (AW-SRV-044 AC-8).
+		if ae := k.kc.Check(k.topic, err); kafkaclient.ErrorName(ae) == kafkaclient.ReasonTopicUnauthorized {
+			span.SetStatus(codes.Error, ae.Error())
+			span.SetAttributes(attribute.String("error_name", kafkaclient.ErrorName(ae)))
+			attrs := []slog.Attr{slog.Int("partition", int(partition)), slog.String("reason", kafkaclient.ErrorName(ae)), slog.String("error", ae.Error())}
+			if sc := trace.SpanContextFromContext(ctx); sc.HasTraceID() {
+				attrs = append(attrs, slog.String("trace_id", sc.TraceID().String()))
+			}
+			k.log.LogAttrs(ctx, slog.LevelError, "command produce refused: the principal may not write the commands topic", attrs...)
+			return command.Accepted{}, ae
+		}
+	}
 	if err != nil {
 		promised := err
 		err = k.classify(ctx, err)
