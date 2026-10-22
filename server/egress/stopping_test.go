@@ -65,3 +65,39 @@ func TestAnnounceStoppingIsAStreamFrameOutsideTheHistory(t *testing.T) {
 	}
 	r.quiet()
 }
+
+// AC-2: the notice jumps the queue. Events retained but not yet written wait
+// behind it, so a slow stream learns the server is stopping before it has
+// drained its backlog.
+func TestAnnounceStoppingGoesAheadOfQueuedEvents(t *testing.T) {
+	f := newFixture(t, nil)
+	p := auth.Principal{AccountID: "acct-alice", Roles: []auth.Role{auth.RolePlayer}}
+	f.place("s-alice", "alice", "town", "plaza")
+	block := make(chan struct{})
+	c := f.subscribe("s-alice", p, 0, false, func(c *client) { c.block = block })
+	c.parked()
+	var ids []uint64
+	for range 3 {
+		ids = append(ids, f.emit(plaza()))
+	}
+	f.settled("s-alice", ids[2])
+	if n := f.e.AnnounceStopping("", 60*time.Second); n != 1 {
+		t.Fatalf("AnnounceStopping queued on %d streams, want 1", n)
+	}
+	close(block)
+
+	stopping, last := -1, -1
+	for i := 0; last < 0 && i < 6; i++ {
+		env := c.next()
+		switch {
+		case env.GetServerStopping() != nil:
+			stopping = i
+		case env.GetEventId() == ids[2]:
+			last = i
+		}
+	}
+	if stopping < 0 || last < 0 || stopping > last {
+		t.Fatalf("ServerStopping at frame %d, the last queued Event at %d: the notice must precede the backlog", stopping, last)
+	}
+	c.end()
+}
