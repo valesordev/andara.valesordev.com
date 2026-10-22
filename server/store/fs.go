@@ -36,13 +36,14 @@ const TempSuffix = ".tmp~"
 // FS is a sim.WorldStore over a directory tree — the volume AW-INF-003 mounts,
 // or a t.TempDir().
 //
-// Put writes {key}.tmp and renames. Rename within a filesystem is atomic, so a
-// process killed between the write and the rename leaves a .tmp that List does
-// not return and Get does not resolve, and the previous round stays the newest
-// complete one. The data and then the containing directory are fsynced before
-// the rename returns, because a rename that is durable while its target's
-// contents are not is exactly the corruption this is meant to prevent: the key
-// would survive a power loss naming a file of zeroes.
+// Put writes {key}.tmp~ (TempSuffix) and renames. Rename within a filesystem is
+// atomic, so a process killed between the write and the rename leaves a temp
+// file that no listing returns and Get does not resolve, and the previous
+// round stays the newest complete one. The data and then the containing
+// directory are fsynced before the rename returns, because a rename that is
+// durable while its target's contents are not is exactly the corruption this
+// is meant to prevent: the key would survive a power loss naming a file of
+// zeroes.
 type FS struct {
 	// Root is the directory keys are resolved under. Created on first Put.
 	Root string
@@ -105,8 +106,8 @@ func (f *FS) Put(ctx context.Context, key string, envelope []byte) error {
 	}
 	tmp := final + TempSuffix
 	if err := f.writeSynced(tmp, envelope); err != nil {
-		// Best-effort cleanup. If this fails too, the leftover is a .tmp,
-		// which no listing returns and the next round overwrites.
+		// Best-effort cleanup. If this fails too, the leftover is a temp file
+		// no listing returns; only a retry of the same key overwrites it.
 		_ = os.Remove(tmp)
 		return err
 	}

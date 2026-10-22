@@ -6,6 +6,8 @@ package store_test
 import (
 	"context"
 	"errors"
+	"os"
+	"path/filepath"
 	"reflect"
 	"strings"
 	"testing"
@@ -89,6 +91,29 @@ func TestFSTagsEndingInTmpAreTags(t *testing.T) {
 	}
 	if tags, err := store.RoundTags(ctx, fs, keys); err != nil || !reflect.DeepEqual(tags, []string{"deploy:v1", "deploy:v1.tmp"}) {
 		t.Fatalf("after tagging deploy:v1, RoundTags = %v, %v; want both tags", tags, err)
+	}
+}
+
+// A tag write cut short leaves its temporary file in the tag directory; it is
+// not a tag, so neither ListTags nor RoundTags reports it.
+func TestFSInterruptedTagWriteIsNotATag(t *testing.T) {
+	t.Parallel()
+	ctx := context.Background()
+	root := t.TempDir()
+	fs := store.NewFS(root)
+	keys := []string{sim.SnapshotKey("town", 1, 42, 7)}
+	if err := store.TagRound(ctx, fs, keys, "deploy:v1"); err != nil {
+		t.Fatal(err)
+	}
+	tmp := filepath.Join(root, filepath.FromSlash(store.TagKey(keys[0], "deploy:v2"))) + store.TempSuffix
+	if err := os.WriteFile(tmp, nil, 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if names, err := fs.ListTags(ctx, keys[0]); err != nil || !reflect.DeepEqual(names, []string{"deploy:v1"}) {
+		t.Fatalf("ListTags = %v, %v; want only deploy:v1", names, err)
+	}
+	if tags, err := store.RoundTags(ctx, fs, keys); err != nil || !reflect.DeepEqual(tags, []string{"deploy:v1"}) {
+		t.Fatalf("RoundTags = %v, %v; want only deploy:v1", tags, err)
 	}
 }
 
