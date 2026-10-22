@@ -186,15 +186,7 @@ func (s *KafkaSource) fetch(ctx context.Context) {
 			pingErr = recordlog.Ping(pctx, s.client)
 			pcancel()
 		}
-		if kafkaclient.Refused(fetchErr) {
-			// The broker refuses the principal the topic: every fetch would
-			// be refused again until an ACL changes, so the fetch stops here,
-			// counted once (AW-SRV-044 AC-8). Poll returns it, and the loop
-			// exits on it as on a gap: a restart, once the ACL is fixed, is
-			// what heals it.
-			s.mu.Lock()
-			s.denied = fetchErr
-			s.mu.Unlock()
+		if s.refuse(fetchErr) {
 			return
 		}
 		s.mu.Lock()
@@ -269,6 +261,22 @@ func (s *KafkaSource) listEnds(ctx context.Context) {
 			s.end[p] = e.Offset
 		}
 	}
+}
+
+// refuse records err and reports whether the fetch stops on it. Only the
+// broker's refusal of the principal on the topic stops it: every fetch would
+// be refused again until an ACL changes, so it is counted once (AW-SRV-044
+// AC-8), Poll returns it, and the loop exits on it as on a gap; a restart,
+// once the ACL is fixed, is what heals it. A connection's failure, a lost
+// password file among them, is retried and only starves (AC-6a).
+func (s *KafkaSource) refuse(err error) bool {
+	if !kafkaclient.Refused(err) {
+		return false
+	}
+	s.mu.Lock()
+	s.denied = err
+	s.mu.Unlock()
+	return true
 }
 
 // Poll implements Source.

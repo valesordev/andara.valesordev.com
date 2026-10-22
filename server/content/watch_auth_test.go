@@ -6,6 +6,7 @@ package content
 import (
 	"bytes"
 	"context"
+	"errors"
 	"log/slog"
 	"strings"
 	"sync/atomic"
@@ -20,6 +21,29 @@ import (
 
 	"github.com/valesordev/andara/server/kafkaclient"
 )
+
+// Only a refusal of the topic gets the minute and no warn; a connection's
+// failure (password_file, sasl_failed) and any other error keep the ordinary
+// backoff and the warn.
+func TestWatchBackoffFor_OnlyARefusalWaitsAMinute(t *testing.T) {
+	auth := func(reason string) error {
+		return &kafkaclient.AuthError{Reason: reason, Err: errors.New("x")}
+	}
+	for name, c := range map[string]struct {
+		err  error
+		wait time.Duration
+		warn bool
+	}{
+		"topic_unauthorized": {auth(kafkaclient.ReasonTopicUnauthorized), watchAuthBackoff, false},
+		"password_file":      {auth(kafkaclient.ReasonPasswordFile), watchBackoff, true},
+		"sasl_failed":        {auth(kafkaclient.ReasonSASLFailed), watchBackoff, true},
+		"other":              {errors.New("broker gone"), watchBackoff, true},
+	} {
+		if wait, warn := watchBackoffFor(c.err); wait != c.wait || warn != c.warn {
+			t.Errorf("%s: (%v, %v), want (%v, %v)", name, wait, warn, c.wait, c.warn)
+		}
+	}
+}
 
 // AW-SRV-044 AC-8 on the Active Pointer watch: a broker that refuses the
 // principal the pointer topic is asked again once a minute, not every two

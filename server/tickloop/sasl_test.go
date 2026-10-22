@@ -6,6 +6,7 @@ package tickloop
 import (
 	"context"
 	"errors"
+	"fmt"
 	"os"
 	"path/filepath"
 	"sync/atomic"
@@ -19,7 +20,37 @@ import (
 	"github.com/twmb/franz-go/pkg/kmsg"
 
 	"github.com/valesordev/andara/server/kafkaclient"
+	"github.com/valesordev/andara/server/sim"
 )
+
+// AC-6a and AC-8 at the source's decision: a lost password file is a
+// connection's failure, recorded and reported as starvation while the fetch
+// goes on; only the broker's refusal of the topic stops it, and Poll then
+// returns the AuthError itself.
+func TestKafkaSource_OnlyATopicRefusalStopsTheFetch(t *testing.T) {
+	lost := fmt.Errorf("fetch: %w", &kafkaclient.AuthError{Reason: kafkaclient.ReasonPasswordFile, ClientID: "andara-server-sim",
+		Principal: "andara-server-dev", Err: errors.New("kafka.sasl_password_file /f: no such file or directory")})
+	refused := fmt.Errorf("fetch: %w", &kafkaclient.AuthError{Reason: kafkaclient.ReasonTopicUnauthorized, ClientID: "andara-server-sim",
+		Principal: "andara-server-dev", Topic: "dev.andara.commands.v1", Err: errors.New("TOPIC_AUTHORIZATION_FAILED")})
+
+	s := &KafkaSource{buffers: map[int32][]sim.Record{}}
+	if s.refuse(lost) {
+		t.Fatal("a lost password file stopped the fetch")
+	}
+	s.fetchErr = lost // what fetch records for an error it doesn't stop on
+	_, err := s.Poll(nil, 10)
+	if !errors.Is(err, ErrStarved) || kafkaclient.ErrorName(err) != kafkaclient.ReasonPasswordFile {
+		t.Fatalf("Poll after a lost password file = %v, want starvation carrying it", err)
+	}
+
+	if !s.refuse(refused) {
+		t.Fatal("a topic refusal did not stop the fetch")
+	}
+	_, err = s.Poll(nil, 10)
+	if errors.Is(err, ErrStarved) || !kafkaclient.Refused(err) {
+		t.Fatalf("Poll after a refusal = %v, want the refusal itself", err)
+	}
+}
 
 // AC-8 through a consumer: when the broker refuses the principal the
 // commands topic on fetch, the tick loop's source reports a

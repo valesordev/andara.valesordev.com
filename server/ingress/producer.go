@@ -442,9 +442,8 @@ func (k *KafkaProducer) Produce(ctx context.Context, cmd *logv1.LoggedCommand) (
 		// A broker that refuses the principal the topic wrote nothing: the
 		// record is not in the log, the Partition is healthy, and a retry
 		// would be refused again (AW-SRV-044 AC-8).
-		if ae := k.kc.Check(k.topic, err); kafkaclient.ErrorName(ae) == kafkaclient.ReasonTopicUnauthorized {
-			span.SetStatus(codes.Error, ae.Error())
-			span.SetAttributes(attribute.String("error_name", kafkaclient.ErrorName(ae)))
+		if ae := k.kc.Check(k.topic, err); kafkaclient.Refused(ae) {
+			kafkaclient.SpanError(span, ae)
 			attrs := []slog.Attr{slog.Int("partition", int(partition)), slog.String("reason", kafkaclient.ErrorName(ae)), slog.String("error", ae.Error())}
 			if sc := trace.SpanContextFromContext(ctx); sc.HasTraceID() {
 				attrs = append(attrs, slog.String("trace_id", sc.TraceID().String()))

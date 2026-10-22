@@ -36,6 +36,20 @@ const watchBackoff = 2 * time.Second
 // broker restart's.
 const watchAuthBackoff = time.Minute
 
+// watchBackoffFor is how long the watch pauses after a fetch error, and
+// whether it writes its own warn. A refusal of the pointer topic (AW-SRV-044
+// AC-8) holds until an ACL changes: the server keeps serving the content it
+// has, so unlike the tick loop the watch doesn't stop; it asks again once a
+// minute, which an ACL fix heals, and the kafkaclient error line (one a
+// minute) says why. Any other error, a lost password file among them
+// (AC-6a), is retried on the ordinary backoff with a warn.
+func watchBackoffFor(err error) (time.Duration, bool) {
+	if kafkaclient.Refused(err) {
+		return watchAuthBackoff, false
+	}
+	return watchBackoff, true
+}
+
 // PointerMove is one Active Pointer write observed on the Active Pointer topic.
 type PointerMove struct {
 	Pack    string
@@ -406,15 +420,8 @@ func (r *KafkaResolver) Watch(ctx context.Context) (<-chan PointerMove, error) {
 			// server stops noticing content changes with nothing saying so.
 			if errs := fetches.Errors(); len(errs) > 0 {
 				err := wc.Check(errs[0].Topic, errs[0].Err)
-				backoff := watchBackoff
-				if kafkaclient.Refused(err) {
-					// The broker refuses the principal the pointer topic
-					// (AW-SRV-044 AC-8). The server keeps serving the content
-					// it has, so unlike the tick loop it doesn't stop: it
-					// asks again once a minute, which an ACL fix heals, and
-					// the kafkaclient error line (one a minute) says why.
-					backoff = watchAuthBackoff
-				} else {
+				backoff, warn := watchBackoffFor(err)
+				if warn {
 					r.log.Warn("content pointer watch: fetch failed, retrying",
 						"topic", errs[0].Topic, "partition", errs[0].Partition, "error", err.Error())
 				}
