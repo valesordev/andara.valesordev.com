@@ -23,6 +23,9 @@ import (
 	"github.com/twmb/franz-go/pkg/kerr"
 	"github.com/twmb/franz-go/pkg/kgo"
 	"github.com/twmb/franz-go/pkg/sasl"
+	"go.opentelemetry.io/otel/codes"
+	sdktrace "go.opentelemetry.io/otel/sdk/trace"
+	"go.opentelemetry.io/otel/sdk/trace/tracetest"
 
 	"github.com/valesordev/andara/server/config"
 )
@@ -130,7 +133,10 @@ func TestNew_TheDialerCarriesEveryConnectionAndRefusesTLSBesideIt(t *testing.T) 
 	}
 
 	_, err = New(Config{Brokers: []string{dark}, ClientID: "andara-server-ingress", Dialer: dialer}, kgo.DialTLSConfig(&tls.Config{}))
-	if err == nil || !strings.Contains(err.Error(), "Dialer") || !strings.Contains(err.Error(), "DialTLSConfig") {
+	// "tapped" and "inside the Dialer" are the constructor's words, not
+	// franz-go's: the library's own refusal names both options too.
+	if err == nil || !strings.Contains(err.Error(), "tapped client") || !strings.Contains(err.Error(), "inside the Dialer") ||
+		!strings.Contains(err.Error(), "DialTLSConfig") {
 		t.Fatalf("a tapped client with DialTLSConfig: err = %v, want one naming both", err)
 	}
 }
@@ -282,6 +288,39 @@ func TestMechanism_APasswordFileGoneFailsTheConnectionCountedOnce(t *testing.T) 
 func TestDefaultPasswordFile_MatchesTheConfigDefault(t *testing.T) {
 	if DefaultPasswordFile != config.DefaultKafkaSASLPasswordFile {
 		t.Fatalf("kafkaclient %q, config %q", DefaultPasswordFile, config.DefaultKafkaSASLPasswordFile)
+	}
+}
+
+// An auth failure inside a span marks it failed with error_name = the
+// reason; another error marks it failed with no error_name; the principal is
+// never an attribute.
+func TestSpanError_NamesTheReasonOfAnAuthError(t *testing.T) {
+	t.Parallel()
+	rec := tracetest.NewSpanRecorder()
+	tr := sdktrace.NewTracerProvider(sdktrace.WithSpanProcessor(rec)).Tracer("t")
+	_, s1 := tr.Start(context.Background(), "auth")
+	SpanError(s1, &AuthError{Reason: ReasonSASLFailed, ClientID: "andara-server", Principal: "andara-server-dev", Err: errors.New("refused")})
+	s1.End()
+	_, s2 := tr.Start(context.Background(), "other")
+	SpanError(s2, errors.New("broker gone"))
+	s2.End()
+	for _, s := range rec.Ended() {
+		attrs := map[string]string{}
+		for _, a := range s.Attributes() {
+			attrs[string(a.Key)] = a.Value.AsString()
+		}
+		if s.Status().Code != codes.Error {
+			t.Errorf("%s: status %v", s.Name(), s.Status())
+		}
+		want := map[string]string{"auth": ReasonSASLFailed, "other": ""}[s.Name()]
+		if attrs["error_name"] != want {
+			t.Errorf("%s: error_name %q, want %q", s.Name(), attrs["error_name"], want)
+		}
+		for k, v := range attrs {
+			if strings.Contains(v, "andara-server-dev") {
+				t.Errorf("%s: attribute %s carries the principal", s.Name(), k)
+			}
+		}
 	}
 }
 

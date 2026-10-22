@@ -10,6 +10,9 @@ import (
 	"time"
 
 	"github.com/prometheus/client_golang/prometheus"
+	"go.opentelemetry.io/otel/attribute"
+	"go.opentelemetry.io/otel/codes"
+	"go.opentelemetry.io/otel/trace"
 )
 
 // The reasons an authentication or authorization failure is counted and
@@ -54,6 +57,16 @@ func ErrorName(err error) string {
 		return ae.Reason
 	}
 	return ""
+}
+
+// SpanError marks span as failed with err and, when err is an authentication
+// or authorization failure, adds error_name = its reason (the Observability
+// requirements' trace rule). The principal is never an attribute.
+func SpanError(span trace.Span, err error) {
+	span.SetStatus(codes.Error, err.Error())
+	if name := ErrorName(err); name != "" {
+		span.SetAttributes(attribute.String("error_name", name))
+	}
 }
 
 // lineEvery is the most often one client ID's failures of one reason are

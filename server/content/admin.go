@@ -27,6 +27,7 @@ import (
 	statev1 "github.com/valesordev/andara/gen/go/andara/state/v1"
 	"github.com/valesordev/andara/server/auth"
 	"github.com/valesordev/andara/server/command"
+	"github.com/valesordev/andara/server/kafkaclient"
 	"github.com/valesordev/andara/server/sim"
 )
 
@@ -318,6 +319,9 @@ func (a *Admin) PublishBlob(ctx context.Context, receive func() (*adminv1.Publis
 
 	wctx, wspan := a.tracer.Start(ctx, "content.write_blob")
 	dedup, err := a.o.Registry.PutBlob(wctx, sum[:], hdr.GetMediaType(), body)
+	if err != nil {
+		kafkaclient.SpanError(wspan, err)
+	}
 	wspan.End()
 	if err != nil {
 		return nil, &AdminError{Code: CodeUnavailable, Err: err}

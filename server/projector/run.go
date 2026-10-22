@@ -162,7 +162,7 @@ func Run(ctx context.Context, o RunOptions) error {
 	endBootstrap := func(round sim.Tick, outcome string, err error) {
 		bspan.SetAttributes(attribute.Int64("round_tick", int64(round)), attribute.String("outcome", outcome))
 		if err != nil {
-			bspan.SetStatus(codes.Error, err.Error())
+			kafkaclient.SpanError(bspan, err)
 		}
 		bspan.End()
 	}
@@ -307,7 +307,7 @@ func (o RunOptions) step(ctx context.Context, p *Projector, src *CommandSource, 
 				attribute.String("replayed_hash", fmt.Sprintf("%x", d.Replayed)))
 			vspan.SetStatus(codes.Error, "state hash mismatch")
 		case replayErr != nil:
-			vspan.SetStatus(codes.Error, replayErr.Error())
+			kafkaclient.SpanError(vspan, replayErr)
 		}
 		vspan.End()
 		if replayErr != nil {
@@ -400,7 +400,7 @@ func (o RunOptions) restore(ctx context.Context, topo sim.Topology, cfg sim.Conf
 		o.Log.ErrorContext(ctx, "state projector restore mismatch", "round_tick", sm.RoundTick, "reason", "seed",
 			"recorded_seed", strconv.FormatUint(sm.Recorded, 10), "configured_seed", strconv.FormatUint(sm.Configured, 10), "trace_id", traceID)
 	}
-	span.SetStatus(codes.Error, err.Error())
+	kafkaclient.SpanError(span, err)
 	return nil, err
 }
 
