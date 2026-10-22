@@ -578,8 +578,9 @@ def test_argocd_application():
     cm = argocd_values["configs"]["cm"]
     if cm.get("application.resourceTrackingMethod") != "annotation":
         fail("argocd values: resource tracking must be by annotation")
-    redis = argocd_values.get("redis", {}).get("image", {})
-    if not redis.get("repository", "").startswith("mirror.gcr.io/") or "@sha256:" not in redis.get("tag", ""):
+    redis = (argocd_values.get("redis") or {}).get("image") or {}
+    if (not str(redis.get("repository") or "").startswith("mirror.gcr.io/")
+            or not re.search(r"@sha256:[0-9a-f]{64}$", str(redis.get("tag") or ""))):
         fail("argocd values: redis must come from mirror.gcr.io, pinned by digest (#609), got %r" % redis)
     upd = yaml.safe_load(open(os.path.join(ARGOCD, "andara-dev-image-updater.yaml")))["spec"]
     if upd.get("writeBackConfig", {}).get("method") != "argocd":
