@@ -95,6 +95,9 @@ keys:
   - {key: snapshot.upload_timeout,   env: ANDARA_SNAPSHOT_UPLOAD_TIMEOUT, type: duration, default: 30s, story: AW-SRV-006}
   - {key: snapshot.keep_rounds,      env: ANDARA_SNAPSHOT_KEEP_ROUNDS,    type: int, default: 120, min: 1, story: AW-INF-007}
   - {key: snapshot.keep_deploy_rounds, env: ANDARA_SNAPSHOT_KEEP_DEPLOY_ROUNDS, type: int, default: 30, min: 0, story: AW-INF-007}
+  # 23 days, tagged or not. At most dev's and prod's events retention minus 7 days, which make check
+  # asserts (AW-INF-042; docs/specs/deploy/lifecycle.md, Round tags).
+  - {key: snapshot.max_round_age,    env: ANDARA_SNAPSHOT_MAX_ROUND_AGE,  type: duration, default: 552h, story: AW-SRV-055}
   - {key: recovery.require_snapshot, env: ANDARA_RECOVERY_REQUIRE_SNAPSHOT, type: bool, default: false, story: AW-SRV-007}
   - {key: recovery.replay_batch,     env: ANDARA_RECOVERY_REPLAY_BATCH,   type: int, default: 4096, min: 1, story: AW-SRV-007}
   - {key: recovery.verify_timeout,   env: ANDARA_RECOVERY_VERIFY_TIMEOUT, type: duration, default: 600s, story: AW-SRV-007}
