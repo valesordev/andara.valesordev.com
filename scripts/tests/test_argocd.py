@@ -518,6 +518,28 @@ class HelmInstallRefusal(unittest.TestCase):
                                capture_output=True, text=True, env=env)
             self.assertEqual(p.returncode, 2, p.stderr)
             self.assertFalse(os.path.exists(log) and open(log).read().strip())
+            # A digest-pinned build with trailing junk is not a build.
+            p = subprocess.run([os.path.join(SCRIPTS, "helm_install.sh"), "dev", "andara-server",
+                                "sha-0123456789ab@sha256:" + "ab" * 32 + "x", "", "1"],
+                               capture_output=True, text=True, env=env)
+            self.assertEqual(p.returncode, 2, p.stderr)
+
+    def test_dev_with_a_pinned_build_passes_the_guard_and_finds_the_shared_broker(self):
+        """The TAG every message names (sha-<12>@sha256:<64 hex>) gets past the guard, and the broker
+        is looked for where values/dev.yaml says it is: andara-shared, not andara-dev."""
+        with tempfile.TemporaryDirectory() as d:
+            log = os.path.join(d, "calls")
+            env = stub_bin(d, log, {
+                "kubectl": 'case "$*" in "get crd applications.argoproj.io") exit 1;; '
+                           '"-n andara-shared get kafka andara-log"*) echo True; exit 0;; esac\nexit 1',
+                "helm": "exit 0"})
+            for tag in ("sha-0123456789ab@sha256:" + "ab" * 32, "sha-0123456789ab"):
+                p = subprocess.run([os.path.join(SCRIPTS, "helm_install.sh"), "dev", "andara-server", tag, "", "1"],
+                                   capture_output=True, text=True, env=env)
+                self.assertNotEqual(p.returncode, 2, p.stderr)
+                self.assertNotIn("ENV=dev needs TAG", p.stderr)
+                self.assertIn("helm-install: kafka/andara-log in andara-shared is Ready", p.stdout, p.stderr)
+            self.assertFalse([c for c in calls(log) if "-n andara-dev get kafka" in c])
 
     def test_refuses_and_touches_nothing(self):
         with tempfile.TemporaryDirectory() as d:

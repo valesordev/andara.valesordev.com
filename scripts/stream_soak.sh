@@ -39,7 +39,7 @@ RESOLVE="${ANDARA_SOAK_RESOLVE:-127.0.0.1}"
 CA=""
 if [[ "$ISSUER" == "andara-ca" ]]; then
   CA="$REPO/.local/tls/cluster/$ENVNAME/ca.pem"
-  [[ -f "$CA" ]] || { echo "make: stream-soak: no $CA; run \`make helm-install ENV=$ENVNAME\` first" >&2; exit 1; }
+  [[ -f "$CA" ]] || { echo "make: stream-soak: no $CA; run \`make helm-install ENV=$ENVNAME$([[ $ENVNAME == dev ]] && echo " TAG=<sha-…@sha256:…>")\` first" >&2; exit 1; }
 fi
 
 serial() {

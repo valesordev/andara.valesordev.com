@@ -110,7 +110,7 @@ bounce() {
   need kubectl
   kube_require kafka-broker-bounce
   read -r ready0 since0 restarts0 < <(ready_since "$ns") \
-    || die broker-bounce "no andara-0 in $ns to observe; run \`make helm-install ENV=$env\` first"
+    || die broker-bounce "no andara-0 in $ns to observe; run \`make helm-install ENV=$env$([[ $env == dev ]] && echo " TAG=<sha-…@sha256:…>")\` first"
   [[ "$ready0" == "True" ]] || die broker-bounce "andara-0 in $ns is not Ready before the bounce"
   local unavail0 uid0 t0
   unavail0="$(unavailable_count "$ns")"

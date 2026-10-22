@@ -178,10 +178,11 @@ The state projector's replica count is ignored (`ignoreDifferences`, `RespectIgn
 with the build `make argocd-status` shows (`helm-install ENV=dev` refuses without `TAG`: `:dev` no longer moves);
 nothing restarts and no data moves.
 
-**The broker (AW-INF-014).** `dev` and `prod` each run Apache Kafka `andara-log` in their namespace, three brokers
-under the Strimzi operator (ADR-0002 §7: Kafka in production); `local` stays broker-free. So a `dev` install is
-`make kafka-install ENV=dev` first, then `ANDARA_BOOTSTRAP_OPERATOR=<user>:<password> make helm-install ENV=dev TAG=<sha-…@sha256:…>`.
-`helm-install` refuses while `kafka/andara-log` is not Ready. It also refuses without the operator credential,
+**The broker (AW-INF-014).** `prod` runs Apache Kafka `andara-log` in its namespace, three brokers under the
+Strimzi operator (ADR-0002 §7: Kafka in production), from `make kafka-install ENV=prod`; `dev` uses the shared
+`andara-log` in `andara-shared` under its topic prefix `dev` (ADR-0013 amendment 16, AW-INF-055, AW-INF-059);
+`local` stays broker-free. `helm-install` and `argocd-install` refuse while the `kafka/andara-log` the values
+file's `server.kafka.brokers` names is not Ready. It also refuses without the operator credential,
 because `local`'s default is public and this edge is not. `dev`'s sim and Accounts live on the broker. Its content
 still comes from the same ConfigMaps as `local`, as compose reads a directory, until AW-SRV-012.
 `make kafka-broker-bounce ENV=dev` shows losing one broker costs the World nothing.

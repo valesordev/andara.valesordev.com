@@ -56,15 +56,26 @@ if kube_kubectl get crd applications.argoproj.io >/dev/null 2>&1 \
   exit 1
 fi
 
-# dev and prod run the sim and the Account store on their namespace's Kafka (AW-INF-014
-# AC-7). Without it the pod would crash-loop on an unreachable broker for the full --wait,
-# so the release is not touched until the broker is Ready.
+# dev and prod run the sim and the Account store on Kafka (AW-INF-014 AC-7). Without it the
+# pod would crash-loop on an unreachable broker for the full --wait, so the release is not
+# touched until the broker is Ready. The broker is the one the values file names:
+# andara-log-kafka-bootstrap.<namespace>.svc (dev's is the shared one in andara-shared since
+# AW-INF-059), or a bare name in the environment's own namespace (prod).
 if [[ "$ENVNAME" != "local" ]]; then
-  kready="$(kube_kubectl -n "$NS" get kafka andara-log \
+  KNS="$("${PY:-python3}" - "$VALUES" "$NS" <<'PYEOF'
+import sys, yaml
+values, ns = sys.argv[1:3]
+b = str((((yaml.safe_load(open(values)) or {}).get("server") or {}).get("kafka") or {}).get("brokers") or "")
+parts = b.split(":", 1)[0].split(".")
+print(parts[1] if len(parts) > 1 else ns)
+PYEOF
+)"
+  if [[ "$KNS" == "$NS" ]]; then khint="run \`make kafka-install ENV=$ENVNAME\` first"; else khint="it comes from the shared broker (AW-INF-055)"; fi
+  kready="$(kube_kubectl -n "$KNS" get kafka andara-log \
     -o jsonpath='{.status.conditions[?(@.type=="Ready")].status}' 2>/dev/null || true)"
   [[ "$kready" == "True" ]] \
-    || { echo "make: helm-install: no Ready kafka/andara-log in $NS; run \`make kafka-install ENV=$ENVNAME\` first" >&2; exit 1; }
-  echo "helm-install: kafka/andara-log in $NS is Ready"
+    || { echo "make: helm-install: no Ready kafka/andara-log in $KNS; $khint" >&2; exit 1; }
+  echo "helm-install: kafka/andara-log in $KNS is Ready"
 fi
 
 # The platform the chart is written for: the cluster's Traefik owns :443 (AC-8) and
