@@ -423,6 +423,28 @@ class Prefixed(unittest.TestCase):
         self.assertEqual(code, 1)
         self.assertIn("unclean.leader.election.enable is not reported", err)
 
+    def test_an_existing_local_topic_at_kafkas_segment_defaults_is_drift_and_aligned(self):
+        # Without segment.* in COMPARED, a live topic left at 1 GiB / 7 days would never be bounded.
+        cfg = {"cleanup.policy": "delete", "retention.ms": "604800000", "retention.bytes": "67108864",
+               "min.insync.replicas": "1", "unclean.leader.election.enable": "false",
+               "segment.bytes": "1073741824", "segment.ms": "604800000"}
+        kv = dict(cfg, **{"cleanup.policy": "compact"})
+        for k in ("retention.ms", "retention.bytes"):
+            del kv[k]
+        live = {"local.andara.log.v1": (4, cfg), "local.andara.kv.v1": (2, kv)}
+        code, _, err = self.apply(FakeBroker(live), "local", rp=False, action="diff")
+        self.assertEqual(code, 1)
+        for key, have, want in (("segment.bytes", "1073741824", "16777216"), ("segment.ms", "604800000", "86400000")):
+            self.assertIn("local.andara.log.v1: %s is '%s', declaration says '%s'" % (key, have, want), err)
+        b = FakeBroker(live)
+        code, out, err = self.apply(b, "local", rp=False)
+        self.assertEqual(code, 0, err)
+        altered = {(c[2], c[4].split("=")[0]) for c in b.alters()}
+        for topic in ("local.andara.log.v1", "local.andara.kv.v1"):
+            self.assertIn((topic, "segment.bytes"), altered)
+            self.assertIn((topic, "segment.ms"), altered)
+        self.assertNotIn("data loss accepted", out)
+
     def test_local_on_compose_still_writes_redpandas_settings(self):
         b = FakeBroker({})
         code, _, _ = self.apply(b, "local", rp=True)

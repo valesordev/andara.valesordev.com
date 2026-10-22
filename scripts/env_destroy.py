@@ -33,6 +33,7 @@ import topics
 
 ARGO_NS = "argocd"
 DELETE_DEADLINE = 600
+TOPIC_DELETE_DEADLINE = 120
 
 
 def say(msg):
@@ -104,7 +105,7 @@ def delete_namespace(ns, deadline=DELETE_DEADLINE, sleep=time.sleep, clock=time.
         sleep(2)
 
 
-def delete_topics(env, run=None, decl=None):
+def delete_topics(env, run=None, decl=None, sleep=time.sleep, clock=time.monotonic):
     """The environment's declared topics and reserved groups on the shared broker. Idempotent:
     what's already gone is skipped. Never an unprefixed name, which could be another's."""
     decl = decl or topics.DECL
@@ -119,6 +120,13 @@ def delete_topics(env, run=None, decl=None):
         res = run(["topic", "delete", name])
         if res.returncode != 0:
             raise StepFailed("delete %s on the shared broker: %s" % (name, (res.stderr or res.stdout).strip()))
+    # Deletion is asynchronous: wait until they're gone, so a `kafka-install` that follows
+    # creates them afresh rather than finding them pending deletion.
+    end = clock() + TOPIC_DELETE_DEADLINE
+    while set(gone) & set(topics.existing_topics(run)):
+        if clock() > end:
+            raise StepFailed("%s's topics still listed %ds after delete" % (env, TOPIC_DELETE_DEADLINE))
+        sleep(2)
     for group in topics.consumer_groups(env, decl):
         res = run(["group", "delete", group])
         out = (res.stderr + res.stdout).lower()

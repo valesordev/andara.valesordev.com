@@ -520,6 +520,17 @@ class KafkaOperator(unittest.TestCase):
                                        "pystub scripts/topics.py apply --env dev"])
         self.assertTrue([c for c in made if "-n andara-shared apply -f deploy/k8s/kafka/" in c], made)
 
+    def test_bounce_refuses_local_before_any_call(self):
+        # local's server runs on memory until AW-INF-060, so a bounce would pass proving nothing.
+        d = tempfile.mkdtemp()
+        self.addCleanup(lambda: subprocess.run(["rm", "-rf", d]))
+        log = os.path.join(d, "calls")
+        env = stub_bin(d, log, {"helm": "exit 0", "kubectl": "exit 0"})
+        p = subprocess.run([os.path.join(SCRIPTS, "kafka.sh"), "bounce", "local"], capture_output=True, text=True, env=env)
+        self.assertEqual(p.returncode, 2, p.stderr)
+        self.assertIn("AW-INF-060", p.stderr)
+        self.assertEqual([c for c in calls(log) if c.startswith(("kubectl", "helm"))], [])
+
     def test_argocd_install_wants_the_shared_kafka(self):
         # AW-INF-055: dev's broker is in andara-shared, not andara-dev.
         c = Cluster()
