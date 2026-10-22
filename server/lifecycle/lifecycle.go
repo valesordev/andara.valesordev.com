@@ -277,7 +277,8 @@ func (s *Service) awaitCommit(ctx context.Context, tick sim.Tick) {
 	for o.Committed() < tick {
 		if wctx.Err() != nil {
 			o.Log.LogAttrs(ctx, slog.LevelWarn, "prestop: the round's offsets were not committed yet; the next boot replays from the round",
-				slog.Uint64("tick", uint64(tick)), slog.Uint64("committed", uint64(o.Committed())))
+				slog.Uint64("tick", uint64(tick)), slog.Uint64("committed", uint64(o.Committed())),
+				slog.String("trace_id", trace.SpanContextFromContext(ctx).TraceID().String()))
 			return
 		}
 		o.Sleep(wctx, 10*time.Millisecond)

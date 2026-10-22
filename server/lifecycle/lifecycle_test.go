@@ -432,3 +432,94 @@ func logLine(t *testing.T, b *bytes.Buffer, msg string) string {
 	t.Fatalf("no %q line in:\n%s", msg, b.String())
 	return ""
 }
+
+// The sequence's "commit offsets" step: PrepareStop returns only once the
+// loop has committed through the round's tick.
+func TestPrepareStopWaitsForTheRoundsCommit(t *testing.T) {
+	t.Parallel()
+	var mu sync.Mutex
+	polls := 0
+	h := newHarness(t, goodRound(), func(o *lifecycle.Options) {
+		o.Committed = func() sim.Tick {
+			mu.Lock()
+			defer mu.Unlock()
+			polls++
+			if polls <= 3 {
+				return goodRound().Tick - 1
+			}
+			return goodRound().Tick
+		}
+	})
+	resp := h.call(t)
+	mu.Lock()
+	n := polls
+	mu.Unlock()
+	if n < 4 {
+		t.Fatalf("PrepareStop returned after %d polls of the committed tick, before it reached the round's", n)
+	}
+	if resp.GetOutcome() != adminv1.PrepareStopOutcome_PREPARE_STOP_OUTCOME_COMPLETE {
+		t.Fatalf("outcome %v", resp.GetOutcome())
+	}
+	if strings.Contains(h.logs.String(), "were not committed yet") {
+		t.Fatalf("a commit that came is logged as missing:\n%s", h.logs.String())
+	}
+}
+
+// A commit that never comes is logged, and the round is still the recovery
+// point: the outcome stays COMPLETE.
+func TestPrepareStopLogsACommitThatNeverComes(t *testing.T) {
+	t.Parallel()
+	h := newHarness(t, goodRound(), func(o *lifecycle.Options) {
+		o.Committed = func() sim.Tick { return goodRound().Tick - 1 }
+		o.TickInterval = 10 * time.Millisecond
+		o.Sleep = func(ctx context.Context, d time.Duration) {
+			if d < time.Second {
+				// The commit poll: wait for real, so the bounded wait elapses.
+				select {
+				case <-time.After(d):
+				case <-ctx.Done():
+				}
+			}
+		}
+	})
+	resp := h.call(t)
+	if resp.GetOutcome() != adminv1.PrepareStopOutcome_PREPARE_STOP_OUTCOME_COMPLETE {
+		t.Fatalf("outcome %v, want COMPLETE: the round is the recovery point either way", resp.GetOutcome())
+	}
+	line := logLine(t, h.logs, "prestop: the round's offsets were not committed yet")
+	for _, f := range []string{`"level":"WARN"`, `"tick":420`, `"committed":419`, `"trace_id":"`} {
+		if !strings.Contains(line, f) {
+			t.Errorf("warn line lacks %s: %s", f, line)
+		}
+	}
+	if strings.Contains(line, `"trace_id":"00000000000000000000000000000000"`) {
+		t.Errorf("warn line carries no trace: %s", line)
+	}
+}
+
+// AC-1's refused_ms counts from the refusal and duration_ms from the start,
+// so the notice lead is in duration_ms only (lifecycle.md).
+func TestPrepareStopRefusedMsStartsAtTheRefusal(t *testing.T) {
+	t.Parallel()
+	var mu sync.Mutex
+	clock := time.Unix(1_800_000_000, 0)
+	polls := 0
+	h := newHarness(t, goodRound(), func(o *lifecycle.Options) {
+		o.Now = func() time.Time { mu.Lock(); defer mu.Unlock(); return clock }
+		o.Sleep = func(_ context.Context, d time.Duration) { mu.Lock(); clock = clock.Add(d); mu.Unlock() }
+		// Two polls short of the commit: 20ms pass after the refusal.
+		o.Committed = func() sim.Tick {
+			mu.Lock()
+			defer mu.Unlock()
+			polls++
+			if polls <= 2 {
+				return goodRound().Tick - 1
+			}
+			return goodRound().Tick
+		}
+	})
+	resp := h.call(t)
+	if resp.GetDurationMs() != 10_020 || resp.GetRefusedMs() != 20 {
+		t.Fatalf("duration_ms %d refused_ms %d, want 10020 and 20 (notice lead 10s, then 20ms to the commit)", resp.GetDurationMs(), resp.GetRefusedMs())
+	}
+}
