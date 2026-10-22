@@ -179,6 +179,17 @@ func (l *Loop) Live() (ticks uint64, lag time.Duration) {
 // Interval is the tick interval.
 func (l *Loop) Interval() time.Duration { return l.interval }
 
+// Snapshotter is the loop's round runner, nil when it has none.
+func (l *Loop) Snapshotter() *Snapshotter { return l.opts.Snapshotter }
+
+// CommittedThrough is the tick of the newest checkpoint committed. Safe from
+// any goroutine.
+func (l *Loop) CommittedThrough() sim.Tick {
+	l.mu.Lock()
+	defer l.mu.Unlock()
+	return l.lastCommitted
+}
+
 // BoundaryAcked records that tick's boundary as delivered, releasing the
 // checkpoints held for it. Safe from any goroutine: the Kafka publisher calls
 // it from its delivery callback. Once a boundary is lost, an acknowledgement
@@ -446,7 +457,14 @@ func (l *Loop) tick(ctx context.Context, tick sim.Tick, lag time.Duration) error
 	// the broker's acknowledgement of this boundary before it writes
 	// anything (SnapshotOptions.AwaitBoundaryAck).
 	if publishErr == nil {
-		l.opts.Snapshotter.Maybe(tctx, e)
+		if l.opts.Snapshotter.Maybe(tctx, e) {
+			// Pre-stop's round (AW-SRV-054) checkpoints its own tick, so the
+			// offsets committed are the round's once its boundary is
+			// delivered, whatever sim.checkpoint_every_ticks says.
+			if n := len(l.pending); n == 0 || l.pending[n-1].Tick < tick {
+				l.pending = append(l.pending, res.Completed)
+			}
+		}
 	} else {
 		l.opts.Snapshotter.Skip(tctx, tick, publishErr)
 	}

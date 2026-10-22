@@ -60,6 +60,10 @@ func (rt *Runtime) StartTickLoop(ctx context.Context) (*tickloop.Loop, error) {
 		rt.StartEvents()
 	}
 
+	// The new pod's instrument (AW-SRV-054), on every boot: a boot with no
+	// boundary to measure from still exports the histogram, empty.
+	rt.deployMetrics()
+
 	var (
 		source      tickloop.Source
 		publisher   tickloop.Publisher
@@ -98,6 +102,8 @@ func (rt *Runtime) StartTickLoop(ctx context.Context) (*tickloop.Loop, error) {
 			return nil, fmt.Errorf("recovery: %w", err)
 		}
 		engine = rec
+		// Where the interruption is measured from (AW-SRV-054 AC-7).
+		rt.noteRecovered(ctx, ropts.Store, rep)
 		// Every Session is gone: a Character the crash left standing is
 		// marked linkdead rather than left present for good.
 		rt.releaseOrphans(ctx, engine)

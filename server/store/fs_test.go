@@ -53,14 +53,17 @@ func TestFSPartialWriteIsNotListedAndDoesNotShadowThePreviousRound(t *testing.T)
 	}
 
 	// Simulate the kill: the tmp file for the next round exists, the rename
-	// never happened.
+	// never happened. A leftover .tmp, the suffix before round tags, is not a
+	// snapshot key and is not listed either.
 	interrupted := sim.SnapshotKey("village", 1, 20, 20)
-	tmp := filepath.Join(root, filepath.FromSlash(interrupted)) + TempSuffix
-	if err := os.MkdirAll(filepath.Dir(tmp), 0o755); err != nil {
-		t.Fatalf("seed tmp: %v", err)
-	}
-	if err := os.WriteFile(tmp, []byte("half a round"), 0o644); err != nil {
-		t.Fatalf("seed tmp: %v", err)
+	for _, suffix := range []string{TempSuffix, ".tmp"} {
+		tmp := filepath.Join(root, filepath.FromSlash(interrupted)) + suffix
+		if err := os.MkdirAll(filepath.Dir(tmp), 0o755); err != nil {
+			t.Fatalf("seed tmp: %v", err)
+		}
+		if err := os.WriteFile(tmp, []byte("half a round"), 0o644); err != nil {
+			t.Fatalf("seed tmp: %v", err)
+		}
 	}
 
 	keys, err := s.List(ctx, "village")

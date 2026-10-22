@@ -238,6 +238,26 @@ ANDARA_RECOVERY_RTO_TARGET: {{ $v | toString | quote }}
 {{- if not (eq (toString $v) "__unset__") }}
 ANDARA_RECOVERY_PIN_ROUND: {{ $v | toString | quote }}
 {{- end }}
+{{- $v := dig "deploy" "notice_lead" "__unset__" (.Values.server | default dict) }}
+{{- if not (eq (toString $v) "__unset__") }}
+ANDARA_DEPLOY_NOTICE_LEAD: {{ $v | toString | quote }}
+{{- end }}
+{{- $v := dig "deploy" "expected_back" "__unset__" (.Values.server | default dict) }}
+{{- if not (eq (toString $v) "__unset__") }}
+ANDARA_DEPLOY_EXPECTED_BACK: {{ $v | toString | quote }}
+{{- end }}
+{{- $v := dig "deploy" "admit_wait" "__unset__" (.Values.server | default dict) }}
+{{- if not (eq (toString $v) "__unset__") }}
+ANDARA_DEPLOY_ADMIT_WAIT: {{ $v | toString | quote }}
+{{- end }}
+{{- $v := dig "deploy" "image_tag" "__unset__" (.Values.server | default dict) }}
+{{- if not (eq (toString $v) "__unset__") }}
+ANDARA_DEPLOY_IMAGE_TAG: {{ $v | toString | quote }}
+{{- end }}
+{{- $v := dig "deploy" "control_socket" "__unset__" (.Values.server | default dict) }}
+{{- if not (eq (toString $v) "__unset__") }}
+ANDARA_DEPLOY_CONTROL_SOCKET: {{ $v | toString | quote }}
+{{- end }}
 {{- $v := dig "kafka" "brokers" "__unset__" (.Values.server | default dict) }}
 {{- if not (eq (toString $v) "__unset__") }}
 ANDARA_KAFKA_BROKERS: {{ $v | toString | quote }}

@@ -452,6 +452,35 @@
             }
           }
         },
+        "deploy": {
+          "type": "object",
+          "additionalProperties": false,
+          "properties": {
+            "notice_lead": {
+              "type": "string",
+              "pattern": "^([0-9]+(\\.[0-9]+)?(ns|us|\u00b5s|ms|s|m|h))+$",
+              "description": "ANDARA_DEPLOY_NOTICE_LEAD (AW-INF-007). Default when unset: '10s'."
+            },
+            "expected_back": {
+              "type": "string",
+              "pattern": "^([0-9]+(\\.[0-9]+)?(ns|us|\u00b5s|ms|s|m|h))+$",
+              "description": "ANDARA_DEPLOY_EXPECTED_BACK (AW-INF-007). Default when unset: '60s'."
+            },
+            "admit_wait": {
+              "type": "string",
+              "pattern": "^([0-9]+(\\.[0-9]+)?(ns|us|\u00b5s|ms|s|m|h))+$",
+              "description": "ANDARA_DEPLOY_ADMIT_WAIT (AW-SRV-054). Default when unset: '5s'."
+            },
+            "image_tag": {
+              "type": "string",
+              "description": "ANDARA_DEPLOY_IMAGE_TAG (AW-SRV-054). Default when unset: 'dev'."
+            },
+            "control_socket": {
+              "type": "string",
+              "description": "ANDARA_DEPLOY_CONTROL_SOCKET (AW-SRV-054). Default when unset: '/run/andara/control.sock'."
+            }
+          }
+        },
         "kafka": {
           "type": "object",
           "additionalProperties": false,

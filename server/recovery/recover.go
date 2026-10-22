@@ -122,6 +122,13 @@ type Report struct {
 	MismatchTick sim.Tick
 	// TraceID is the recovery.run trace: what the boot summary line carries.
 	TraceID string
+	// HeadProducedAt is the CreateTime of the head Tick Boundary Record, the
+	// last instant the previous process's World ticked: where
+	// andara_deploy_interruption_seconds starts (AW-SRV-054,
+	// lifecycle.md "Measuring the interruption"). Set whenever the log has a
+	// boundary, including when the restored round is already at the head;
+	// zero when it has none.
+	HeadProducedAt time.Time
 }
 
 func (o *Options) defaults() {
@@ -228,11 +235,15 @@ func Recover(ctx context.Context, o Options) (*sim.Engine, Report, error) {
 		t1 := phase(PhaseLoad, t0)
 		// Seek: the round's own boundary is the hash the restore must
 		// reproduce, and replay starts after it.
-		tc, err := o.roundBoundary(ctx, round.Tick)
+		rb, err := o.roundBoundary(ctx, round.Tick)
 		if err != nil {
 			o.logRefusal(ctx, err, traceID)
 			return fail(err)
 		}
+		tc := rb.TickCompleted
+		// The round's own boundary is the head when nothing follows it: the
+		// replay below then reads none, and this is the head's timestamp.
+		rep.HeadProducedAt = rb.ProducedAt
 		state.RecordedHash = tc.StateHash[:]
 		t0 = phase(PhaseSeek, t1)
 		_, rspan := o.Tracer.Start(ctx, "restore.verify", trace.WithAttributes(attribute.Int64("round_tick", int64(round.Tick))))
@@ -435,31 +446,31 @@ func (o *Options) selectRound(ctx context.Context) (store.Round, sim.RoundState,
 // roundBoundary positions the reader at the round's own tick and reads that
 // tick's Tick Boundary Record, leaving the reader at the tick after it. A log
 // that no longer has it is a *tickloop.LogGapError.
-func (o *Options) roundBoundary(ctx context.Context, round sim.Tick) (sim.TickCompleted, error) {
+func (o *Options) roundBoundary(ctx context.Context, round sim.Tick) (tickloop.Boundary, error) {
 	if round == 0 {
-		return sim.TickCompleted{}, fmt.Errorf("snapshot round at tick 0: no Tick Boundary Record records a tick 0")
+		return tickloop.Boundary{}, fmt.Errorf("snapshot round at tick 0: no Tick Boundary Record records a tick 0")
 	}
 	_, span := o.Tracer.Start(ctx, "recovery.seek")
 	defer span.End()
 	at, err := o.Boundaries.SeekAfter(ctx, round-1)
 	if err != nil {
-		return sim.TickCompleted{}, fmt.Errorf("boundaries: %w", err)
+		return tickloop.Boundary{}, fmt.Errorf("boundaries: %w", err)
 	}
 	span.SetAttributes(attribute.Int64("offset", at))
 	if !o.Boundaries.BoundaryAfter() {
-		return sim.TickCompleted{}, &tickloop.LogGapError{Topic: o.EventsTopic, Partition: tickloop.BoundaryPartition, Need: int64(round), Have: -1}
+		return tickloop.Boundary{}, &tickloop.LogGapError{Topic: o.EventsTopic, Partition: tickloop.BoundaryPartition, Need: int64(round), Have: -1}
 	}
 	for {
 		b, err := o.Boundaries.Next(ctx, 1, o.Poll)
 		if err != nil {
-			return sim.TickCompleted{}, err
+			return tickloop.Boundary{}, err
 		}
 		switch {
 		case len(b) == 0, b[0].Tick < round:
 		case b[0].Tick == round:
-			return b[0].TickCompleted, nil
+			return b[0], nil
 		default:
-			return sim.TickCompleted{}, &tickloop.LogGapError{Topic: o.EventsTopic, Partition: tickloop.BoundaryPartition, Need: int64(round), Have: int64(b[0].Tick)}
+			return tickloop.Boundary{}, &tickloop.LogGapError{Topic: o.EventsTopic, Partition: tickloop.BoundaryPartition, Need: int64(round), Have: int64(b[0].Tick)}
 		}
 	}
 }
@@ -483,6 +494,9 @@ func (o *Options) replay(ctx context.Context, e *sim.Engine, src sim.RecordSourc
 		for _, b := range bs {
 			if b.Tick > e.Tick() && b.Tick <= head {
 				tcs = append(tcs, b.TickCompleted)
+				if b.Tick == head {
+					rep.HeadProducedAt = b.ProducedAt
+				}
 			}
 		}
 		if len(tcs) == 0 {
