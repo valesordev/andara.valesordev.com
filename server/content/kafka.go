@@ -31,6 +31,11 @@ const DefaultClientID = "andara-server-content"
 // broker that is down does not turn the watch into a busy loop.
 const watchBackoff = 2 * time.Second
 
+// watchAuthBackoff is the pause after the broker refuses the watch's
+// principal the pointer topic: an ACL changes on an operator's time, not a
+// broker restart's.
+var watchAuthBackoff = time.Minute
+
 // PointerMove is one Active Pointer write observed on the Active Pointer topic.
 type PointerMove struct {
 	Pack    string
@@ -400,11 +405,21 @@ func (r *KafkaResolver) Watch(ctx context.Context) (<-chan PointerMove, error) {
 			// ignored. The watch never gives up: giving up would mean the
 			// server stops noticing content changes with nothing saying so.
 			if errs := fetches.Errors(); len(errs) > 0 {
-				r.log.Warn("content pointer watch: fetch failed, retrying",
-					"topic", errs[0].Topic, "partition", errs[0].Partition,
-					"error", wc.Check(errs[0].Topic, errs[0].Err).Error())
+				err := wc.Check(errs[0].Topic, errs[0].Err)
+				backoff := watchBackoff
+				if kafkaclient.ErrorName(err) != "" {
+					// The broker refuses the principal the pointer topic
+					// (AW-SRV-044 AC-8). The server keeps serving the content
+					// it has, so unlike the tick loop it doesn't stop: it
+					// asks again once a minute, which an ACL fix heals, and
+					// the kafkaclient error line (one a minute) says why.
+					backoff = watchAuthBackoff
+				} else {
+					r.log.Warn("content pointer watch: fetch failed, retrying",
+						"topic", errs[0].Topic, "partition", errs[0].Partition, "error", err.Error())
+				}
 				select {
-				case <-time.After(watchBackoff):
+				case <-time.After(backoff):
 				case <-ctx.Done():
 					return
 				}

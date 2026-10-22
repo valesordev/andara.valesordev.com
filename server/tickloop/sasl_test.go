@@ -23,7 +23,7 @@ import (
 
 // AC-8 through a consumer: when the broker refuses the principal the
 // commands topic on fetch, the tick loop's source reports a
-// *kafkaclient.AuthError (behind ErrStarved) naming the topic and the
+// *kafkaclient.AuthError (not starvation) naming the topic and the
 // principal, counts it once, and stops fetching instead of retrying.
 func TestKafkaSource_ATopicRefusalStopsTheFetchAsAnAuthError(t *testing.T) {
 	const topic = "it7.andara.commands.v1"
@@ -76,8 +76,8 @@ func TestKafkaSource_ATopicRefusalStopsTheFetchAsAnAuthError(t *testing.T) {
 	}
 	var ae *kafkaclient.AuthError
 	if !errors.As(pollErr, &ae) || ae.Reason != kafkaclient.ReasonTopicUnauthorized || ae.Topic != topic || ae.Principal != "andara-server-dev" ||
-		!errors.Is(pollErr, ErrStarved) {
-		t.Fatalf("Poll = %v, want ErrStarved carrying a topic_unauthorized AuthError on %s as andara-server-dev", pollErr, topic)
+		errors.Is(pollErr, ErrStarved) {
+		t.Fatalf("Poll = %v, want a topic_unauthorized AuthError on %s as andara-server-dev, not starvation", pollErr, topic)
 	}
 	// Stopped, not retrying: no further fetch reaches the broker, and the
 	// refusal is counted once.

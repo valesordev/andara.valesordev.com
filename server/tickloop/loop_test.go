@@ -23,6 +23,7 @@ import (
 	"go.opentelemetry.io/otel/sdk/trace/tracetest"
 
 	logv1 "github.com/valesordev/andara/gen/go/andara/log/v1"
+	"github.com/valesordev/andara/server/kafkaclient"
 	"github.com/valesordev/andara/server/sim"
 	"github.com/valesordev/andara/server/simtest"
 )
@@ -407,6 +408,42 @@ func TestLoop_OffsetGapIsFatal(t *testing.T) {
 	err := h.runFor(time.Second)
 	if !errors.Is(err, sim.ErrOffsetGap) {
 		t.Fatalf("got %v", err)
+	}
+}
+
+// deniedSource is a source the broker refuses the principal on.
+type deniedSource struct{ *MemorySource }
+
+func (deniedSource) Poll([]int32, int) ([]sim.Record, error) {
+	return nil, &kafkaclient.AuthError{Reason: kafkaclient.ReasonTopicUnauthorized, ClientID: "andara-server-sim",
+		Principal: "andara-server-dev", Topic: "dev.andara.commands.v1", Err: errors.New("TOPIC_AUTHORIZATION_FAILED")}
+}
+
+// AW-SRV-044 AC-8: a source the broker refuses the topic stops the loop as a
+// gap does, with the AuthError in the chain and error_name on sim.tick,
+// instead of ticking on empty input with a starved line per tick.
+func TestLoop_ATopicRefusalIsFatal(t *testing.T) {
+	h := newHarness(t, func(o *Options) { o.Source = deniedSource{NewMemorySource()} })
+	err := h.runFor(time.Second)
+	var ae *kafkaclient.AuthError
+	if !errors.As(err, &ae) || ae.Topic != "dev.andara.commands.v1" {
+		t.Fatalf("Run = %v, want the AuthError", err)
+	}
+	if strings.Contains(h.logs.String(), "tick input starved") {
+		t.Fatalf("a refusal was logged as starvation:\n%s", h.logs.String())
+	}
+	var errName string
+	for _, s := range h.spans.Ended() {
+		if s.Name() == "sim.tick" {
+			for _, a := range s.Attributes() {
+				if a.Key == "error_name" {
+					errName = a.Value.AsString()
+				}
+			}
+		}
+	}
+	if errName != kafkaclient.ReasonTopicUnauthorized {
+		t.Fatalf("sim.tick error_name = %q", errName)
 	}
 }
 

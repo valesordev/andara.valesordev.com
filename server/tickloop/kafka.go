@@ -73,7 +73,10 @@ type KafkaSource struct {
 	paused   map[int32]bool
 	gap      error
 	fetchErr error
-	closed   bool
+	// denied is the broker's refusal of the principal on the topic: the
+	// fetch stopped on it, and Poll returns it once the buffers are drained.
+	denied error
+	closed bool
 }
 
 // NewKafkaSource connects, assigns the Partitions at their starting
@@ -186,9 +189,11 @@ func (s *KafkaSource) fetch(ctx context.Context) {
 		if kafkaclient.ErrorName(fetchErr) != "" {
 			// The broker refuses the principal the topic: every fetch would
 			// be refused again until an ACL changes, so the fetch stops here,
-			// counted once (AW-SRV-044 AC-8), and Poll reports it.
+			// counted once (AW-SRV-044 AC-8). Poll returns it, and the loop
+			// exits on it as on a gap: a restart, once the ACL is fixed, is
+			// what heals it.
 			s.mu.Lock()
-			s.fetchErr = fetchErr
+			s.denied = fetchErr
 			s.mu.Unlock()
 			return
 		}
@@ -274,6 +279,9 @@ func (s *KafkaSource) Poll(frozen []int32, max int) ([]sim.Record, error) {
 		return nil, s.gap
 	}
 	out := selectRoundRobin(s.buffers, frozen, max)
+	if len(out) == 0 && s.denied != nil {
+		return nil, s.denied
+	}
 	if len(out) == 0 && s.fetchErr != nil {
 		return nil, fmt.Errorf("%w: %w", ErrStarved, s.fetchErr)
 	}
