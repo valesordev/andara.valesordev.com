@@ -106,6 +106,10 @@ under_replicated() {
 
 bounce() {
   local env="$1" ns victim="$KAFKA-broker-0"
+  # dev's broker is the shared one in andara-shared since AW-INF-059 (values/dev.yaml); bouncing
+  # it is AW-INF-055's to define, since local's server shares it.
+  [[ "$env" != "dev" ]] \
+    || die broker-bounce "ENV=dev: dev's broker is the shared andara-log in andara-shared; its bounce is AW-INF-055's. ENV=prod" 2
   ns="$(env_ns "$env")"
   need kubectl
   kube_require kafka-broker-bounce

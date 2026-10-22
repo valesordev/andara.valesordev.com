@@ -541,6 +541,37 @@ class HelmInstallRefusal(unittest.TestCase):
                 self.assertIn("helm-install: kafka/andara-log in andara-shared is Ready", p.stdout, p.stderr)
             self.assertFalse([c for c in calls(log) if "-n andara-dev get kafka" in c])
 
+    def test_prod_checks_its_own_namespace_s_broker(self):
+        """prod's values name a bare broker, so the check stays in andara-prod, with its own hint."""
+        with tempfile.TemporaryDirectory() as d:
+            log = os.path.join(d, "calls")
+            env = stub_bin(d, log, {
+                "kubectl": 'case "$*" in "get crd applications.argoproj.io") exit 1;; '
+                           '"-n andara-prod get kafka andara-log"*) echo True; exit 0;; esac\nexit 1',
+                "helm": "exit 0"})
+            p = subprocess.run([os.path.join(SCRIPTS, "helm_install.sh"), "prod", "andara-server", "v1.0.0", "", "1"],
+                               capture_output=True, text=True, env=env)
+            self.assertIn("helm-install: kafka/andara-log in andara-prod is Ready", p.stdout, p.stderr)
+            self.assertFalse([c for c in calls(log) if "-n andara-shared" in c])
+        with tempfile.TemporaryDirectory() as d:
+            log = os.path.join(d, "calls")
+            env = stub_bin(d, log, {"kubectl": 'case "$*" in "get crd applications.argoproj.io") exit 1;; esac\nexit 1',
+                                    "helm": "exit 0"})
+            p = subprocess.run([os.path.join(SCRIPTS, "helm_install.sh"), "prod", "andara-server", "v1.0.0", "", "1"],
+                               capture_output=True, text=True, env=env)
+            self.assertEqual(p.returncode, 1)
+            self.assertIn("no Ready kafka/andara-log in andara-prod; run `make kafka-install ENV=prod` first", p.stderr)
+
+    def test_dev_without_the_shared_broker_names_aw_inf_055(self):
+        with tempfile.TemporaryDirectory() as d:
+            log = os.path.join(d, "calls")
+            env = stub_bin(d, log, {"kubectl": 'case "$*" in "get crd applications.argoproj.io") exit 1;; esac\nexit 1',
+                                    "helm": "exit 0"})
+            p = subprocess.run([os.path.join(SCRIPTS, "helm_install.sh"), "dev", "andara-server", "sha-0123456789ab", "", "1"],
+                               capture_output=True, text=True, env=env)
+            self.assertEqual(p.returncode, 1)
+            self.assertIn("no Ready kafka/andara-log in andara-shared; it comes from the shared broker (AW-INF-055)", p.stderr)
+
     def test_refuses_and_touches_nothing(self):
         with tempfile.TemporaryDirectory() as d:
             log = os.path.join(d, "calls")
@@ -660,6 +691,17 @@ class KafkaOperator(unittest.TestCase):
         self.assertEqual(p.returncode, 1)
         self.assertIn("run `make platform-up`", p.stderr)
         self.assertFalse([c for c in made if c.startswith("helm upgrade") or " apply " in c], made)
+
+    def test_bounce_refuses_dev_before_any_call(self):
+        """AW-INF-059 moved dev's broker to andara-shared; there's no broker in andara-dev to bounce."""
+        d = tempfile.mkdtemp()
+        self.addCleanup(lambda: subprocess.run(["rm", "-rf", d]))
+        log = os.path.join(d, "calls")
+        env = stub_bin(d, log, {"helm": "exit 0", "kubectl": "exit 0"})
+        p = subprocess.run([os.path.join(SCRIPTS, "kafka.sh"), "bounce", "dev"], capture_output=True, text=True, env=env)
+        self.assertEqual(p.returncode, 2, p.stderr)
+        self.assertIn("its bounce is AW-INF-055's", p.stderr)
+        self.assertEqual(calls(log), [])
 
     def test_no_install_path_carries_another_watch_list(self):
         """AC-5's grep: kafka-operator and kafka.sh's WATCHED list are gone."""

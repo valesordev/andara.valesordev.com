@@ -8,9 +8,10 @@
 # prod pull the image .github/workflows/publish.yaml pushes to ghcr (AW-INF-013); a TAG= on
 # the command line pins one, and scripts/helm_image_args.sh is the rule.
 #
-# The broker: local runs without one (accounts and commands in memory). dev and prod use
-# their namespace's Kafka `andara-log` (AW-INF-014), which `make kafka-install` creates;
-# this script refuses to touch their release until it is Ready.
+# The broker: local runs without one (accounts and commands in memory). prod uses its
+# namespace's Kafka `andara-log` (AW-INF-014, `make kafka-install`), dev the shared one in
+# andara-shared (AW-INF-059); this script refuses to touch their release until the one the
+# values file names is Ready.
 #
 # Content: local and dev read Zone Definitions from a ConfigMap the chart renders out of
 # testdata/content/valid (contentVolume.render), as compose reads a directory, until

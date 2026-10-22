@@ -408,11 +408,11 @@ cluster-down:
 cluster-rebuild:
 	@$(PY) $(SCRIPTS)/cluster.py rebuild "$(CONFIRM)"
 
-## kafka-install: Apache Kafka `andara-log` (3 brokers, KRaft) in andara-<env>, then the topics from deploy/kafka/topics.yaml — ENV=<dev|prod> (AW-INF-014)
+## kafka-install: Apache Kafka `andara-log` (3 brokers, KRaft) in andara-<env>, then the topics from deploy/kafka/topics.yaml — ENV=prod; dev refuses, its broker is the shared one (AW-INF-055) (AW-INF-014)
 kafka-install:
 	@PY=$(PY) $(SCRIPTS)/kafka.sh install "$(ENV)"
 
-## kafka-broker-bounce: delete one broker and prove the server never left service while it was gone — ENV=<dev|prod> (AW-INF-014 AC-5)
+## kafka-broker-bounce: delete one broker and prove the server never left service while it was gone — ENV=prod; dev's shared broker is AW-INF-055's (AW-INF-014 AC-5)
 kafka-broker-bounce:
 	@PY=$(PY) $(SCRIPTS)/kafka.sh bounce "$(ENV)"
 

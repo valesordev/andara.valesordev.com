@@ -35,7 +35,7 @@ chart, and one `Deployment` per projector. Story: [AW-INF-003](https://github.co
 | `make image [TAG=]` | build `andara-server:<tag>` from `deploy/compose/Dockerfile.server` |
 | `make image-publish` | build for linux/amd64 and push `ghcr.io/valesordev/andara-server:sha-<12 hex>`, printing its digest; nothing moves `:dev` (AW-INF-059); what `.github/workflows/publish.yaml` runs on every merge to `main` (AW-INF-013) |
 | `make kafka-install ENV=<dev\|prod>` | Kafka `andara-log` (`deploy/k8s/kafka/`) in `andara-<env>`, waits for Ready, applies `deploy/kafka/topics.yaml` through the `rpk` toolbox; refuses unless `platform-up`'s Strimzi watches the namespace (it watches `andara-shared` only; the shared broker is AW-INF-055's) |
-| `make kafka-broker-bounce ENV=<env>` | delete one broker; after it rejoins with every partition in sync, assert once that the server never left Ready, never logged `command log unreachable`, and refused no Submit |
+| `make kafka-broker-bounce ENV=prod` | delete one broker; after it rejoins with every partition in sync, assert once that the server never left Ready, never logged `command log unreachable`, and refused no Submit |
 | `make image-check ENV=<env> [TAG=dev] [REGISTRY_ONLY=1]` | prove a published tag pulls anonymously (and a `sha-` tag carries its commit), then from the cluster with a throwaway `/bin/true` pod in `andara-<env>` |
 | `make kind-load` | load the image into the kind cluster `ANDARA_KUBE_CONTEXT` names, without its `kind-` prefix (`andara` by default); a context that isn't a `kind-` one exits 2 |
 | `make kube-context-check` | no `kubectl`, `helm` or `kind` call in `scripts/`, the `Makefile` or a workflow's `run:` step acts on the ambient context, and none moves `current-context`; in `make check` (AW-INF-053) |
@@ -185,4 +185,5 @@ Strimzi operator (ADR-0002 §7: Kafka in production), from `make kafka-install E
 file's `server.kafka.brokers` names is not Ready. It also refuses without the operator credential,
 because `local`'s default is public and this edge is not. `dev`'s sim and Accounts live on the broker. Its content
 still comes from the same ConfigMaps as `local`, as compose reads a directory, until AW-SRV-012.
-`make kafka-broker-bounce ENV=dev` shows losing one broker costs the World nothing.
+`make kafka-broker-bounce ENV=prod` shows losing one broker costs the World nothing; `ENV=dev` refuses (exit 2), since
+the shared broker's bounce is AW-INF-055's.
