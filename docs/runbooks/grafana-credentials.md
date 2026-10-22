@@ -151,7 +151,10 @@ entry.
   composes from the committed `fleet_user`. A plan without it exits 3 naming it.
   - `solo7`'s root has no Fleet provider until `AW-INF-078`, so `plan-prod` passes `solo7`'s along unread.
   - The IRM root has no Fleet resources.
-- **Check after a rotation:** `make tf-plan STACK=solo7dev` succeeds.
+- **Check after a rotation:** in the access policy's token list. A plan doesn't prove the token yet: with no
+  Fleet resource in the root, the provider never calls Fleet, so a bad token still plans clean. Once
+  `shared-kafka` is in the root (`AW-INF-051`'s second merge), `make tf-plan STACK=solo7dev` reads it
+  and is the check.
 
 ### `GRAFANA_SOLO7DEV_FLEET_APPLY_TOKEN`, `GRAFANA_SOLO7_FLEET_APPLY_TOKEN`
 
@@ -167,8 +170,9 @@ entry.
 - **Read by:** the Fleet provider in `apply` and `make tf-apply STACK=solo7dev` (`AW-INF-051`), as
   `GRAFANA_FLEET_MANAGEMENT_AUTH`, `<fleet_user>:<token>`, composed from the committed `fleet_user`. An
   apply without it exits 3 naming it. `apply-prod` reads `solo7`'s from `AW-INF-078`.
-- **Check after a rotation:** the next `apply` run on `main` (or `make tf-apply STACK=solo7dev`) ends with
-  an empty second plan.
+- **Check after a rotation:** in the access policy's token list, until `shared-kafka` is in the root, for
+  the reason given for the read token. After that, the next `apply` run on `main` (or
+  `make tf-apply STACK=solo7dev`) ends with an empty second plan.
 
 ### `GRAFANA_SOLO7_IRM_TOKEN` (the provider reads it as `GRAFANA_ONCALL_ACCESS_TOKEN`)
 

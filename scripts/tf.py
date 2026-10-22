@@ -131,10 +131,15 @@ def grafana_url(stack):
 
 
 def has_fleet(stack):
-    """Whether stack's provider block configures Fleet Management (solo7dev from AW-INF-051, solo7 in AW-INF-078)."""
-    path = os.path.join(root_dir(stack), "main.tf")
-    with open(path) as f:
-        return re.search(r"^\s*fleet_management_url\s*=", f.read(), re.M) is not None
+    """Whether stack's provider block configures Fleet Management (solo7dev from AW-INF-051, solo7 in AW-INF-078),
+    read from every .tf file of the root."""
+    root = root_dir(stack)
+    for name in sorted(os.listdir(root)):
+        if name.endswith(".tf"):
+            with open(os.path.join(root, name)) as f:
+                if re.search(r"^\s*fleet_management_url\s*=", f.read(), re.M):
+                    return True
+    return False
 
 
 def check_stack(stack, env):
