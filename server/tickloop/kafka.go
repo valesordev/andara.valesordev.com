@@ -186,7 +186,7 @@ func (s *KafkaSource) fetch(ctx context.Context) {
 			pingErr = recordlog.Ping(pctx, s.client)
 			pcancel()
 		}
-		if kafkaclient.ErrorName(fetchErr) != "" {
+		if kafkaclient.Refused(fetchErr) {
 			// The broker refuses the principal the topic: every fetch would
 			// be refused again until an ACL changes, so the fetch stops here,
 			// counted once (AW-SRV-044 AC-8). Poll returns it, and the loop

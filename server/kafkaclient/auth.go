@@ -59,6 +59,13 @@ func ErrorName(err error) string {
 	return ""
 }
 
+// Refused reports whether err is the broker refusing the principal a topic
+// (topic_unauthorized): a refusal that holds until an ACL changes, which a
+// reader stops on or backs off from. A password_file or sasl_failed is a
+// connection's failure, which the client retries on its own (AC-6a), and is
+// not a refusal.
+func Refused(err error) bool { return ErrorName(err) == ReasonTopicUnauthorized }
+
 // SpanError marks span as failed with err and, when err is an authentication
 // or authorization failure, adds error_name = its reason (the Observability
 // requirements' trace rule). The principal is never an attribute.

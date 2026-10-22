@@ -34,7 +34,7 @@ const watchBackoff = 2 * time.Second
 // watchAuthBackoff is the pause after the broker refuses the watch's
 // principal the pointer topic: an ACL changes on an operator's time, not a
 // broker restart's.
-var watchAuthBackoff = time.Minute
+const watchAuthBackoff = time.Minute
 
 // PointerMove is one Active Pointer write observed on the Active Pointer topic.
 type PointerMove struct {
@@ -407,7 +407,7 @@ func (r *KafkaResolver) Watch(ctx context.Context) (<-chan PointerMove, error) {
 			if errs := fetches.Errors(); len(errs) > 0 {
 				err := wc.Check(errs[0].Topic, errs[0].Err)
 				backoff := watchBackoff
-				if kafkaclient.ErrorName(err) != "" {
+				if kafkaclient.Refused(err) {
 					// The broker refuses the principal the pointer topic
 					// (AW-SRV-044 AC-8). The server keeps serving the content
 					// it has, so unlike the tick loop it doesn't stop: it

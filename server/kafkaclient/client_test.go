@@ -324,6 +324,21 @@ func TestSpanError_NamesTheReasonOfAnAuthError(t *testing.T) {
 	}
 }
 
+// Only the broker's refusal of a topic is a refusal a reader stops on; a
+// connection's failure (password_file, sasl_failed) is retried (AC-6a).
+func TestRefused_OnlyATopicRefusal(t *testing.T) {
+	t.Parallel()
+	for reason, want := range map[string]bool{ReasonTopicUnauthorized: true, ReasonPasswordFile: false, ReasonSASLFailed: false} {
+		err := fmt.Errorf("fetch: %w", &AuthError{Reason: reason, Err: errors.New("x")})
+		if got := Refused(err); got != want {
+			t.Errorf("Refused(%s) = %v, want %v", reason, got, want)
+		}
+	}
+	if Refused(errors.New("broker gone")) || Refused(nil) {
+		t.Error("Refused of a non-AuthError")
+	}
+}
+
 func refuse(context.Context, string, string) (net.Conn, error) {
 	return nil, errors.New("kafkaclient test: no dial")
 }

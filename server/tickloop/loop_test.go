@@ -9,6 +9,7 @@ import (
 	"encoding/hex"
 	"errors"
 	"flag"
+	"fmt"
 	"log/slog"
 	"os"
 	"path/filepath"
@@ -444,6 +445,27 @@ func TestLoop_ATopicRefusalIsFatal(t *testing.T) {
 	}
 	if errName != kafkaclient.ReasonTopicUnauthorized {
 		t.Fatalf("sim.tick error_name = %q", errName)
+	}
+}
+
+// lostPasswordSource is a source whose fetch failed on a new connection's
+// password file: a connection's failure, which the client retries.
+type lostPasswordSource struct{ *MemorySource }
+
+func (lostPasswordSource) Poll([]int32, int) ([]sim.Record, error) {
+	return nil, fmt.Errorf("%w: %w", ErrStarved, &kafkaclient.AuthError{Reason: kafkaclient.ReasonPasswordFile, ClientID: "andara-server-sim",
+		Principal: "andara-server-dev", Err: errors.New("kafka.sasl_password_file /etc/andara/secrets/kafka/password: no such file or directory")})
+}
+
+// AW-SRV-044 AC-6a: a password file lost at runtime starves the loop, which
+// keeps running for the client to retry; it is not the refusal that stops it.
+func TestLoop_ALostPasswordFileStarvesButDoesNotStop(t *testing.T) {
+	h := newHarness(t, func(o *Options) { o.Source = lostPasswordSource{NewMemorySource()} })
+	if err := h.runFor(time.Second); err != nil {
+		t.Fatalf("Run = %v, want the loop still running at the deadline", err)
+	}
+	if counter(h.loop.Metrics().InputStarved) == 0 {
+		t.Fatal("no starved tick counted")
 	}
 }
 
