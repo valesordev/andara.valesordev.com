@@ -197,6 +197,15 @@ class CredentialTest(NoBoxEnv):
         self.assertEqual(rc, 0)
         self.assertNotIn("GRAFANA_FLEET_MANAGEMENT_AUTH", fake.envs[-1])
 
+    def test_has_fleet_reads_every_tf_file_and_not_comments(self):
+        with tempfile.TemporaryDirectory() as root, mock.patch.object(tf, "root_dir", lambda stack: root):
+            with open(os.path.join(root, "main.tf"), "w") as f:
+                f.write('provider "grafana" {\n  url = var.grafana_url\n  # fleet_management_url = var.fleet_url\n}\n')
+            self.assertFalse(tf.has_fleet("solo7dev"), "a commented line is not a Fleet provider")
+            with open(os.path.join(root, "providers.tf"), "w") as f:
+                f.write('provider "grafana" {\n  alias                = "fleet"\n  fleet_management_url = var.fleet_url\n}\n')
+            self.assertTrue(tf.has_fleet("solo7dev"), "a Fleet provider in a second .tf file")
+
     def test_token_reaches_terraform_only_as_grafana_auth(self):
         env = dict(DEV, TF_VAR_grafana_auth="leak", TF_CLI_ARGS_plan="-var=x=y", GRAFANA_SOLO7_APPLY_TOKEN="other")
         fake = FakeTerraform()
