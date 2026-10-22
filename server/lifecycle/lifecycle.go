@@ -47,7 +47,7 @@ type Refuser interface {
 // Rounds takes the pre-stop round: the tick loop's snapshotter.
 type Rounds interface {
 	Force() <-chan tickloop.ForcedRound
-	CancelForce(<-chan tickloop.ForcedRound)
+	CancelForce(<-chan tickloop.ForcedRound) (withdrawn bool)
 }
 
 // Options is everything PrepareStop reads.

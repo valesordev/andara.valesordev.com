@@ -314,14 +314,17 @@ func (l lateRounds) Force() <-chan tickloop.ForcedRound {
 	time.AfterFunc(l.after, func() { ch <- l.r })
 	return ch
 }
-func (lateRounds) CancelForce(<-chan tickloop.ForcedRound) {}
+func (lateRounds) CancelForce(<-chan tickloop.ForcedRound) bool { return false }
 
 type neverRounds struct{ canceled *bool }
 
-func (neverRounds) Force() <-chan tickloop.ForcedRound        { return make(chan tickloop.ForcedRound) }
-func (n neverRounds) CancelForce(<-chan tickloop.ForcedRound) { *n.canceled = true }
+func (neverRounds) Force() <-chan tickloop.ForcedRound { return make(chan tickloop.ForcedRound) }
+func (n neverRounds) CancelForce(<-chan tickloop.ForcedRound) bool {
+	*n.canceled = true
+	return true
+}
 
-func (*fakes) CancelForce(<-chan tickloop.ForcedRound) {}
+func (*fakes) CancelForce(<-chan tickloop.ForcedRound) bool { return false }
 
 // AC-5 and ruling 1: over the socket, the response's outcome is the exit
 // code; the socket is mode 0600; no socket exits 3.

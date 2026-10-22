@@ -220,16 +220,20 @@ func (s *Snapshotter) Force() <-chan ForcedRound {
 
 // CancelForce withdraws a Force request not yet taken, so a pre-stop that
 // gave up on it leaves no round to be taken behind its back. A request
-// already taken runs to its end.
-func (s *Snapshotter) CancelForce(ch <-chan ForcedRound) {
+// already taken runs to its end. withdrawn reports that this call removed
+// the request; false means a boundary had already taken it (or ch is not
+// the waiting request).
+func (s *Snapshotter) CancelForce(ch <-chan ForcedRound) (withdrawn bool) {
 	if s == nil {
-		return
+		return false
 	}
 	s.forceMu.Lock()
 	defer s.forceMu.Unlock()
 	if s.forced != nil && (<-chan ForcedRound)(s.forced) == ch {
 		s.forced = nil
+		return true
 	}
+	return false
 }
 
 // claimForced takes the waiting Force request and the in-flight slot together,

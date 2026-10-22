@@ -132,11 +132,17 @@ func TestCancelForceRacingTheBoundary(t *testing.T) {
 	for i := range 300 {
 		ch := h.s.Force()
 		var wg sync.WaitGroup
+		var withdrawn bool
 		wg.Add(1)
-		go func() { defer wg.Done(); h.s.CancelForce(ch) }()
+		go func() { defer wg.Done(); withdrawn = h.s.CancelForce(ch) }()
 		forced := h.s.Maybe(context.Background(), e)
 		wg.Wait()
 		h.s.Wait()
+		// Exactly one side wins: no periodic round is due (the harness's
+		// clock never advances), so a round taken here is the forced one.
+		if forced == withdrawn {
+			t.Fatalf("iteration %d: forced %v, withdrawn %v: a withdrawn request's round was taken, or a request was neither taken nor withdrawn", i, forced, withdrawn)
+		}
 		if !forced {
 			continue
 		}
