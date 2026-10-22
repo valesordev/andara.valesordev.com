@@ -277,12 +277,18 @@ def make_tags(commit, n, message):
 def undo_tags(n, before_dev):
     """Put the local tags back as they were before this run: dev-<n> gone, dev at the exact tag
     object it named (or gone). update-ref, never `git tag`, which under tag.gpgsign=true (as
-    bootstrap.sh sets it) would make a new signed tag rather than restore the saved one."""
+    bootstrap.sh sets it) would make a new signed tag rather than restore the saved one.
+    Returns "" when restored, else a note for the caller's message, which stays the real failure."""
     git("update-ref", "-d", "refs/tags/dev-%d" % n, check=False)
     if before_dev:
-        git("update-ref", "refs/tags/" + TAG, before_dev)
+        git("update-ref", "refs/tags/" + TAG, before_dev, check=False)
     else:
         git("update-ref", "-d", "refs/tags/" + TAG, check=False)
+    now = git("rev-parse", "--verify", "--quiet", "refs/tags/" + TAG, check=False)
+    if now != before_dev or git("rev-parse", "--verify", "--quiet", "refs/tags/dev-%d" % n, check=False):
+        return " (local tags NOT restored: dev is %s, want %s; fix with `git fetch --force origin "
+        "'refs/tags/dev*:refs/tags/dev*'`)" % (now[:12] or "absent", before_dev[:12] or "absent")
+    return ""
 
 
 def push(commit, n, before_dev):
@@ -293,13 +299,13 @@ def push(commit, n, before_dev):
     p = subprocess.run(["git", "-C", REPO, "push", "--atomic", REMOTE, *refspecs], capture_output=True, text=True)
     if p.returncode == 0:
         return time.monotonic()
-    undo_tags(n, before_dev)
+    note = undo_tags(n, before_dev)
     if git("rev-parse", "--verify", "--quiet", "refs/heads/" + BRANCH, check=False):
         remote = git("rev-parse", "--verify", "--quiet", "refs/remotes/%s/%s" % (REMOTE, BRANCH), check=False)
         if remote:
-            git("update-ref", "refs/heads/" + BRANCH, remote)
-    raise Fail("push refused, nothing promoted (local dev, dev-%d and %s restored): %s"
-               % (n, BRANCH, (p.stderr or p.stdout).strip()))
+            git("update-ref", "refs/heads/" + BRANCH, remote, check=False)
+    raise Fail("push refused, nothing promoted%s: %s"
+               % (note or " (local dev, dev-%d and %s restored)" % (n, BRANCH), (p.stderr or p.stdout).strip()))
 
 
 # --- Argo CD --------------------------------------------------------------------------------
@@ -392,9 +398,8 @@ def promote(env, sha, tag, pin_round):
     say("commit", "%s on %s (%s)" % (commit[:12], commit + "^", VALUES_PATH))
     try:
         make_tags(commit, n, message)
-    except Fail:
-        undo_tags(n, before_dev)
-        raise
+    except Fail as e:
+        raise Fail(str(e) + undo_tags(n, before_dev), e.code)
     say("tags", "dev and dev-%d at %s, signed" % (n, commit[:12]))
     pushed_at = push(commit, n, before_dev)
     say("push", "%s, dev, dev-%d" % (BRANCH, n))

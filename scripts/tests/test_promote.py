@@ -289,6 +289,34 @@ class Promote(unittest.TestCase):
         self.assertEqual(sh(self.work, "git", "rev-parse", "refs/tags/dev"), before)
         self.assertEqual(sh(self.work, "git", "tag", "-l", "dev-2"), "")
 
+    def test_a_tag_that_does_not_verify_is_undone(self):
+        """make_tags made both tags, then `git tag -v` failed (the operator's key isn't in the
+        allowed signers): both are undone locally, and nothing reached origin."""
+        self.run_promote("dev", self.main1, "", "")
+        sh(self.work, "git", "fetch", "-q", "--force", "origin", "+refs/tags/*:refs/tags/*")
+        before, origin_dev = sh(self.work, "git", "rev-parse", "refs/tags/dev"), self.remote("refs/tags/dev")
+        empty = os.path.join(self.tmp, "no_signers")
+        open(empty, "w").close()
+        sh(self.work, "git", "config", "gpg.ssh.allowedSignersFile", empty)
+        code, _, err = self.run_promote("dev", self.main2, "", "")
+        self.assertEqual(code, 1, err)
+        self.assertIn("does not verify", err)
+        self.assertNotIn("NOT restored", err)
+        self.assertEqual(sh(self.work, "git", "rev-parse", "refs/tags/dev"), before)
+        self.assertEqual(sh(self.work, "git", "tag", "-l", "dev-2"), "")
+        self.assertEqual(self.remote("refs/tags/dev"), origin_dev)
+        self.assertEqual(self.remote("refs/tags/dev-2"), "")
+
+    def test_a_refused_first_promotion_leaves_no_local_tags(self):
+        hook = os.path.join(self.origin, "hooks", "pre-receive")
+        with open(hook, "w") as f:
+            f.write("#!/bin/sh\nexit 1\n")
+        os.chmod(hook, 0o755)
+        code, _, err = self.run_promote("dev", self.main1, "", "")
+        self.assertEqual(code, 1, err)
+        self.assertIn("(local dev, dev-1 and release/dev restored)", err)
+        self.assertEqual(sh(self.work, "git", "tag", "-l", "dev", "dev-1"), "")
+
     def test_a_push_refused_for_one_ref_moves_none(self):
         """The push is atomic: origin refusing only the history tag (a concurrent promotion took
         dev-<n>, or a ruleset on tags) must not leave release/dev and dev moved without it."""
