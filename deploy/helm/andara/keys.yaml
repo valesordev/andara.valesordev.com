@@ -103,6 +103,12 @@ keys:
   - {key: recovery.pin_round,        env: ANDARA_RECOVERY_PIN_ROUND,      type: int, default: 0, min: 0, story: AW-INF-007}
   - {key: deploy.notice_lead,        env: ANDARA_DEPLOY_NOTICE_LEAD,      type: duration, default: 10s, story: AW-INF-007}
   - {key: deploy.expected_back,      env: ANDARA_DEPLOY_EXPECTED_BACK,    type: duration, default: 60s, story: AW-INF-007}
+  # The pre-stop hook's (docs/specs/deploy/lifecycle.md, Configuration). The chart sets image_tag
+  # from image.tag with the digest stripped, and mounts an emptyDir at control_socket's directory
+  # (AW-INF-042).
+  - {key: deploy.admit_wait,         env: ANDARA_DEPLOY_ADMIT_WAIT,       type: duration, default: 5s, story: AW-SRV-054}
+  - {key: deploy.image_tag,          env: ANDARA_DEPLOY_IMAGE_TAG,        type: string, default: dev, story: AW-SRV-054}
+  - {key: deploy.control_socket,     env: ANDARA_DEPLOY_CONTROL_SOCKET,   type: string, default: /run/andara/control.sock, story: AW-SRV-054}
 
   # --- AW-SRV-008 / AW-SRV-014 / AW-SRV-015: identity and sessions ---
   # kafka.brokers is read by the account store first (AW-SRV-008); the command log
