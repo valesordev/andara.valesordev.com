@@ -257,7 +257,12 @@ def install(env):
     ns = env_ns("install", env) if env else None
     # dev's values reach the shared Kafka only with AW-INF-059, which moves its broker and its
     # prefix together. Until then an Application would sync a server that can't reach a broker.
-    if env == "dev" and not shared.on_shared("dev"):
+    try:
+        dev_ready = env != "dev" or shared.on_shared("dev")
+    except shared.Unreadable as e:
+        print("make: argocd-install: %s" % e, file=sys.stderr)
+        sys.exit(3)
+    if not dev_ready:
         print("make: argocd-install: values/dev.yaml doesn't point at the shared Kafka yet; dev can't be "
               "deployed until AW-INF-059 moves its broker and topic prefix together", file=sys.stderr)
         sys.exit(2)

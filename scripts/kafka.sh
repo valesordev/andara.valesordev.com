@@ -156,8 +156,12 @@ bounce() {
     || die kafka-broker-bounce "local's server doesn't use the broker yet (sim.source: memory, AW-INF-060); ENV=dev" 2
   # Likewise dev, until AW-INF-059 points its values at the shared Kafka: a bounce of brokers
   # its server doesn't use would pass proving nothing.
-  "$PY" scripts/shared.py on-shared "$env" \
+  local gate=0
+  "$PY" scripts/shared.py on-shared "$env" || gate=$?
+  ((gate != 1)) \
     || die kafka-broker-bounce "values/$env.yaml doesn't point at the shared Kafka yet (AW-INF-059); the bounce would prove nothing" 2
+  # 3: the values file can't be read, and on-shared has said why.
+  ((gate == 0)) || exit 3
   ns="andara-$env"
   need kubectl
   kube_require kafka-broker-bounce

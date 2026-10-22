@@ -56,13 +56,23 @@ class Workdir(unittest.TestCase):
         kube._checked.clear()
         self.addCleanup(kube._checked.clear)
 
+    def gate_values(self):
+        vd = os.path.join(self.d, "gate-values")
+        os.makedirs(vd, exist_ok=True)
+        with open(os.path.join(vd, "dev.yaml"), "w") as f:
+            f.write("server:\n  kafka:\n    brokers: andara-log-kafka-bootstrap.andara-shared.svc:9092\n")
+        return vd
+
     def env(self, context=None, **extra):
         env = {k: v for k, v in os.environ.items() if k != kube.ENV}
         env.update(KUBECONFIG=self.kubeconfig, STUB_LOG=self.log, PATH=self.bin + os.pathsep + env["PATH"],
                    KUBECTL=os.path.join(self.bin, "kubectl"), HELM=os.path.join(self.bin, "helm"),
                    DOCKER=os.path.join(self.bin, "docker"),
                    # Never the box's real .local/box.env.
-                   ANDARA_BOX_ENV=os.path.join(self.d, "no-box.env"))
+                   ANDARA_BOX_ENV=os.path.join(self.d, "no-box.env"),
+                   # A dev from after AW-INF-059, so the AW-INF-055 gate lets dev's paths reach
+                   # the cluster calls the sweep checks.
+                   ANDARA_TEST_GATE_VALUES_DIR=self.gate_values())
         if context is not None:
             env[kube.ENV] = context
         env.update(extra)
@@ -257,6 +267,7 @@ SWEEP = [
     ("helm_install.sh", ["bash", "scripts/helm_install.sh", "local", "andara-server", "dev"]),
     ("kafka.sh install", ["bash", "scripts/kafka.sh", "install", "dev"]),
     ("kafka.sh up", ["bash", "scripts/kafka.sh", "up"]),
+    ("kafka.sh bounce", ["bash", "scripts/kafka.sh", "bounce", "dev"]),
     ("shared.py check", [PY, "scripts/shared.py", "check"]),
     ("stream_soak.sh", ["bash", "scripts/stream_soak.sh", "dev", "1s"]),
     ("image_check.sh", ["bash", "scripts/image_check.sh", "dev", "ghcr.io/valesordev/andara-server", "t"]),

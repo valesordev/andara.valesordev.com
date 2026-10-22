@@ -191,8 +191,10 @@ server still runs broker-free until AW-INF-060. So a `dev` install is `make shar
 **Until AW-INF-059, dev can't be deployed.** `values/dev.yaml` still names the old in-namespace bootstrap, which
 nothing installs any more. dev's broker and its `dev` prefix change together in AW-INF-059, as that story's scope
 stages them, because either alone, synced from `main`, points dev at topics that don't exist. Until then
-`helm-install`, `argocd-install` and `kafka-broker-bounce` with `ENV=dev` exit 2 naming AW-INF-059, before touching
-the cluster. The gate reads the values file, so it lifts when 059 lands.
+`helm-install`, `argocd-install`, `kafka-broker-bounce`, `world-reset`, `projector-stop` and `projector-rebuild` with
+`ENV=dev` exit 2 naming AW-INF-059, before touching the cluster (`env-destroy` stays open: cleaning up is always
+safe). The gate (`scripts/shared.py on-shared`) reads the working tree's values file, so it lifts when 059 lands.
+Argo CD syncs `main`'s, so deploy dev from a checkout of `main` after 059 has merged, not from 059's branch.
 
 ### Shared services
 

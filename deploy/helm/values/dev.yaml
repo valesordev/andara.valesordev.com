@@ -31,7 +31,8 @@ server:
   # (AW-INF-059's scope; ADR-0013 amendment 16 stages the prefix). Either alone, synced from
   # main, points dev at topics that don't exist: the shared broker holds only `dev.`-prefixed
   # ones and creates none on demand. The bootstrap below names a Kafka nothing installs any
-  # more, so until then `helm-install`, `argocd-install` and `kafka-broker-bounce` refuse dev
+  # more, so until then `helm-install`, `argocd-install`, `kafka-broker-bounce`, `world-reset` and
+  # `projector-stop`/`-rebuild` refuse dev
   # (scripts/shared.py on-shared).
   kafka:
     brokers: andara-log-kafka-bootstrap:9092

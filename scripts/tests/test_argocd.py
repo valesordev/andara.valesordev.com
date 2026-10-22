@@ -413,7 +413,7 @@ def dev_on_shared(d, env):
     os.makedirs(vd, exist_ok=True)
     with open(os.path.join(vd, "dev.yaml"), "w") as f:
         f.write("server:\n  kafka:\n    brokers: andara-log-kafka-bootstrap.andara-shared.svc:9092\n")
-    return dict(env, ANDARA_VALUES_DIR=vd)
+    return dict(env, ANDARA_TEST_GATE_VALUES_DIR=vd)
 
 
 def calls(log):
@@ -563,14 +563,60 @@ class KafkaOperator(unittest.TestCase):
         self.assertIn("AW-INF-059", err)
         self.assertEqual(c.calls, [])
 
-    def test_the_gate_reads_the_values_files(self):
-        import shared
-        self.assertTrue(shared.on_shared("local"))
-        self.assertFalse(shared.on_shared("dev"))
+    def test_the_gate_lifts_for_a_dev_on_the_shared_kafka(self):
+        # Once AW-INF-059's values land, argocd-install goes on to install.
         d = tempfile.mkdtemp()
         self.addCleanup(lambda: subprocess.run(["rm", "-rf", d]))
-        self.assertTrue(shared.on_shared("dev", values_dir=os.path.join(dev_on_shared(d, {})["ANDARA_VALUES_DIR"])))
-        self.assertFalse(shared.on_shared("staging"))
+        c = Cluster()
+        mod = with_cluster(load_argocd(), c)
+        reached = []
+        mod.install_argocd = lambda: reached.append("install_argocd")
+        mod.preconditions = lambda ns: reached.append("preconditions " + ns) or sys.exit(9)
+        with mock.patch.dict(os.environ, dev_on_shared(d, {})):
+            code, _, err = quiet(mod.install, "dev")
+        self.assertEqual(reached, ["install_argocd", "preconditions andara-dev"], err)
+        self.assertEqual(code, 9)
+
+    def test_world_reset_and_the_projector_refuse_dev_until_059(self):
+        # Their broker calls act on dev's topics and group on the shared Kafka, which dev's
+        # server doesn't read before AW-INF-059.
+        for argv in (["world_reset.py", "dev", "andara-dev"], ["projector.py", "stop", "dev"],
+                     ["projector.py", "rebuild", "dev"]):
+            with self.subTest(argv=argv):
+                d = tempfile.mkdtemp()
+                self.addCleanup(lambda d=d: subprocess.run(["rm", "-rf", d]))
+                log = os.path.join(d, "calls")
+                env = stub_bin(d, log, {"helm": "exit 0", "kubectl": "exit 0"})
+                env.pop("ANDARA_TEST_GATE_VALUES_DIR", None)
+                p = subprocess.run([sys.executable, os.path.join(SCRIPTS, argv[0])] + argv[1:],
+                                   capture_output=True, text=True, env=env)
+                self.assertEqual(p.returncode, 2, p.stderr)
+                self.assertIn("AW-INF-059", p.stderr)
+                self.assertEqual([c for c in calls(log) if c.startswith(("kubectl", "helm"))], [])
+
+    def test_an_unreadable_values_file_is_exit_3_naming_it(self):
+        d = tempfile.mkdtemp()
+        self.addCleanup(lambda: subprocess.run(["rm", "-rf", d]))
+        vd = os.path.join(d, "values")
+        os.makedirs(vd)
+        with open(os.path.join(vd, "dev.yaml"), "w") as f:
+            f.write("server: [\n")
+        log = os.path.join(d, "calls")
+        env = dict(stub_bin(d, log, {"helm": "exit 0", "kubectl": "exit 0"}), ANDARA_TEST_GATE_VALUES_DIR=vd)
+        p = subprocess.run([os.path.join(SCRIPTS, "helm_install.sh"), "dev", "andara-server", "dev", "", ""],
+                           capture_output=True, text=True, env=env)
+        self.assertEqual(p.returncode, 3, p.stderr)
+        self.assertIn("can't read", p.stderr)
+        self.assertNotIn("doesn't point at the shared Kafka", p.stderr)
+
+    def test_the_gate_reads_the_values_files(self):
+        import shared
+        self.assertTrue(shared.on_shared("local", values_dir=shared.VALUES_DIR))
+        self.assertFalse(shared.on_shared("dev", values_dir=shared.VALUES_DIR))
+        d = tempfile.mkdtemp()
+        self.addCleanup(lambda: subprocess.run(["rm", "-rf", d]))
+        self.assertTrue(shared.on_shared("dev", values_dir=os.path.join(dev_on_shared(d, {})["ANDARA_TEST_GATE_VALUES_DIR"])))
+        self.assertFalse(shared.on_shared("staging", values_dir=shared.VALUES_DIR))
 
     def test_argocd_install_wants_the_shared_kafka(self):
         # AW-INF-055: dev's broker is in andara-shared, not andara-dev.

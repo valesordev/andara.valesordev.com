@@ -49,6 +49,7 @@ KAFKA = "andara-log"
 KAFKA_MANIFESTS = os.path.join(REPO, "deploy", "k8s", "kafka")
 VALUES_DIR = os.path.join(REPO, "deploy", "helm", "values")
 SHARED_BOOTSTRAP = "andara-log-kafka-bootstrap.andara-shared.svc:9092"
+TEST_VALUES_ENV = "ANDARA_TEST_GATE_VALUES_DIR"
 THRESHOLD = 80
 # The integration suite's own topics (ADR-0013 amendment 17): reported, never a stray.
 SUITE = re.compile(r"^(andara\.test\.|it[0-9]+\.)")
@@ -65,6 +66,10 @@ class Usage(Exception):
 
 
 class Missing(Exception):
+    code = 3
+
+
+class Unreadable(Exception):
     code = 3
 
 
@@ -257,23 +262,40 @@ def on_shared(env, values_dir=None):
     """Whether `env`'s chart values point the server at the shared Kafka. dev's don't until
     AW-INF-059 moves its broker and its prefix together, and until then every path that
     deploys dev against the shared broker refuses rather than ship a server that can't reach
-    a broker (AW-INF-055). ANDARA_VALUES_DIR replaces deploy/helm/values as this gate's input,
-    which is how the tests present a dev from after AW-INF-059."""
-    values_dir = values_dir or os.environ.get("ANDARA_VALUES_DIR") or VALUES_DIR
+    a broker (AW-INF-055).
+
+    It reads the working tree's values file. Argo CD syncs main's (deploy/argocd/andara-dev.yaml),
+    so on AW-INF-059's own branch, before it merges, argocd-install passes while Argo would still
+    sync the old values: deploy dev only once 059 has merged.
+
+    TEST_VALUES_ENV replaces deploy/helm/values as this gate's input and nothing else's. It is
+    how the tests present a dev from after AW-INF-059, and `make scripts-test` unsets it from the
+    caller's shell. Raises Unreadable for a values file that isn't a YAML mapping."""
+    values_dir = values_dir or os.environ.get(TEST_VALUES_ENV) or VALUES_DIR
     path = os.path.join(values_dir, env + ".yaml")
     try:
         with open(path) as f:
             values = yaml.safe_load(f) or {}
     except OSError:
         return False
-    return ((values.get("server") or {}).get("kafka") or {}).get("brokers") == SHARED_BOOTSTRAP
+    except yaml.YAMLError as e:
+        raise Unreadable("can't read %s: %s" % (path, e))
+    if not isinstance(values, dict):
+        raise Unreadable("can't read %s: not a YAML mapping" % path)
+    kafka = (values.get("server") or {}).get("kafka") if isinstance(values.get("server"), dict) else None
+    return isinstance(kafka, dict) and kafka.get("brokers") == SHARED_BOOTSTRAP
 
 
 def main(argv):
     cmd, args = (argv[0], argv[1:]) if argv else ("", [])
     if cmd == "on-shared" and len(args) == 1:
-        # Offline: exit 0 when the values point at the shared Kafka, 1 when they don't.
-        return 0 if on_shared(args[0]) else 1
+        # Offline: exit 0 when the values point at the shared Kafka, 1 when they don't, 3 when
+        # the values file can't be read.
+        try:
+            return 0 if on_shared(args[0]) else 1
+        except Unreadable as e:
+            print("shared: %s" % e, file=sys.stderr)
+            return 3
     try:
         if cmd == "check" and not args:
             if shutil.which("kubectl") is None:
