@@ -574,9 +574,13 @@ def test_argocd_application():
     auto = app["spec"].get("syncPolicy", {}).get("automated", {})
     if not (auto.get("prune") and auto.get("selfHeal")):
         fail("argocd application: syncPolicy.automated must prune and selfHeal, got %r" % auto)
-    cm = yaml.safe_load(open(os.path.join(ARGOCD, "argocd-values.yaml")))["configs"]["cm"]
+    argocd_values = yaml.safe_load(open(os.path.join(ARGOCD, "argocd-values.yaml")))
+    cm = argocd_values["configs"]["cm"]
     if cm.get("application.resourceTrackingMethod") != "annotation":
         fail("argocd values: resource tracking must be by annotation")
+    redis = argocd_values.get("redis", {}).get("image", {})
+    if not redis.get("repository", "").startswith("mirror.gcr.io/") or "@sha256:" not in redis.get("tag", ""):
+        fail("argocd values: redis must come from mirror.gcr.io, pinned by digest (#609), got %r" % redis)
     upd = yaml.safe_load(open(os.path.join(ARGOCD, "andara-dev-image-updater.yaml")))["spec"]
     if upd.get("writeBackConfig", {}).get("method") != "argocd":
         fail("image updater: write-back must be argocd; nothing writes to main")

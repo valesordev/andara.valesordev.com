@@ -8,6 +8,16 @@ dex:
   enabled: false          # one operator, the initial admin; no SSO
 notifications:
   enabled: false          # out of scope (AW-INF-019)
+# The chart's redis comes from ecr-public.aws.com, which rate-limits anonymous pulls per IP. GitHub's
+# shared runners hit its 429 often enough to time out `argocd-install` in the kind workflow (#609).
+# mirror.gcr.io is Google's cache of Docker Hub's official images, with no such limit. The tag is the
+# chart's own (10.9.2), pinned by the image index's digest, which ECR Public, Docker Hub and the mirror
+# serve identically. A mirror that served anything else fails the pull. Recheck both whenever the
+# argo-cd pin in deploy/platform/versions.yaml moves.
+redis:
+  image:
+    repository: mirror.gcr.io/library/redis
+    tag: 8.6.4-alpine@sha256:2cc044fc5a07c9b701f8f1255a309ae9ad7856e694ac03513bf3648c01e40763
 configs:
   cm:
     # Annotation tracking, so the app.kubernetes.io/* labels `make kafka-install` and
