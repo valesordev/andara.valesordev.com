@@ -165,7 +165,9 @@ is not a test.
 - **Install.** `make bootstrap` runs `install_pinned gcx github.com/grafana/gcx/cmd/gcx <tag>` (its existing helper, which installs into
   the repo's `bin/` and checks the module version with `go version -m`, as it does for the other Go tools;
   `gcx --version` prints the version without the `v`, so it is not the check). **The tag is at least v0.2.13**: v0.2.11, which this ADR was explored with, ignores `--context` in some CRUD-adapter operations, which would let a `solo7dev` check read `solo7` (the v0.2.13 release notes warn of operations on an unintended stack; Codex on PR #520). `AW-INF-046` picks any tag from v0.2.13 up, 1.x included (the changelog lists releases to v1.5.0, 2026-10-05), and the re-run covers the rest: every command, flag and output shape in this decision is **[verify in 046]** against the chosen tag, and a criterion that depends on one is written after the re-run (this includes `--json`, `--limit 0`, the `null` for an empty list, and the version output). It re-records the fixtures and adds a routing test that runs against the pinned binary in `make check`, with no credentials: two local HTTP stubs stand in for `solo7dev` and `solo7` (distinct ports), the config's current-context is set to the other stack, and for each distinct adapter class in the table below (`alert rules`, `alert instances`, `metrics`, `irm`) the test asserts that the stub of the requested `--context` received the request and the other received none. The pin moves only
-  by an edit to one line, in a change that re-records the fixtures below.
+  by an edit to one line, in a change that re-records the fixtures below. *Verified 2026-10-19 against the pinned
+  v1.5.0 (AW-INF-075). The five shapes that differ from this decision's text are listed in Amendments,
+  2026-10-22.*
 - **One wrapper.** Every call is made by `scripts/gcx.py` (`AW-INF-046`), which runs `bin/gcx --config
   "$GCX_CONFIG" --context <context> … -o json`, maps a non-zero exit to exit `1` with `gcx`'s message, and
   parses the JSON. The scripts never parse `gcx` output themselves. Because the tool's output is not a stable contract the wrapper is
@@ -349,7 +351,7 @@ Slack webhooks), which state also holds.
 
 | Credential | Kind and scope | Stored | Read by |
 |---|---|---|---|
-| `GRAFANA_<STACK>_READ_TOKEN` (×2) | stack service account `andara-read`, role **Viewer** **[verify in 046: Viewer must read rule groups, contact points, policies and dashboards through the provider and run the `gcx` commands of decision 2, including datasource queries and `irm oncall` for `solo7`; if not, use a custom RBAC role `andara-reader` with read-only alerting, dashboard and datasource-query permissions, never a write role]** | repository secret; `.local/box.env` | `gcx` (every drill, `observe-check`, the `stack` workflow), and the `plan` (pull request), `drift`, `plan-prod` and `drift-prod-irm` jobs |
+| `GRAFANA_<STACK>_READ_TOKEN` (×2) | stack service account `andara-read`, role **Viewer** **[verify in 046: Viewer must read rule groups, contact points, policies and dashboards through the provider and run the `gcx` commands of decision 2, including datasource queries and `irm oncall` for `solo7`; if not, use a custom RBAC role `andara-reader` with read-only alerting, dashboard and datasource-query permissions, never a write role]** *Verified 2026-10-19 (AW-INF-075): Viewer suffices on both stacks, and no `andara-reader` is made.* | repository secret; `.local/box.env` | `gcx` (every drill, `observe-check`, the `stack` workflow), and the `plan` (pull request), `drift`, `plan-prod` and `drift-prod-irm` jobs |
 | `GRAFANA_<STACK>_APPLY_TOKEN` (×2) | stack service account `andara-tf-apply`, role **Admin** on that stack only | secret of `andara-main` (`solo7dev`) or `andara-prod-apply` (`solo7`; also used by the `solo7-irm` root for its contact point) | `apply` jobs on `main` |
 | `GRAFANA_<STACK>_TELEMETRY_TOKEN` (×2) | Cloud access policy `andara-<stack>-telemetry`: `metrics:write logs:write traces:write fleet-management:read` and nothing else (the last is required: the collector's `remotecfg` needs it to pull its pipelines, decision 15) | `solo7dev`: `.local/box.env` and a repository secret for CI's kind and `stack` jobs, and the `k8s-monitoring` secret created from `.local/box.env` for `local`, `dev` and `staging` (the install mechanism is ADR-0013's). `solo7`: `.local/box.env` and that secret only, never a repository secret | CI kind/`stack` jobs; `k8s-monitoring` |
 | `GRAFANA_<STACK>_FLEET_READ_TOKEN`, `GRAFANA_<STACK>_FLEET_APPLY_TOKEN` (×2 each) | Cloud access policies `andara-<stack>-fleet-read` (`fleet-management:read`) and `andara-<stack>-fleet-apply` (`fleet-management:read fleet-management:write`), realm one stack (decision 15) | read: repository secrets for both stacks (read-only, like the stack `READ` tokens, so the `solo7` PR and drift legs can refresh its Fleet resources); apply: secret of `andara-main` (`solo7dev`) or `andara-prod-apply` (`solo7`) | read: `plan`, `drift`, `plan-prod` (the IRM root has no Fleet resources); apply: `apply`, `apply-prod` |
@@ -1181,6 +1183,38 @@ service and a blast radius: a bad pipeline can blind a stack until the next appl
   Prometheus).
 
 ## Amendments
+
+**2026-10-22, decision 2 verified against `gcx` v1.5.0 (AW-INF-075's §8 review).** The pinned tag is v1.5.0
+(`scripts/bootstrap.sh` `GCX_VERSION` and `GCX_SUM`, checked with `go version -m`). The fixtures in
+`scripts/tests/fixtures/gcx/` were recorded from it against `solo7dev` and `solo7` on 2026-10-19 (AW-INF-075,
+PR #595). The routing test runs against the pinned binary in `make check`. No decision changes, and decision 2's
+`[verify in 046]` items are closed by what follows.
+
+- **Every command in decision 2's table works as written.** Five shapes differ from the decision's text, and
+  `scripts/gcx.py` handles each:
+  - `metrics query` with `--since` is a **range** query (a matrix), and without it an instant one. The
+    `observe-check` row's `--since 5m` therefore returns a matrix, and "a series is the answer" still holds.
+  - `alert rules list` returns **groups with nested `rules`**, and `null` for no rule or an unknown `--group`.
+  - `alert instances list` prints `null` with nothing active, `[]` when `--name` matches nothing, and one
+    all-null object with `--json` and no `--name`. The wrapper turns all three into `[]`, as "Empty is not an
+    error, and not a pass" requires.
+  - `traces get` for an ID that doesn't resolve prints `{}` and **exits 0**. The wrapper returns `[]`
+    (`trace_get`), so "does a `trace_id` resolve" is a non-empty result, never the exit code.
+  - `logs query` returns `values` as **objects** (`timestamp`, `line`), not pairs.
+- **Config.** `gcx config set` stores tokens in the OS keychain, so `make gcx-config` writes `$GCX_CONFIG`
+  itself. The config bullet's file, mode and contexts are unchanged.
+- **Exit 3 through `make`.** A script exits `3` before it calls `gcx` when the token is missing, and `make`
+  reports any failed recipe as exit `2`. The `3` is asserted on the scripts, as `test_alerts_sync.py` already
+  did.
+- **Decision 4's read-token row:** **Viewer suffices.** On both stacks the read tokens read rule groups,
+  dashboards and datasource queries, and on `solo7` they run `irm oncall alert-groups list`. No `andara-reader`
+  role is made.
+- **Still open:** `Recovering` during `keep_firing_for` stays **[verify in 047]**.
+- **`make gcx-only-check`** matches the pattern list AW-INF-075's contract named. Direct reads outside that list
+  aren't caught: Tempo's `/api/traces/` and `/api/search`; Prometheus's `/api/v1/series`, `label`, `rules` and
+  `alerts`; `/api/alertmanager`; `/api/v1/provisioning`; Basic auth; and a token read on one line and sent on the
+  next. No instance exists today. Widening the list is a follow-up story (PM). It needs exception lines for the
+  compose drills that read localhost Tempo and Prometheus until AW-INF-064 and AW-INF-067 remove them.
 
 **2026-10-21, the collection split (`ADR-0014`, `AW-INF-079`).** Decisions 13 and 15 are superseded in part, and
 decision 9's table moves to the chart's destinations. Each carries a dated annotation in place. The Revisit-when line
