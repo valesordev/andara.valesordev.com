@@ -1202,8 +1202,8 @@ PR #595). The routing test runs against the pinned binary in `make check`. No de
     error, and not a pass" requires.
   - `alert instances list --json` prints a **bare list**, not `{"items":[…]}` as "Empty is not an error"
     says. Only `irm oncall alert-groups list` wraps its result in `items`.
-  - Not every empty query is `result: []`. `traces query` returns `{"traces": []}`, and `metrics series` and
-    `metrics labels` return `data` as a flat list.
+  - Not every empty query is `result: []`. `traces query` returns `{"traces": []}`. `metrics series` (empty or not)
+    and `metrics labels` (recorded non-empty) return `data` as a flat list.
   - `traces get` for an ID that doesn't resolve prints `{}` and **exits 0**. The wrapper returns `[]`
     (`trace_get`), so "does a `trace_id` resolve" is a non-empty result, never the exit code.
   - `logs query` returns `values` as **objects** (`timestamp`, `line`), not pairs.
@@ -1227,7 +1227,7 @@ PR #595). The routing test runs against the pinned binary in `make check`. No de
   `/prometheus/config/v1/rules` to the enforcement bullet's. The bullet's single exception (`alerts_sync.py`) is
   now a per-file list, `scripts/gcx_only_exceptions.txt`, where each line names the story that removes it.
   - **Not caught:** direct reads outside the list. These are Tempo's `/api/traces/` and `/api/search`;
-    any Prometheus `/api/v1/*` path other than `query` (`series`, `label`, `rules`, `alerts`, `targets`); `/api/alertmanager`; `/api/v1/provisioning`;
+    a bare Prometheus `/api/v1/*` path not starting `query` (`series`, `label`, `rules`, `alerts`, `targets`; `query_range` is caught, and so is any path under `/api/prom` or `/api/prometheus/`); `/api/alertmanager`; `/api/v1/provisioning`;
     Basic auth; and a token read on one line and sent on the next.
   - No read of a Grafana Cloud stack uses those paths today. The compose drills' localhost Tempo and Prometheus
     reads do (`.github/workflows/stack.yaml`, `scripts/stack_projector_check.sh`).
