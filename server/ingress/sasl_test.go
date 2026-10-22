@@ -121,6 +121,12 @@ func TestProducer_ATopicRefusalIsAnAuthErrorNotADegradedPartition(t *testing.T) 
 	if took >= 2*time.Second {
 		t.Fatalf("the refusal took %v, the whole produce deadline: it was retried", took)
 	}
+	// One attempt, refused: the record is not in the log, so the Submit is
+	// the refusal itself, not an outcome left unknown.
+	var u *Unsettled
+	if errors.As(err, &u) || errors.Is(err, ErrDeadline) {
+		t.Fatalf("Produce = %v, want the bare refusal (a single refused attempt wrote nothing)", err)
+	}
 	if got := testutil.ToFloat64(f.kc.Metrics.Failures.WithLabelValues("andara-server-ingress", kafkaclient.ReasonTopicUnauthorized)); got != 1 {
 		t.Fatalf("topic_unauthorized = %v, want 1", got)
 	}
@@ -193,6 +199,48 @@ func TestProducer_ARefusalAfterAnEarlierAttemptKeepsTheOutcomeUnknown(t *testing
 	}
 	if got := testutil.ToFloat64(f.kc.Metrics.Failures.WithLabelValues("andara-server-ingress", kafkaclient.ReasonTopicUnauthorized)); got != 1 {
 		t.Fatalf("topic_unauthorized = %v, want 1", got)
+	}
+}
+
+// A produce on another Partition while a Submit's single attempt is being
+// refused doesn't make that Submit's outcome unknown: the count of attempts
+// that left the process is the Partition's, not the producer's, so AC-8's
+// immediate refusal holds under concurrent traffic.
+func TestProducer_ARefusalUnderConcurrentTrafficIsStillTheRefusal(t *testing.T) {
+	f := newSASLFixture(t)
+	const p, q = int32(23), int32(5)
+	pSeen, qDone := make(chan struct{}), make(chan struct{})
+	f.c.ControlKey(int16(kmsg.Produce), func(req kmsg.Request) (kmsg.Response, error, bool) {
+		pr := req.(*kmsg.ProduceRequest)
+		if len(pr.Topics) == 0 || len(pr.Topics[0].Partitions) == 0 || pr.Topics[0].Partitions[0].Partition != p {
+			return nil, nil, false
+		}
+		// Hold p's attempt until q's produce has left and been answered.
+		close(pSeen)
+		f.c.SleepControl(func() { <-qDone })
+		resp := pr.ResponseKind().(*kmsg.ProduceResponse)
+		st := kmsg.NewProduceResponseTopic()
+		st.Topic, st.TopicID = pr.Topics[0].Topic, pr.Topics[0].TopicID
+		sp := kmsg.NewProduceResponseTopicPartition()
+		sp.Partition, sp.ErrorCode = p, kerr.TopicAuthorizationFailed.Code
+		st.Partitions = append(st.Partitions, sp)
+		resp.Topics = append(resp.Topics, st)
+		return resp, nil, true
+	})
+	refused := make(chan error, 1)
+	go func() {
+		_, err := f.k.Produce(context.Background(), cmdOn(t, p))
+		refused <- err
+	}()
+	<-pSeen
+	if _, err := f.k.Produce(context.Background(), cmdOn(t, q)); err != nil {
+		t.Fatalf("produce on Partition %d meanwhile: %v", q, err)
+	}
+	close(qDone)
+	err := <-refused
+	var u *Unsettled
+	if errors.As(err, &u) || !kafkaclient.Refused(err) {
+		t.Fatalf("Produce on Partition %d = %v, want the bare refusal", p, err)
 	}
 }
 

@@ -221,6 +221,31 @@ func TestFailure_LogsAtMostOneLinePerMinuteWithTheSuppressedCount(t *testing.T) 
 	}
 }
 
+// LineAllowed is the same limit, for a caller's own line, keyed apart from
+// the package's: one a minute per kind, with the count held back.
+func TestLineAllowed_OneAMinutePerKindWithTheSuppressedCount(t *testing.T) {
+	t.Parallel()
+	m := NewMetrics(nil)
+	now := time.Unix(1_800_000_000, 0)
+	m.now = func() time.Time { return now }
+	c := Config{ClientID: "andara-server-ingress", Metrics: m}
+	if _, ok := c.LineAllowed("topic_unauthorized/submit"); !ok {
+		t.Fatal("the first line was held back")
+	}
+	for range 3 {
+		if _, ok := c.LineAllowed("topic_unauthorized/submit"); ok {
+			t.Fatal("a second line within the minute was allowed")
+		}
+	}
+	if _, ok := c.LineAllowed(ReasonTopicUnauthorized); !ok {
+		t.Fatal("the package's own line shares the caller's limit")
+	}
+	now = now.Add(61 * time.Second)
+	if n, ok := c.LineAllowed("topic_unauthorized/submit"); !ok || n != 3 {
+		t.Fatalf("after the minute: (%d, %v), want (3, true)", n, ok)
+	}
+}
+
 // `kafka client config` once per client ID per process, with no password.
 func TestNew_LogsTheClientConfigOncePerClientID(t *testing.T) {
 	t.Parallel()

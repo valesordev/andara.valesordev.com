@@ -137,6 +137,10 @@ type KafkaProducer struct {
 	retries   atomic.Uint64
 	tapLoss   atomic.Uint64 // connections the produce tap stopped following
 	written   atomic.Uint64 // produce requests that left this process
+	// partWritten is written per Partition: each Partition's client counts
+	// its own, so one Submit's attempts are told apart from another
+	// Partition's traffic.
+	partWritten [sim.PartitionCount]atomic.Uint64
 	warnAt    atomic.Int64  // unix nanos of the last sampled warning
 	tapWarnAt atomic.Int64  // unix nanos of the last tap-lost warning
 
@@ -328,7 +332,8 @@ func (k *KafkaProducer) clientFor(partition int32) (*kgo.Client, error) {
 	if c := k.clients[partition].Load(); c != nil {
 		return c, nil
 	}
-	c, err := kafkaclient.New(k.kc, k.opts...)
+	opts := append(append([]kgo.Opt(nil), k.opts...), kgo.WithHooks(partitionWrites{k, partition}))
+	c, err := kafkaclient.New(k.kc, opts...)
 	if err != nil {
 		return nil, fmt.Errorf("ingress: producer client: %w", err)
 	}
@@ -424,6 +429,7 @@ func (k *KafkaProducer) Produce(ctx context.Context, cmd *logv1.LoggedCommand) (
 	// on; the client's delivery timeout bounds the record.
 	done := make(chan error, 1)
 	retriesBefore, writtenBefore := k.retries.Load(), k.written.Load()
+	partBefore := k.partWritten[partition].Load()
 	enqueued := time.Now()
 	client.TryProduce(context.WithoutCancel(ctx), rec, func(_ *kgo.Record, err error) { k.buffered.Add(-1); done <- err })
 
@@ -449,9 +455,10 @@ func (k *KafkaProducer) Produce(ctx context.Context, cmd *logv1.LoggedCommand) (
 			// the log. If an earlier one left too, its acknowledgement may
 			// have been lost after it landed: the refusal doesn't rule it
 			// out, so the Submit keeps the outcome-unknown settlement below
-			// (Codex on PR #620). Process-wide, like settle's counter, so
-			// concurrent produces err towards unknown.
-			if k.written.Load()-writtenBefore <= 1 {
+			// (Codex on PR #620). The count is the Partition's client's: the
+			// hook counts each write before its response can reach the
+			// promise, and another Partition's traffic doesn't touch it.
+			if k.partWritten[partition].Load()-partBefore <= 1 {
 				return command.Accepted{}, ae
 			}
 			err = ae
@@ -663,6 +670,18 @@ func (k *KafkaProducer) Close() error {
 // sent again by the client, under the idempotent producer's sequence, so a
 // count here is a retry that did not duplicate — and warns, sampled to one
 // line a second.
+// partitionWrites counts the produce requests one Partition's client wrote.
+type partitionWrites struct {
+	k *KafkaProducer
+	p int32
+}
+
+func (h partitionWrites) OnBrokerWrite(_ kgo.BrokerMetadata, key int16, _ int, _, _ time.Duration, err error) {
+	if key == produceKey && err == nil {
+		h.k.partWritten[h.p].Add(1)
+	}
+}
+
 type retryHook struct{ k *KafkaProducer }
 
 const produceKey = 0
