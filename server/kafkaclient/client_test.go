@@ -23,6 +23,8 @@ import (
 	"github.com/twmb/franz-go/pkg/kerr"
 	"github.com/twmb/franz-go/pkg/kgo"
 	"github.com/twmb/franz-go/pkg/sasl"
+
+	"github.com/valesordev/andara/server/config"
 )
 
 const secret = "s3cret-not-to-be-seen"
@@ -272,6 +274,14 @@ func TestMechanism_APasswordFileGoneFailsTheConnectionCountedOnce(t *testing.T) 
 	connectHook{c}.OnBrokerConnect(kgo.BrokerMetadata{}, 0, nil, errors.New("connection refused"))
 	if got := testutil.ToFloat64(m.Failures.WithLabelValues("andara-server-tick", ReasonSASLFailed)); got != 1 {
 		t.Fatalf("a refused dial counted as sasl_failed: %v", got)
+	}
+}
+
+// The config package can't import this one, so it carries the default path
+// as a literal of its own; the two must agree.
+func TestDefaultPasswordFile_MatchesTheConfigDefault(t *testing.T) {
+	if DefaultPasswordFile != config.DefaultKafkaSASLPasswordFile {
+		t.Fatalf("kafkaclient %q, config %q", DefaultPasswordFile, config.DefaultKafkaSASLPasswordFile)
 	}
 }
 

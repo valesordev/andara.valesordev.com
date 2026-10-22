@@ -147,6 +147,14 @@ func Options(c Config, opts ...kgo.Opt) []kgo.Opt {
 	return append(out, opts...)
 }
 
+// Build is New for a site's options helper, which returns its named Config
+// and its options together: Build(helper(...)).
+func Build(c Config, opts []kgo.Opt) (*kgo.Client, error) { return New(c, opts...) }
+
+// SiteOpts is Options for a site's options helper: the list config-assert
+// reads back, the one Build builds with.
+func SiteOpts(c Config, opts []kgo.Opt) []kgo.Opt { return Options(c, opts...) }
+
 // logConfig writes `kafka client config` once per client ID per process.
 func (c Config) logConfig() {
 	if c.Log == nil || !c.Metrics.firstConfig(c.ClientID) {
