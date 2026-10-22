@@ -28,8 +28,10 @@ import (
 )
 
 // TempSuffix is what an in-progress fs write is named until it is renamed into
-// place. A listing skips it: a partial object is not an object (AC-5).
-const TempSuffix = ".tmp"
+// place. A listing skips it: a partial object is not an object (AC-5). The `~`
+// is outside the round-tag grammar, so no tag name ends in it and no tag's
+// temporary file is another tag (PR #565 review).
+const TempSuffix = ".tmp~"
 
 // FS is a sim.WorldStore over a directory tree — the volume AW-INF-003 mounts,
 // or a t.TempDir().

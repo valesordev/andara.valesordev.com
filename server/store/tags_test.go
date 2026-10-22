@@ -70,6 +70,37 @@ func TestRoundTagsReportsOnlyATagOnEveryObject(t *testing.T) {
 	}
 }
 
+// The grammar allows a tag ending in .tmp. On the fs store it is a tag like
+// any other: reported, and not taken for (or clobbered by) the temporary file
+// of another tag's write (PR #565 review).
+func TestFSTagsEndingInTmpAreTags(t *testing.T) {
+	t.Parallel()
+	ctx := context.Background()
+	fs := store.NewFS(t.TempDir())
+	keys := []string{sim.SnapshotKey("town", 1, 42, 7)}
+	if err := store.TagRound(ctx, fs, keys, "deploy:v1.tmp"); err != nil {
+		t.Fatal(err)
+	}
+	if tags, err := store.RoundTags(ctx, fs, keys); err != nil || !reflect.DeepEqual(tags, []string{"deploy:v1.tmp"}) {
+		t.Fatalf("RoundTags = %v, %v; want the .tmp tag", tags, err)
+	}
+	if err := store.TagRound(ctx, fs, keys, "deploy:v1"); err != nil {
+		t.Fatal(err)
+	}
+	if tags, err := store.RoundTags(ctx, fs, keys); err != nil || !reflect.DeepEqual(tags, []string{"deploy:v1", "deploy:v1.tmp"}) {
+		t.Fatalf("after tagging deploy:v1, RoundTags = %v, %v; want both tags", tags, err)
+	}
+}
+
+// No tag name can end in the fs store's temporary suffix: the suffix holds a
+// character outside the tag grammar.
+func TestFSTempSuffixIsOutsideTheTagGrammar(t *testing.T) {
+	t.Parallel()
+	if store.TagNamePattern.MatchString("deploy:v1" + store.TempSuffix) {
+		t.Fatalf("deploy:v1%s is a legal tag name, so a tag can be mistaken for a temporary file", store.TempSuffix)
+	}
+}
+
 func TestTagRoundRefusesANameOutsideTheGrammar(t *testing.T) {
 	t.Parallel()
 	fs := store.NewFS(t.TempDir())
