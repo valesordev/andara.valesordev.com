@@ -99,6 +99,8 @@ func ParseProjector(args []string, env EnvLookup, errOut io.Writer) (Projector, 
 		return nil
 	})
 	fs.StringVar(&p.KafkaTopicPrefix, "kafka-topic-prefix", p.KafkaTopicPrefix, "prefix joined to every topic name with a dot; empty or [a-z0-9]+ (ANDARA_KAFKA_TOPIC_PREFIX)")
+	fs.StringVar(&p.KafkaSASLUsername, "kafka-sasl-username", p.KafkaSASLUsername, "SCRAM-SHA-512 principal of every Kafka client; empty for no SASL (ANDARA_KAFKA_SASL_USERNAME)")
+	fs.StringVar(&p.KafkaSASLPasswordFile, "kafka-sasl-password-file", p.KafkaSASLPasswordFile, "file holding the SASL password, read on each new connection (ANDARA_KAFKA_SASL_PASSWORD_FILE)")
 	fs.Uint64Var(&p.SimSeed, "sim-seed", p.SimSeed, "the server's PRNG seed; 0 derives it from the World, as the server does (ANDARA_SIM_SEED)")
 	fs.StringVar(&p.SnapshotStore, "snapshot-store", p.SnapshotStore, "where snapshot rounds are read from: fs or s3 (ANDARA_SNAPSHOT_STORE)")
 	fs.StringVar(&p.SnapshotFSPath, "snapshot-fs-path", p.SnapshotFSPath, "directory the fs store reads under (ANDARA_SNAPSHOT_FS_PATH)")
