@@ -53,7 +53,7 @@ func TestPrestopRoundIsTaggedCommittedAndRecovered(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	src, err := tickloop.NewKafkaSource(ctx, tickloop.KafkaSourceOptions{Brokers: bk, Group: "andara-prestop-" + commands[len(commands)-8:], Start: e.State().Offsets, Topic: commands, LagEvery: 200 * time.Millisecond})
+	src, err := tickloop.NewKafkaSource(ctx, tickloop.KafkaSourceOptions{Brokers: bk, Group: "it-prestop-" + commands[len(commands)-8:], Start: e.State().Offsets, Topic: commands, LagEvery: 200 * time.Millisecond})
 	if err != nil {
 		t.Fatal(err)
 	}
