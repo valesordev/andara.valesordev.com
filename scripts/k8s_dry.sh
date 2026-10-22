@@ -51,7 +51,7 @@ kubeconform -strict -summary -kubernetes-version "$KUBE_VERSION" \
   -schema-location default -schema-location "$CRD_SCHEMAS" \
   deploy/k8s/cert-manager/*.yaml | sed "s/^/k8s-dry [cert-manager]: /"
 
-# The broker `make kafka-install` applies per namespace (AW-INF-014): Strimzi's
+# The shared broker `make shared-up` applies to andara-shared (AW-INF-014, AW-INF-055): Strimzi's
 # kafka.strimzi.io/v1 schemas from the same catalog.
 kubeconform -strict -summary -kubernetes-version "$KUBE_VERSION" \
   -schema-location default -schema-location "$CRD_SCHEMAS" \

@@ -8,9 +8,9 @@
 # prod pull the image .github/workflows/publish.yaml pushes to ghcr (AW-INF-013); a TAG= on
 # the command line pins one, and scripts/helm_image_args.sh is the rule.
 #
-# The broker: local runs without one (accounts and commands in memory). dev and prod use
-# their namespace's Kafka `andara-log` (AW-INF-014), which `make kafka-install` creates;
-# this script refuses to touch their release until it is Ready.
+# The broker: local runs without one (accounts and commands in memory). dev uses the shared
+# Kafka `andara-log` in andara-shared (AW-INF-014, AW-INF-055), which `make shared-up` creates;
+# this script refuses to touch its release until it is Ready.
 #
 # Content: local and dev read Zone Definitions from a ConfigMap the chart renders out of
 # testdata/content/valid (contentVolume.render), as compose reads a directory, until
@@ -50,15 +50,16 @@ if kube_kubectl get crd applications.argoproj.io >/dev/null 2>&1 \
   exit 1
 fi
 
-# dev and prod run the sim and the Account store on their namespace's Kafka (AW-INF-014
-# AC-7). Without it the pod would crash-loop on an unreachable broker for the full --wait,
-# so the release is not touched until the broker is Ready.
+# dev runs the sim and the Account store on the shared Kafka in andara-shared (AW-INF-014
+# AC-7, AW-INF-055). Without it the pod would crash-loop on an unreachable broker for the
+# full --wait, so the release is not touched until the broker is Ready.
 if [[ "$ENVNAME" != "local" ]]; then
-  kready="$(kube_kubectl -n "$NS" get kafka andara-log \
+  KNS="${ANDARA_KAFKA_NAMESPACE:-andara-shared}"
+  kready="$(kube_kubectl -n "$KNS" get kafka andara-log \
     -o jsonpath='{.status.conditions[?(@.type=="Ready")].status}' 2>/dev/null || true)"
   [[ "$kready" == "True" ]] \
-    || { echo "make: helm-install: no Ready kafka/andara-log in $NS; run \`make kafka-install ENV=$ENVNAME\` first" >&2; exit 1; }
-  echo "helm-install: kafka/andara-log in $NS is Ready"
+    || { echo "make: helm-install: no Ready kafka/andara-log in $KNS; run \`make shared-up\` first" >&2; exit 1; }
+  echo "helm-install: kafka/andara-log in $KNS is Ready"
 fi
 
 # The platform the chart is written for: the cluster's Traefik owns :443 (AC-8) and

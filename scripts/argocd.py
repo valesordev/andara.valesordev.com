@@ -146,12 +146,14 @@ def preconditions(ns):
     for issuer in dict.fromkeys(("andara-ca", edge)):
         if not issuer_ready(issuer):
             die("install", "ClusterIssuer %s is not Ready; run `make platform-up`" % issuer)
-    k = kubectl_json("-n", ns, "get", "kafka", "andara-log") or {}
+    # dev's broker is the shared one (AW-INF-055), not one in its own namespace.
+    kns = os.environ.get("ANDARA_KAFKA_NAMESPACE", "").strip() or "andara-shared"
+    k = kubectl_json("-n", kns, "get", "kafka", "andara-log") or {}
     ready = [c for c in k.get("status", {}).get("conditions", []) if c.get("type") == "Ready"]
     if not ready or ready[0].get("status") != "True":
-        die("install", "no Ready kafka/andara-log in %s; run `make kafka-install ENV=dev` first" % ns)
+        die("install", "no Ready kafka/andara-log in %s; run `make shared-up` first" % kns)
     say("preconditions: traefik, cert-manager, ClusterIssuers %s, kafka/andara-log in %s"
-        % (", ".join(dict.fromkeys(("andara-ca", edge))), ns))
+        % (", ".join(dict.fromkeys(("andara-ca", edge))), kns))
 
 
 def secrets(ns):

@@ -51,7 +51,7 @@ it has been replaced:
 It carries:
 - `tick`, the tick that diverged;
 - `recorded_hash` and `replayed_hash`, in full;
-- `last_good_offsets`, the next-to-read offset per `andara.commands.v1` Partition after the last
+- `last_good_offsets`, the next-to-read offset per `dev.andara.commands.v1` Partition after the last
   verified tick.
 
 Every restart after it logs `state projector diverged earlier and it is unresolved`, with the same
@@ -84,3 +84,10 @@ tick, the checkpoint was cleared, or a newer divergence was recorded after a `--
 | `ANDARA_SIM_SEED` differs between the two | The projector reads the server's ConfigMap. A seed set on the server's StatefulSet alone, and not in the ConfigMap, is not seen. |
 | The divergence tick is a tick where a Zone faulted | Replaying through a fault does not reproduce it today. The panicking record stays unapplied and the boundary excludes it. `AW-SRV-027` owns making that exact. Until it lands, this divergence is known and expected. |
 | A content swap under the log | `ContentSwap` enters the protocol with PR #79 (`log.proto` 17) and is not applied until `AW-SRV-012`'s second half. From then on, a projector that did not follow the swap diverges at the swap tick. |
+
+**The topics are prefixed, and the broker is shared.** The topic names here are `dev`'s on the
+Kafka `andara-log` in `andara-shared`, which `local` shares under `local.` (AW-INF-055). Read them
+through the toolbox there (`kubectl --context kind-andara -n andara-shared exec
+deploy/andara-kafka-tools -- rpk topic describe dev.andara.events.v1`). `make shared-check`
+reports each broker PVC's use and each environment's bytes on it, so a filling disk is
+attributed to the environment filling it (`world-read-only.md`).

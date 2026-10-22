@@ -61,7 +61,7 @@ HAS_GO := $(shell find . -name '*.go' -not -path './.git/*' -not -path './bin/*'
         proto proto-check adr \
         k8s-dry check-targets clean build build-info goldens \
         values-schema values-schema-check helm-test image image-publish image-check cli-release cli-release-check cli-release-publish kind-load helm-install measure-tick stack-smoke stack-play stack-linkdead stack-recover stack-recover-mismatch \
-        platform-up platform-check kube-context-check cluster-up cluster-down cluster-rebuild stream-soak content-grammar-check observe-check dashboard-check observe-unavailable gcx-config gcx-check gcx-only-check scripts-test kafka-install kafka-broker-bounce \
+        platform-up platform-check kube-context-check cluster-up cluster-down cluster-rebuild stream-soak content-grammar-check observe-check dashboard-check observe-unavailable gcx-config gcx-check gcx-only-check scripts-test kafka-install kafka-broker-bounce shared-up shared-down shared-check kafka-users kafka-users-check \
         argocd-install argocd-status argocd-ui argocd-recover argocd-uninstall world-reset content-seed env-destroy env-recover \
         objectstore-install projector-stop projector-start projector-rebuild server-stop server-start core-versions-check \
         builder-reference builder-reference-check guide-check \
@@ -109,13 +109,16 @@ tls:
 auth-keys:
 	@$(SCRIPTS)/auth_keys.sh
 
-## topics-apply: create missing Kafka topics and align existing ones to deploy/kafka/topics.yaml — ALLOW_DATA_LOSS=<topic>[,…] accepts a change that deletes data
+## topics-apply: create missing Kafka topics and align existing ones to deploy/kafka/topics.yaml, named under ENV's prefix — ENV=<local|dev> (default local), BROKER=<compose|cluster> (local only; compose while compose exists), ALLOW_DATA_LOSS=<topic>[,…] accepts a change that deletes data
 topics-apply:
-	@$(PY) $(SCRIPTS)/topics.py apply --env $(ANDARA_ENV) $(if $(ALLOW_DATA_LOSS),--allow-data-loss "$(ALLOW_DATA_LOSS)")
+	@$(PY) $(SCRIPTS)/topics.py apply --env $(TOPICS_ENV) $(if $(BROKER),--broker "$(BROKER)") $(if $(ALLOW_DATA_LOSS),--allow-data-loss "$(ALLOW_DATA_LOSS)")
 
-## topics-diff: fail if a live topic has drifted from the declaration
+## topics-diff: fail if a live topic has drifted from the declaration — ENV=<local|dev>, BROKER as topics-apply
 topics-diff:
-	@$(PY) $(SCRIPTS)/topics.py diff --env $(ANDARA_ENV)
+	@$(PY) $(SCRIPTS)/topics.py diff --env $(TOPICS_ENV) $(if $(BROKER),--broker "$(BROKER)")
+
+# ENV on the command line, else ANDARA_ENV (default local), as before AW-INF-055.
+TOPICS_ENV = $(if $(filter command line,$(origin ENV)),$(ENV),$(ANDARA_ENV))
 
 ## schemas-apply: register protobuf schemas with the schema registry
 schemas-apply:
@@ -137,7 +140,7 @@ CHECK_TARGETS := fmt-check vet lint test proto-check schemas-check \
                  license-check content-grammar-check content-conformance scripts-test \
                  core-versions-check builder-reference-check guide-check \
                  tf-fmt-check tf-validate tf-test tf-workflow-check gcx-only-check platform-check \
-                 kube-context-check
+                 kube-context-check kafka-users-check
 
 ## check: fmt, vet, lint, test, proto, manifests — what CI runs
 check: $(CHECK_TARGETS)
@@ -404,17 +407,37 @@ cluster-up:
 cluster-down:
 	@$(PY) $(SCRIPTS)/cluster.py down "$(CONFIRM)"
 
-## cluster-rebuild: export the certificate Secrets to .local/tls/, delete `andara`, create it again, then platform-up (which restores the CA root) — CONFIRM=andara
+## cluster-rebuild: export the certificate Secrets to .local/tls/, delete `andara`, create it again, then platform-up (which restores the CA root), then shared-up — CONFIRM=andara
 cluster-rebuild:
 	@$(PY) $(SCRIPTS)/cluster.py rebuild "$(CONFIRM)"
 
-## kafka-install: Apache Kafka `andara-log` (3 brokers, KRaft) in andara-<env>, then the topics from deploy/kafka/topics.yaml — ENV=<dev|prod> (AW-INF-014)
+## shared-up: the shared services in andara-shared — Kafka `andara-log` (3 brokers, KRaft) and both environments' prefixed topics; labels andara-local and andara-dev; idempotent (AW-INF-055)
+shared-up:
+	@PY=$(PY) $(SCRIPTS)/kafka.sh up
+
+## shared-down: delete the shared services and their data (every environment's Command history) — CONFIRM=andara-shared (AW-INF-055)
+shared-down:
+	@$(PY) $(SCRIPTS)/shared.py down "$(CONFIRM)"
+
+## shared-check: each andara-shared PVC's use (exit 1 over 80%) and each broker's bytes per environment prefix (AW-INF-055)
+shared-check:
+	@$(PY) $(SCRIPTS)/shared.py check
+
+## kafka-install: the shared Kafka `andara-log` in andara-shared (as shared-up), then ENV's prefixed topics from deploy/kafka/topics.yaml — ENV=<local|dev> (AW-INF-014, AW-INF-055)
 kafka-install:
 	@PY=$(PY) $(SCRIPTS)/kafka.sh install "$(ENV)"
 
-## kafka-broker-bounce: delete one broker and prove the server never left service while it was gone — ENV=<dev|prod> (AW-INF-014 AC-5)
+## kafka-broker-bounce: delete one shared broker and prove ENV's server never left service while it was gone — ENV=<local|dev> (AW-INF-014 AC-5)
 kafka-broker-bounce:
 	@PY=$(PY) $(SCRIPTS)/kafka.sh bounce "$(ENV)"
+
+## kafka-users-check: the KafkaUsers rendered from deploy/kafka/topics.yaml grant no environment principal a topic Create, Alter or AlterConfigs, and no literal `*` (AW-INF-055 AC-9)
+kafka-users-check:
+	@$(PY) $(SCRIPTS)/kafka_users.py check
+
+## kafka-users: print the KafkaUser manifests rendered from deploy/kafka/topics.yaml (applied by AW-INF-056)
+kafka-users:
+	@$(PY) $(SCRIPTS)/kafka_users.py render
 
 ## argocd-install: Argo CD and Image Updater into `argocd` at pinned versions; with ENV=dev, dev's Secrets (if absent) and the andara-dev Application — dev follows main (AW-INF-019)
 argocd-install:
@@ -444,11 +467,11 @@ server-stop:
 server-start:
 	@$(PY) $(SCRIPTS)/server_ctl.py start "$(if $(filter command line,$(origin ENV)),$(ENV))"
 
-## world-reset: recreate ENV's World log and Account store, keeping content — destroys every Character and Account — ENV=<env> CONFIRM=andara-<env> (AW-INF-021)
+## world-reset: recreate ENV's World log and Account store, keeping content — destroys every Character and Account — ENV=<env> CONFIRM=andara-<env> [BROKER=cluster, local only] (AW-INF-021, AW-INF-055)
 world-reset:
-	@$(PY) $(SCRIPTS)/world_reset.py "$(if $(filter command line,$(origin ENV)),$(ENV))" "$(CONFIRM)"
+	@$(PY) $(SCRIPTS)/world_reset.py "$(if $(filter command line,$(origin ENV)),$(ENV))" "$(CONFIRM)" $(if $(BROKER),--broker "$(BROKER)")
 
-## env-destroy: delete ENV's namespace and wait until it's gone — Argo CD's Application (non-cascading), Kafka, the object store, every Secret and PVC; the cluster-wide operators stay — ENV=<env> CONFIRM=andara-<env> (AW-INF-021 AC-7)
+## env-destroy: delete ENV's namespace and wait until it's gone — Argo CD's Application (non-cascading), the object store, every Secret and PVC; the cluster-wide operators and the shared Kafka with ENV's topics stay — ENV=<env> CONFIRM=andara-<env> (AW-INF-021 AC-7)
 env-destroy:
 	@$(PY) $(SCRIPTS)/env_destroy.py "$(if $(filter command line,$(origin ENV)),$(ENV))" "$(CONFIRM)"
 

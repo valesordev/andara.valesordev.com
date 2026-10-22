@@ -285,6 +285,9 @@ services:
       # Purgatory, as in every environment (AW-INF-024).
       ANDARA_CHARACTER_SPAWN_ROOM: "purgatory/start"
       ANDARA_KAFKA_BROKERS: "redpanda:29092"
+      # local's topics are `local.<name>`, as on the shared broker (AW-INF-055, ADR-0013
+      # amendment 16): `make topics-apply` creates them under this prefix.
+      ANDARA_KAFKA_TOPIC_PREFIX: "local"
       ANDARA_SCHEMA_REGISTRY: "http://redpanda:8081"
       ANDARA_REDIS_ADDR: "redis:6379"
       ANDARA_POSTGRES_DSN: "postgres://andara@postgres:5432/andara"

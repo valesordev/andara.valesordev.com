@@ -24,10 +24,13 @@ server:
     # (Brian, 2026-09-26; AW-INF-024). Required outside local, and set explicitly in local
     # too, so the server's compiled-in default (town/plaza) no longer matters anywhere.
     spawn_room: purgatory/start
-  # The namespace's Kafka `andara-log` (AW-INF-014, `make kafka-install ENV=dev`): the sim's
+  # The shared Kafka `andara-log` in andara-shared (AW-INF-055, `make shared-up`): the sim's
   # command log and the Account store live there, as sim.source and auth.store default to.
+  # topic_prefix: dev comes with AW-INF-059, once Argo CD follows the dev tag rather than main
+  # (ADR-0013 amendment 16): set here today, it would point the running dev at topics that
+  # don't exist yet.
   kafka:
-    brokers: andara-log-kafka-bootstrap:9092
+    brokers: andara-log-kafka-bootstrap.andara-shared.svc:9092
   # Content comes from the namespace's content store (AW-INF-021): every pack with an Active
   # Pointer, the server's own andara.core (published at boot, AW-SRV-013) and the dev fixture
   # pack `town` (`make content-seed ENV=dev`). Nothing is mounted from git any more.

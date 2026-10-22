@@ -5,9 +5,10 @@
 """make env-destroy ENV=<env> CONFIRM=andara-<env> — delete an environment's namespace (AW-INF-021).
 
 The first step of AW-INF-021 AC-7's rebuild from nothing. It deletes andara-<env> and waits until
-it's gone: the server, the projector, Kafka (Strimzi's resources, and so every topic), the object
-store and its bucket, every Secret and PVC. The cluster-wide pieces stay: Argo CD, Strimzi's
-operator, cert-manager and Traefik. So the environment comes back with its install targets.
+it's gone: the server, the projector, the object store and its bucket, every Secret and PVC. The
+cluster-wide pieces stay: Argo CD, Strimzi's operator, cert-manager and Traefik. So does the shared
+Kafka in andara-shared, with the environment's prefixed topics on it (AW-INF-055): a World to
+start over is `make world-reset`. So the environment comes back with its install targets.
 
 Before the namespace, it removes the Argo CD Application without cascading. With automated sync
 and selfHeal, Argo CD would otherwise recreate the namespace's objects while it's being deleted.

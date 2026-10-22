@@ -11,8 +11,8 @@
 # - No helm.parameters here. Image Updater owns image.tag on the live Application
 #   (andara-dev-image-updater.yaml); argocd-install seeds it with `dev@<digest>` before
 #   automated sync is on, so the first render is already pinned.
-# - Not managed, so a sync never prunes them: the Kafka CR and its topics
-#   (`make kafka-install`), the two Secrets (`make argocd-install ENV=dev`), the snapshot
+# - Not managed, so a sync never prunes them: the shared Kafka in andara-shared and dev's
+#   topics on it (`make shared-up`, AW-INF-055), the two Secrets (`make argocd-install ENV=dev`), the snapshot
 #   PVC (a volumeClaimTemplate), and the cluster platform.
 # - The state projector's replica count is the operator's (AW-INF-025): `make projector-stop`
 #   holds it at 0 until `projector-start`, and selfHeal would otherwise undo that within

@@ -32,6 +32,8 @@ export ANDARA_SMOKE_ADDR="${ANDARA_SMOKE_ADDR:-localhost:${ANDARA_GRPC_PORT:-844
 # record is read back from.
 export ANDARA_SMOKE_OPERATOR="${ANDARA_BOOTSTRAP_OPERATOR:-operator:andara-local}"
 export ANDARA_KAFKA_BROKERS="${ANDARA_KAFKA_BROKERS:-localhost:${ANDARA_KAFKA_PORT:-9092}}"
+# The compose server's prefix (AW-INF-055): the audit record is read back from its own topic.
+export ANDARA_KAFKA_TOPIC_PREFIX="${ANDARA_KAFKA_TOPIC_PREFIX:-local}"
 
 echo "stack-smoke: opening a Session over TLS ..."
 SMOKE_OUT="$(mktemp -t stack-smoke.XXXXXX)"

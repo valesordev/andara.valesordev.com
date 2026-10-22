@@ -4,8 +4,8 @@
 
 """Apply and diff the Kafka topic declaration in deploy/kafka/topics.yaml.
 
-    scripts/topics.py apply [--env local] [--allow-data-loss <topic>[,<topic>...]]
-    scripts/topics.py diff  [--env local]
+    scripts/topics.py apply [--env local] [--broker compose|cluster] [--allow-data-loss <topic>[,<topic>...]]
+    scripts/topics.py diff  [--env local] [--broker compose|cluster]
 
 One declaration, applied identically everywhere (AW-INF-004). The local stack calls
 `apply` after `make up` so that local topics and production topics come from this file
@@ -16,9 +16,20 @@ It checks everything before it changes anything: partition drift is refused, and
 change that lets the broker delete data (a lower retention.ms, or a cleanup policy the topic
 didn't have), unless the operator names that topic in --allow-data-loss.
 
-Talks to the broker through `rpk`, run inside the Redpanda container when one is up and
-otherwise from the host. Stdlib only: this tooling validates the stack, so it must not
-depend on anything the stack has to install first.
+Each environment's topics are `<prefix>.<name>`, with the prefix from the declaration's
+`environments` (ADR-0013 decision 4, AW-INF-055): `dev.andara.commands.v1`. The shared
+broker in andara-shared holds both `local.` and `dev.`, so a name built anywhere but here is
+a name that can reach the other environment's data.
+
+Two brokers answer to `local` until compose is retired (ADR-0013 amendment 23): `--broker
+compose` (the default while deploy/compose/ exists) is the compose Redpanda, run inside its
+container when it is up and otherwise from the host; `--broker cluster` is the shared Kafka.
+`--broker` means nothing for any other environment, which is always the cluster, and naming
+it there is a usage error. The cluster's Kafka is found in ANDARA_KAFKA_NAMESPACE (default
+andara-shared), through the rpk toolbox there.
+
+Stdlib only: this tooling validates the stack, so it must not depend on anything the stack
+has to install first.
 """
 
 import argparse
@@ -42,8 +53,15 @@ COMPOSE = os.path.join(REPO, "deploy", "compose", "docker-compose.yaml")
 # before it was declared reports the broker default, and `topics-diff` names the drift.
 # max.message.bytes is andara.content.blobs.v1's (AW-SRV-013): the largest blob the broker takes.
 # Raising or lowering it deletes nothing, so it's never a data-loss change.
-COMPARED = ["cleanup.policy", "retention.ms", "min.insync.replicas", "min.compaction.lag.ms",
-            "max.message.bytes"]
+# retention.bytes is local's bound on the shared brokers' disks (AW-INF-055); a lower one deletes
+# data, like a lower retention.ms. segment.bytes is what makes that bound bite (the broker
+# deletes whole segments only); changing it deletes nothing by itself.
+COMPARED = ["cleanup.policy", "retention.ms", "retention.bytes", "segment.bytes", "min.insync.replicas",
+            "min.compaction.lag.ms", "max.message.bytes"]
+
+BROKERS = ("compose", "cluster")
+KAFKA_NAMESPACE_ENV = "ANDARA_KAFKA_NAMESPACE"
+KAFKA_NAMESPACE = "andara-shared"
 
 
 def die(msg, code=1):
@@ -142,6 +160,52 @@ def parse_declaration(path):
     return defaults, topics, broker
 
 
+def parse_environments(path):
+    """{env: {"prefix": str, "config": {key: value}}} from the declaration's `environments`.
+
+    As narrow as parse_declaration: two levels of plain `key: value` under the section.
+    """
+    envs = {}
+    section = None
+    current = None
+    with open(path, "r", encoding="utf-8") as fh:
+        for raw in fh.read().split("\n"):
+            line = raw.split(" #")[0].rstrip() if not raw.strip().startswith("#") else ""
+            if not line.strip():
+                continue
+            indent = len(line) - len(line.lstrip())
+            stripped = line.strip()
+            if indent == 0:
+                section = stripped.rstrip(":")
+                continue
+            if section != "environments":
+                continue
+            key, _, val = stripped.partition(":")
+            key, val = key.strip(), val.strip().strip("'\"")
+            if indent == 2:
+                current = envs.setdefault(key, {"prefix": None, "config": {}})
+            elif current is not None and key == "prefix":
+                current["prefix"] = val
+            elif current is not None:
+                current["config"][key] = val
+    return envs
+
+
+def environment(path, env):
+    """The environment's entry, or die: an environment with no declared prefix has no names."""
+    e = parse_environments(path).get(env)
+    if e is None or e["prefix"] is None:
+        die("no environment '%s' with a prefix in deploy/kafka/topics.yaml's environments" % env)
+    if e["prefix"] and not re.fullmatch(r"[a-z0-9]+", e["prefix"]):
+        die("environment '%s' prefix '%s' must be empty or match [a-z0-9]+" % (env, e["prefix"]))
+    return e
+
+
+def topic_name(prefix, name):
+    """`<prefix>.<name>`, or `<name>` with the empty prefix (ADR-0013 amendment 6)."""
+    return "%s.%s" % (prefix, name) if prefix else name
+
+
 def replication_factor(defaults, env):
     rf = defaults["replication_factor"].get(env)
     if rf is None:
@@ -149,8 +213,12 @@ def replication_factor(defaults, env):
     return int(rf)
 
 
-def declared_config(defaults, topic, env):
-    """The full config this topic should carry in this environment."""
+def declared_config(defaults, topic, env, overrides=None):
+    """The full config this topic should carry in this environment.
+
+    `overrides` is the environment's own config (local's retention bound), which wins over
+    the topic's: it is the limit one environment may take of a shared broker.
+    """
     cfg = {}
     for key, per_env in defaults["config"].items():
         if env in per_env:
@@ -159,26 +227,43 @@ def declared_config(defaults, topic, env):
         if key in ("name", "partitions", "why"):
             continue
         cfg[key] = str(val)
+    for key, val in (overrides or {}).items():
+        cfg[key] = str(val)
     return cfg
 
 
-# The broker on the box (AW-INF-014): Strimzi's bootstrap Service for Kafka `andara-log`,
-# reached through the rpk toolbox in deploy/k8s/kafka/tools.yaml, because a broker's
-# advertised address only resolves inside the cluster.
+# The broker on the box (AW-INF-014, AW-INF-055): Strimzi's bootstrap Service for Kafka
+# `andara-log` in andara-shared, reached through the rpk toolbox in deploy/k8s/kafka/tools.yaml,
+# because a broker's advertised address only resolves inside the cluster.
 CLUSTER_BOOTSTRAP = "andara-log-kafka-bootstrap:9092"
 CLUSTER_TOOLBOX = "deploy/andara-kafka-tools"
 
 
-def rpk_prefix(env, compose_redpanda_running, host_rpk):
+def kafka_namespace():
+    return os.environ.get(KAFKA_NAMESPACE_ENV, "").strip() or KAFKA_NAMESPACE
+
+
+def default_broker():
+    """compose while deploy/compose/ exists (ADR-0013 amendment 23), the cluster after."""
+    return "compose" if os.path.isdir(os.path.dirname(COMPOSE)) else "cluster"
+
+
+def redpanda(env, broker):
+    """Whether `env` on `broker` is the compose Redpanda, which differs from Kafka in what it
+    reports and in how its broker settings are written."""
+    return env == "local" and broker == "compose"
+
+
+def rpk_prefix(env, compose_redpanda_running, host_rpk, broker="compose"):
     """The command that runs rpk against `env`'s broker, or None when there is none.
 
-    local is the compose Redpanda, else an rpk on the host. Every other environment is
-    its namespace on the cluster, and never compose: until AW-INF-014 this function
-    ignored the environment, so `topics-apply ANDARA_ENV=dev` with `make up` running
-    applied dev's declaration to the laptop's broker.
+    local on the compose broker is the compose Redpanda, else an rpk on the host. Every
+    other environment, and local on the cluster broker, is the shared Kafka, and never
+    compose: until AW-INF-014 this function ignored the environment, so `topics-apply
+    ANDARA_ENV=dev` with `make up` running applied dev's declaration to the laptop's broker.
     """
-    if env != "local":
-        return kube.kubectl("-n", "andara-" + env, "exec", "-i", CLUSTER_TOOLBOX, "--",
+    if not redpanda(env, broker):
+        return kube.kubectl("-n", kafka_namespace(), "exec", "-i", CLUSTER_TOOLBOX, "--",
                             "rpk", "-X", "brokers=" + CLUSTER_BOOTSTRAP)
     if compose_redpanda_running:
         return ["docker", "compose", "-f", COMPOSE, "exec", "-T", "redpanda", "rpk"]
@@ -197,16 +282,17 @@ def compose_redpanda_running():
     return probe.returncode == 0 and bool(probe.stdout.strip())
 
 
-def rpk_runner(env):
+def rpk_runner(env, broker=None):
     """Return a function that runs an rpk command against `env`'s broker."""
-    if env == "local":
+    broker = broker or default_broker()
+    if redpanda(env, broker):
         prefix = rpk_prefix(env, compose_redpanda_running(), shutil.which("rpk") is not None)
         if prefix is None:
             die("no running Redpanda container and no local rpk; run `make up` first")
     else:
         if shutil.which("kubectl") is None:
-            die("env '%s' is on the cluster and kubectl is not installed" % env)
-        prefix = rpk_prefix(env, False, False)
+            die("env '%s' is on the cluster and kubectl is not installed" % env, 3)
+        prefix = rpk_prefix(env, False, False, broker="cluster")
     return lambda args: subprocess.run(prefix + args, capture_output=True, text=True)
 
 
@@ -261,7 +347,7 @@ def same(key, have, want):
 
 
 def retention(value):
-    """retention.ms as an order: -1 is unlimited, above every finite window."""
+    """retention.ms or retention.bytes as an order: -1 is unlimited, above every finite value."""
     v = int(value)
     return float("inf") if v < 0 else v
 
@@ -278,8 +364,8 @@ def destructive(key, have, want):
     destructive, because nothing shows it isn't.
     """
     if have is None:
-        return key in ("retention.ms", "min.compaction.lag.ms", "cleanup.policy")
-    if key == "retention.ms":
+        return key in ("retention.ms", "retention.bytes", "min.compaction.lag.ms", "cleanup.policy")
+    if key in ("retention.ms", "retention.bytes"):
         return retention(want) < retention(have)
     if key == "min.compaction.lag.ms":
         return int(want) < int(have)
@@ -288,23 +374,27 @@ def destructive(key, have, want):
     return False
 
 
-def run_action(action, env, allow_data_loss, run, decl=DECL, out=sys.stdout, err=sys.stderr):
+def run_action(action, env, allow_data_loss, run, decl=DECL, out=sys.stdout, err=sys.stderr,
+               rp=None):
     """Plan against the live broker, refuse what must be refused, then create and alter.
 
     Returns the exit code. Every refusal is decided across all topics before the first
-    create or alter, so a refused run changes nothing anywhere.
+    create or alter, so a refused run changes nothing anywhere. `rp` says the broker is the
+    compose Redpanda; by default, local is.
     """
+    rp = env == "local" if rp is None else rp
     defaults, topics, broker = parse_declaration(decl)
+    envdecl = environment(decl, env)
     rf = replication_factor(defaults, env)
     live = existing_topics(run)
-    declared_names = {t["name"] for t in topics}
+    declared_names = {topic_name(envdecl["prefix"], t["name"]) for t in topics}
 
     missing, alters, drift, skipped = [], [], [], set()
 
     for topic in topics:
-        name = topic["name"]
+        name = topic_name(envdecl["prefix"], topic["name"])
         want_parts = topic["partitions"]
-        want_cfg = declared_config(defaults, topic, env)
+        want_cfg = declared_config(defaults, topic, env, envdecl["config"])
 
         if name not in live:
             if action == "diff":
@@ -329,7 +419,7 @@ def run_action(action, env, allow_data_loss, run, decl=DECL, out=sys.stdout, err
         # API and does not exist on Kafka — so against production it failed to read the
         # property and then treated the empty answer as agreement.
         want_all = dict(want_cfg)
-        if env != "local":
+        if not rp:
             want_all.update(broker.get("assert", {}))
         for key in COMPARED + sorted(k for k in broker.get("assert", {}) if k not in COMPARED):
             if key not in want_all:
@@ -342,7 +432,7 @@ def run_action(action, env, allow_data_loss, run, decl=DECL, out=sys.stdout, err
                 # reports every property with its effective value, so on any other
                 # environment an absent key means the declaration is not in force — which
                 # is drift, not assent (AW-INF-004 AC-5a).
-                if env == "local":
+                if rp:
                     skipped.add(key)
                     continue
                 if action == "apply" and key in COMPARED:
@@ -403,9 +493,10 @@ def run_action(action, env, allow_data_loss, run, decl=DECL, out=sys.stdout, err
                       % (name, key, "(unreported)" if have is None else have, want,
                          " (data loss accepted)" if destructive(key, have, want) else ""))
 
-    # A local broker is disposable, so broker settings are applied to it. Dev and prod
-    # brokers are asserted against, never rewritten by a make target.
-    if env == "local" and action == "apply":
+    # A local broker is disposable, so broker settings are applied to it. The shared Kafka
+    # and prod are asserted against, never rewritten by a make target; and these settings
+    # are Redpanda's own, which Kafka doesn't have.
+    if rp and action == "apply":
         for key, val in sorted(broker.get("local", {}).items()):
             res = run(["cluster", "config", "set", key, val])
             if res.returncode != 0:
@@ -419,11 +510,12 @@ def run_action(action, env, allow_data_loss, run, decl=DECL, out=sys.stdout, err
                   % (action, len(drift)))
         return 1
 
+    where = "env=%s, prefix=%s" % (env, envdecl["prefix"] or "(none)")
     if action == "apply":
-        out.write("topics-apply: %d topic(s) match deploy/kafka/topics.yaml (env=%s)\n"
-                  % (len(topics), env))
+        out.write("topics-apply: %d topic(s) match deploy/kafka/topics.yaml (%s)\n"
+                  % (len(topics), where))
     else:
-        out.write("topics-diff: no drift across %d topic(s) (env=%s)\n" % (len(topics), env))
+        out.write("topics-diff: no drift across %d topic(s) (%s)\n" % (len(topics), where))
     return 0
 
 
@@ -431,15 +523,23 @@ def main():
     ap = argparse.ArgumentParser()
     ap.add_argument("action", choices=["apply", "diff"])
     ap.add_argument("--env", default=os.environ.get("ANDARA_ENV", "local"))
+    ap.add_argument("--broker", default="", help="local only: compose or cluster (default %s)"
+                    % default_broker())
     ap.add_argument("--allow-data-loss", default="",
                     help="comma-separated topics whose destructive change the operator accepts")
     args = ap.parse_args()
     if args.allow_data_loss and args.action != "apply":
         die("--allow-data-loss applies only to `apply`")
+    if args.broker and args.broker not in BROKERS:
+        die("--broker is compose or cluster, not '%s'" % args.broker, 2)
+    if args.broker and args.env != "local":
+        die("--broker means something only for local; %s is always the cluster's" % args.env, 2)
+    broker = args.broker or default_broker()
     allow = [t.strip() for t in args.allow_data_loss.split(",")]
     if "*" in allow:
         die("ALLOW_DATA_LOSS names topics, never a wildcard")
-    return run_action(args.action, args.env, allow, rpk_runner(args.env))
+    return run_action(args.action, args.env, allow, rpk_runner(args.env, broker),
+                      rp=redpanda(args.env, broker))
 
 
 if __name__ == "__main__":

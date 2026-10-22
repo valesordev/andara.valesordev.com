@@ -477,15 +477,23 @@ class KafkaOperator(unittest.TestCase):
         p = subprocess.run([os.path.join(SCRIPTS, "kafka.sh"), "install", "dev"], capture_output=True, text=True, env=env)
         return p, calls(log)
 
-    def test_an_operator_watching_andara_shared_refuses_dev(self):
-        p, made = self.run_install(["andara-shared"])
-        self.assertEqual(p.returncode, 1)
-        self.assertIn("Strimzi watches andara-shared, not andara-dev", p.stderr)
+    def test_an_operator_not_watching_andara_shared_refuses(self):
+        # AW-INF-055: every environment's broker is the shared one in andara-shared.
+        p, made = self.run_install(["andara-dev"])
+        self.assertEqual(p.returncode, 3)
+        self.assertIn("Strimzi watches andara-dev, not andara-shared", p.stderr)
         self.assertFalse([c for c in made if c.startswith("helm upgrade") or c.startswith("helm install") or " apply " in c], made)
+
+    def test_an_operator_watching_andara_shared_applies_there_and_never_installs_strimzi(self):
+        p, made = self.run_install(["andara-shared"])
+        applies = [c for c in made if " apply " in c]
+        self.assertTrue(applies, (p.stderr, made))
+        self.assertTrue(all("-n andara-shared apply -f deploy/k8s/kafka/" in c for c in applies), applies)
+        self.assertFalse([c for c in made if c.startswith("helm upgrade") or c.startswith("helm install")], made)
 
     def test_no_operator_names_platform_up(self):
         p, made = self.run_install(None)
-        self.assertEqual(p.returncode, 1)
+        self.assertEqual(p.returncode, 3)
         self.assertIn("run `make platform-up`", p.stderr)
         self.assertFalse([c for c in made if c.startswith("helm upgrade") or " apply " in c], made)
 

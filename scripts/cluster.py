@@ -18,8 +18,8 @@ export from or delete any other cluster.
            nothing that targets the old cluster today is retargeted.
   down     CONFIRM=andara, then delete `andara`. No such cluster exits 0.
   rebuild  CONFIRM=andara, checked first; export the two certificate Secrets (scripts/cluster_secrets.py),
-           delete, create, then `make platform-up` (scripts/platform_up.py), which restores the CA root.
-           It deletes only once the export accounted for every Secret, each one written or absent. The
+           delete, create, then `make platform-up` (scripts/platform_up.py), which restores the CA root,
+           then `make shared-up` (scripts/kafka.sh up: the shared Kafka and its topics). It deletes only once the export accounted for every Secret, each one written or absent. The
            steps later stories own are named at the end.
 
 All three act on `andara` and no other cluster: ANDARA_KUBE_CONTEXT set to anything but kind-andara
@@ -61,7 +61,7 @@ PORTS = [("ANDARA_HTTP_PORT", 8080), ("ANDARA_GRPC_PORT", 8443)]
 WAIT = "5m"
 # The steps a rebuild doesn't do yet. Each story that lands one replaces its line with the call.
 NOT_YET = [
-    "shared-up (Kafka, object store in andara-shared): AW-INF-055, AW-INF-058",
+    "shared-up's object store in andara-shared: AW-INF-058",
     "the dev edge certificate restore (andara-dev/andara-edge-tls, once andara-dev exists; "
     "platform-up restores the CA root only): AW-INF-066",
     "the schema registry: AW-INF-057",
@@ -280,6 +280,18 @@ def run_platform(r):
         raise Failed("platform-up: %s" % p.redact(str(e)))
 
 
+def run_shared(r, run=subprocess.run):
+    """`make shared-up` on the new cluster (AW-INF-055): its exit 3 is a missing prerequisite,
+    any other failure a failed step."""
+    r.say("shared-up")
+    p = run([os.path.join(REPO, "scripts", "kafka.sh"), "up"], cwd=REPO,
+            env=dict(os.environ, ANDARA_KUBE_CONTEXT=CONTEXT, PY=sys.executable))
+    if p.returncode == 3:
+        raise Missing("shared-up: a prerequisite is missing (its output is above)")
+    if p.returncode != 0:
+        raise Failed("shared-up exited %d (its output is above)" % p.returncode)
+
+
 def rebuild(r, confirm, ports=None, export=cluster_secrets.export):
     check_confirm(confirm)
     kind_bin, _ = prerequisites()
@@ -300,6 +312,7 @@ def rebuild(r, confirm, ports=None, export=cluster_secrets.export):
         r.say("no cluster %s; skipping the export and the delete" % NAME)
     up(r, ports)
     run_platform(r)
+    run_shared(r)
     r.say("not yet part of the rebuild, run by hand or by its story once it lands:")
     for step in NOT_YET:
         r.say("  pending " + step)

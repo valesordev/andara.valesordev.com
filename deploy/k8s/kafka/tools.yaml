@@ -3,7 +3,8 @@
 # AW-INF-004's topic tooling speaks rpk, which is a Kafka-API client and works against
 # Kafka as well as Redpanda. The Kafka image has no rpk, and a broker's advertised address
 # only resolves in-cluster, so topics.py runs rpk here with
-# `kubectl -n andara-<env> exec deploy/andara-kafka-tools -- rpk -X brokers=…`.
+# `kubectl -n andara-shared exec deploy/andara-kafka-tools -- rpk -X brokers=…`, for every
+# environment: it names each one's topics by its prefix (AW-INF-055).
 # The image is the one compose pins, so the rpk that checks the laptop checks the box.
 # The label is what the Kafka listener's NetworkPolicy admits (kafka.yaml).
 apiVersion: apps/v1

@@ -147,7 +147,7 @@ case "$ACTION" in
     # registry holds what production holds rather than whatever the first producer wrote.
     ANDARA_ENV=local "${PY:-python3}" "$REPO/scripts/schemas.py" apply --env local
 
-    # The server starts only after the topics exist: it replays andara.accounts.v1 at
+    # The server starts only after the topics exist: it replays local.andara.accounts.v1 at
     # boot and refuses to run against a topic it would have had to create (AW-SRV-008).
     # It runs as the host uid so the 0600 keyring bind-mounted from .local/auth is
     # readable inside the container.
