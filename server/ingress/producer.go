@@ -130,19 +130,19 @@ type KafkaProducer struct {
 	health   *partitionHealth
 	source   logSource
 
-	clients   [sim.PartitionCount]atomic.Pointer[kgo.Client]
-	lastErr   [sim.PartitionCount]atomic.Pointer[brokerError]
-	buffered  atomic.Int64
-	maxBuf    int64
-	retries   atomic.Uint64
-	tapLoss   atomic.Uint64 // connections the produce tap stopped following
-	written   atomic.Uint64 // produce requests that left this process
+	clients  [sim.PartitionCount]atomic.Pointer[kgo.Client]
+	lastErr  [sim.PartitionCount]atomic.Pointer[brokerError]
+	buffered atomic.Int64
+	maxBuf   int64
+	retries  atomic.Uint64
+	tapLoss  atomic.Uint64 // connections the produce tap stopped following
+	written  atomic.Uint64 // produce requests that left this process
 	// partWritten is written per Partition: each Partition's client counts
 	// its own, so one Submit's attempts are told apart from another
 	// Partition's traffic.
 	partWritten [sim.PartitionCount]atomic.Uint64
-	warnAt    atomic.Int64  // unix nanos of the last sampled warning
-	tapWarnAt atomic.Int64  // unix nanos of the last tap-lost warning
+	warnAt      atomic.Int64 // unix nanos of the last sampled warning
+	tapWarnAt   atomic.Int64 // unix nanos of the last tap-lost warning
 
 	minISR       atomic.Int64
 	minISRKnown  atomic.Bool
