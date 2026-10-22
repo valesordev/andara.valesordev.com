@@ -62,6 +62,12 @@ sets it to `0`, clearing an earlier pin). `dev` moves to it and a new `dev-<n'>`
 A bad image that does sync shows as `AndaraServerUnavailable` or `AndaraServerCrashLooping` on
 `environment="dev"`; roll back as above.
 
+## A cluster from before AW-INF-059
+
+`make argocd-install` no longer installs or removes Image Updater. A cluster that still runs it is
+rebuilt (`AW-INF-066`), not upgraded: its controller would write `image.tag` back onto the
+Application, over what the tag `dev` pins.
+
 ## A rebuilt cluster
 
 `make argocd-install ENV=dev` refuses until the tag `dev` exists. On a cluster rebuilt from nothing:

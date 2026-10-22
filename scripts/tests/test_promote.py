@@ -257,6 +257,32 @@ class Promote(unittest.TestCase):
         self.assertEqual(self.remote("refs/tags/dev-2"), "")
         self.assertEqual(self.remote("refs/tags/dev"), before)
 
+    def test_a_push_refused_for_one_ref_moves_none(self):
+        """The push is atomic: origin refusing only the history tag (a concurrent promotion took
+        dev-<n>, or a ruleset on tags) must not leave release/dev and dev moved without it."""
+        self.run_promote("dev", self.main1, "", "")
+        branch, dev = self.remote("refs/heads/release/dev"), self.remote("refs/tags/dev")
+        hook = os.path.join(self.origin, "hooks", "update")
+        with open(hook, "w") as f:
+            f.write('#!/bin/sh\ncase "$1" in refs/tags/dev-*) echo "no history tags" >&2; exit 1;; esac\nexit 0\n')
+        os.chmod(hook, 0o755)
+        code, _, err = self.run_promote("dev", self.main2, "", "")
+        self.assertEqual(code, 1, err)
+        self.assertEqual(self.remote("refs/heads/release/dev"), branch)
+        self.assertEqual(self.remote("refs/tags/dev"), dev)
+        self.assertEqual(self.remote("refs/tags/dev-2"), "")
+
+    def test_a_rollback_records_main_from_origin_not_a_stale_ref(self):
+        self.run_promote("dev", self.main1, "", "")
+        self.run_promote("dev", self.main2, "", "")
+        sh(self.work, "git", "update-ref", "refs/remotes/origin/main", self.main1)
+        code, _, err = self.run_promote("dev", "", "dev-2", "")
+        self.assertEqual(code, 0, err)
+        sh(self.work, "git", "fetch", "-q", "--force", "origin", "+refs/tags/*:refs/tags/*")
+        msg = sh(self.work, "git", "tag", "-l", "--format=%(contents)", "dev-3")
+        self.assertIn("main:    " + self.main2, msg)
+        self.assertIn("pin_round: none", msg)
+
     def test_no_signing_key_is_exit_3(self):
         sh(self.work, "git", "config", "--unset", "user.signingkey")
         with mock.patch.dict(os.environ, {"GIT_CONFIG_GLOBAL": os.devnull, "GIT_CONFIG_NOSYSTEM": "1"}):
@@ -316,9 +342,10 @@ class NoImageUpdater(unittest.TestCase):
     """AC-9: Image Updater and the moving :dev are gone outside the archives."""
 
     def test_grep(self):
-        p = subprocess.run(["git", "-C", REPO, "grep", "-n", "-e", "image-updater", "-e", "already installed == 2",
-                            "-e", "image.tag=dev@", "--", ".", ":!docs/sprints", ":!docs/feedback", ":!docs/adr",
-                            ":!scripts/tests/test_promote.py"], capture_output=True, text=True)
+        # The patterns are built, so the AC's literal grep doesn't find this file either.
+        p = subprocess.run(["git", "-C", REPO, "grep", "-n", "-e", "image-" + "updater", "-e", "already installed " + "== 2",
+                            "-e", "image.tag=" + "dev@", "--", ".", ":!docs/sprints", ":!docs/feedback", ":!docs/adr"],
+                           capture_output=True, text=True)
         self.assertEqual(p.stdout, "")
 
     def test_image_publish_does_not_move_dev(self):

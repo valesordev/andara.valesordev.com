@@ -190,6 +190,41 @@ class Application(unittest.TestCase):
         self.assertIn("/spec/source/helm/parameters", c.calls[patches[0]][0][-1])
 
 
+class RecoverAndBroker(unittest.TestCase):
+    """AW-INF-059 review: recover reads image.tag from the synced commit, which a promotion made
+    from another clone may not be in this one; preconditions look for the broker dev.yaml names."""
+
+    def test_recover_names_a_synced_commit_it_cannot_read(self):
+        mod = load_argocd()
+        sts = {"status": {"updateRevision": "new"}}
+        pod = {"metadata": {"labels": {"controller-revision-hash": "old"}}}
+        mod.kubectl_json = lambda *a: sts if "statefulset" in a else pod if "pod" in a else {}
+        mod.stalled = lambda ns: "server: CrashLoopBackOff"
+        mod.app_state = lambda name: ("Synced", "Degraded", "f" * 40, {})
+        mod.have_commit = lambda c: False
+        mod.run = lambda *a, **k: self.fail("recover deleted something: %r" % (a,))
+        code, _, err = quiet(mod.recover, "dev")
+        self.assertEqual(code, 1)
+        self.assertIn("the synced commit ffffffffffff isn't in this clone or on origin", err)
+
+    def test_preconditions_look_for_the_shared_broker(self):
+        mod = load_argocd()
+        asked = []
+        ready = {"status": {"conditions": [{"type": "Ready", "status": "True"}]}}
+
+        def kj(*a):
+            if "kafka" in a:
+                asked.append(a[a.index("-n") + 1])
+                return {}
+            return ready
+        mod.kubectl_json = kj
+        mod.run = lambda *a, **k: SimpleNamespace(returncode=0, stdout="", stderr="")
+        code, _, err = quiet(mod.preconditions, "andara-dev")
+        self.assertEqual(code, 1)
+        self.assertEqual(asked, ["andara-shared"])
+        self.assertIn("no Ready kafka/andara-log in andara-shared", err)
+
+
 class Agreement(unittest.TestCase):
     """AW-INF-059 Observability: argocd-status's three answers (the tag's commit, Argo's synced
     revision, andara-0's digest against the digest that commit pins) and exit 1 on any mismatch."""
@@ -433,13 +468,24 @@ class StatusStalledOrWaiting(unittest.TestCase):
 class HelmInstallRefusal(unittest.TestCase):
     """AC-7: once the Application exists, helm-install exits 1, naming it, and changes nothing."""
 
+    def test_dev_without_a_tag_refuses_before_any_call(self):
+        """AW-INF-059: :dev no longer moves, so installing dev by hand names its build."""
+        with tempfile.TemporaryDirectory() as d:
+            log = os.path.join(d, "calls")
+            env = stub_bin(d, log, {"kubectl": "exit 0", "helm": "exit 0"})
+            p = subprocess.run([os.path.join(SCRIPTS, "helm_install.sh"), "dev", "andara-server", "dev", "", ""],
+                               capture_output=True, text=True, env=env)
+            self.assertEqual(p.returncode, 2, p.stderr)
+            self.assertIn("ENV=dev needs TAG=sha-<12>@sha256:<digest>", p.stderr)
+            self.assertFalse(os.path.exists(log) and open(log).read().strip())
+
     def test_refuses_and_touches_nothing(self):
         with tempfile.TemporaryDirectory() as d:
             log = os.path.join(d, "calls")
             env = stub_bin(d, log, {
                 "kubectl": 'case "$*" in "get crd applications.argoproj.io"|"-n argocd get application andara-dev") exit 0;; esac\nexit 0',
                 "helm": "exit 0"})
-            p = subprocess.run([os.path.join(SCRIPTS, "helm_install.sh"), "dev", "andara-server", "dev", "", ""],
+            p = subprocess.run([os.path.join(SCRIPTS, "helm_install.sh"), "dev", "andara-server", "sha-0123456789ab", "", "1"],
                                capture_output=True, text=True, env=env)
             self.assertEqual(p.returncode, 1, p.stderr)
             self.assertIn("make: helm-install: andara-dev is deployed by Argo CD (application andara-dev); see make argocd-status",
@@ -503,7 +549,7 @@ class IssuerRefusal(unittest.TestCase):
         with tempfile.TemporaryDirectory() as d:
             log = os.path.join(d, "calls")
             env = stub_bin(d, log, {"kubectl": kubectl, "helm": "exit 0"})
-            p = subprocess.run([os.path.join(SCRIPTS, "helm_install.sh"), "dev", "andara-server", "dev", "", ""],
+            p = subprocess.run([os.path.join(SCRIPTS, "helm_install.sh"), "dev", "andara-server", "sha-0123456789ab", "", "1"],
                                capture_output=True, text=True, env=env)
             self.assertEqual(p.returncode, 1, p.stderr)
             self.assertIn("ClusterIssuer letsencrypt is not Ready; run `make platform-up`", p.stderr)

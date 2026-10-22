@@ -213,7 +213,7 @@ def record(n, main_sha, image, rolled_back_to=None, pin_round=None):
              "run:     %s" % RUN_ID]
     if rolled_back_to:
         lines.append("rolled_back_to: %s" % rolled_back_to)
-        lines.append("pin_round: %s" % (pin_round if pin_round is not None else "none"))
+        lines.append("pin_round: %s" % (pin_round or "none"))
     return "\n".join(lines) + "\n"
 
 
@@ -256,7 +256,8 @@ def build_rollback(tag, pin_round, refs):
         text = set_value(text, PIN, int(pin_round))
     elif get_value(text, PIN):
         text = set_value(text, PIN, 0)
-    # The main commit the history tag's promotion was cut from.
+    # The main commit the history tag's promotion was cut from, against main as origin has it now.
+    git("fetch", "-q", REMOTE, "main")
     main_sha = git("merge-base", base, "%s/main" % REMOTE, check=False) or "?"
     n = next_number(refs)
     msg = "promote: dev-%d, rollback to %s%s\n\nrun %s\n" % (n, tag, ", pin_round %s" % pin_round if pin_round else "", RUN_ID)
@@ -297,6 +298,14 @@ def push(commit, n, before_dev):
 # --- Argo CD --------------------------------------------------------------------------------
 
 def refresh_and_wait(commit, pushed_at):
+    """argocd.py raises RuntimeError on a failed call; here that is a promote failure (exit 1)."""
+    try:
+        return _refresh_and_wait(commit, pushed_at)
+    except RuntimeError as e:
+        raise Fail("pushed %s, then Argo CD: %s" % (commit[:12], e))
+
+
+def _refresh_and_wait(commit, pushed_at):
     import argocd  # noqa: E402  (scripts/, beside this file)
     import kube  # noqa: E402
     name = "andara-dev"
@@ -401,7 +410,9 @@ def log(count=10):
     if not names:
         print("promote-log: no dev-<n> tags on %s; nothing has been promoted" % REMOTE)
     for t in names:
-        print(git("tag", "-l", "--format=%(refname:short)  -> %(*objectname:short)%0a%(contents)", t, raw=True))
+        # subject and body, not %(contents), which carries the tag's signature block.
+        print(git("tag", "-l", "--format=%(refname:short)  -> %(*objectname:short)%0a%(contents:subject)%0a%0a"
+                  "%(contents:body)", t, raw=True))
 
 
 def main():

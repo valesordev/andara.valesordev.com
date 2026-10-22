@@ -35,6 +35,12 @@ VALUES="deploy/helm/values/${ENVNAME}.yaml"
 NS="andara-${ENVNAME}"
 
 [[ -f "$VALUES" ]] || { echo "make: helm-install: no values file at $VALUES" >&2; exit 1; }
+# main's values/dev.yaml names `:dev`, which nothing moves since AW-INF-059: dev runs what the Git
+# tag `dev` pins. Installing dev by hand (the take-back path) names that build explicitly.
+if [[ "$ENVNAME" == "dev" && -z "$TAG_SET" ]]; then
+  echo "make: helm-install: ENV=dev needs TAG=sha-<12>@sha256:<digest>, the build \`make argocd-status\` or \`make promote-log\` shows; :dev no longer moves (AW-INF-059)" >&2
+  exit 2
+fi
 for tool in helm kubectl; do
   command -v "$tool" >/dev/null 2>&1 || { echo "make: helm-install: $tool not found" >&2; exit 1; }
 done
@@ -136,9 +142,9 @@ fi
 
 mapfile -t IMAGE_ARGS < <("$REPO/scripts/helm_image_args.sh" "$ENVNAME" "$IMAGE" "$TAG" "$IMAGE_SET" "$TAG_SET")
 
-# A moving tag (`:dev`) is pinned to the digest it names now. `pullPolicy: Always` only
-# re-resolves a tag when a container starts, so without this a rerun after `publish` moved
-# the tag renders an identical pod and leaves the old build running. With it, the pod rolls
+# A tag without a digest is pinned to the digest it names now. `pullPolicy: Always` only
+# re-resolves a tag when a container starts, so without this a rerun after the tag moved
+# renders an identical pod and leaves the old build running. With it, the pod rolls
 # exactly when the tag has moved, and the pod spec records which build it runs. `sha-` tags
 # are immutable and pass through; local's image is kind-loaded and never resolved.
 if [[ "$ENVNAME" != "local" ]]; then

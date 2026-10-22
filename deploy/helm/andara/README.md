@@ -174,8 +174,9 @@ revision and the running digest agree. The runbook is `docs/runbooks/promote.md`
 topics, the two Secrets, the snapshot PVC, the object store (`make objectstore-install`), and the cluster platform.
 The state projector's replica count is ignored (`ignoreDifferences`, `RespectIgnoreDifferences`), so
 `make projector-stop` holds until `projector-start`. **To take `dev` back:**
-`make argocd-uninstall ENV=dev`, then `ANDARA_BOOTSTRAP_OPERATOR=… make helm-install ENV=dev`; nothing restarts and
-no data moves.
+`make argocd-uninstall ENV=dev`, then `ANDARA_BOOTSTRAP_OPERATOR=… make helm-install ENV=dev TAG=<sha-…@sha256:…>`
+with the build `make argocd-status` shows (`helm-install ENV=dev` refuses without `TAG`: `:dev` no longer moves);
+nothing restarts and no data moves.
 
 **The broker (AW-INF-014).** `dev` and `prod` each run Apache Kafka `andara-log` in their namespace, three brokers
 under the Strimzi operator (ADR-0002 §7: Kafka in production); `local` stays broker-free. So a `dev` install is

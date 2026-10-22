@@ -62,8 +62,11 @@ def die(cmd, msg, code=1):
     sys.exit(code)
 
 
-def run(args, check=True, input=None):
-    p = subprocess.run(args, capture_output=True, text=True, input=input)
+def run(args, check=True, input=None, timeout=None):
+    try:
+        p = subprocess.run(args, capture_output=True, text=True, input=input, timeout=timeout)
+    except subprocess.TimeoutExpired:
+        raise RuntimeError("%s: no answer in %ds" % (" ".join(args[:4]), timeout))
     if check and p.returncode != 0:
         raise RuntimeError("%s: %s" % (" ".join(args[:4]), (p.stderr or p.stdout).strip()))
     return p
@@ -155,8 +158,8 @@ def preconditions(ns):
     k = kubectl_json("-n", kns, "get", "kafka", "andara-log") or {}
     ready = [c for c in k.get("status", {}).get("conditions", []) if c.get("type") == "Ready"]
     if not ready or ready[0].get("status") != "True":
-        hint = "make kafka-install ENV=dev" if kns == ns else "make shared-up"
-        die("install", "no Ready kafka/andara-log in %s; run `%s` first" % (kns, hint))
+        hint = "make kafka-install ENV=dev" if kns == ns else "the shared broker (AW-INF-055)"
+        die("install", "no Ready kafka/andara-log in %s; it comes from %s" % (kns, hint))
     say("preconditions: traefik, cert-manager, ClusterIssuers %s, kafka/andara-log in %s"
         % (", ".join(dict.fromkeys(("andara-ca", edge))), kns))
 
@@ -185,13 +188,24 @@ def secrets(ns):
 
 def tag_commit():
     """The commit the tag `dev` points at on origin, or "" when there's none. Fetched too, so
-    values_at() can read it."""
-    p = run(["git", "-C", REPO, "ls-remote", "origin", "refs/tags/%s^{}" % DEV_TAG], check=False)
+    values_at() can read it. Bounded, so a hung remote can't hold a caller's poll past its deadline."""
+    p = run(["git", "-C", REPO, "ls-remote", "origin", "refs/tags/%s^{}" % DEV_TAG], check=False, timeout=30)
     sha = p.stdout.split("\t", 1)[0].strip() if p.returncode == 0 else ""
     if sha:
         run(["git", "-C", REPO, "fetch", "-q", "--no-tags", "origin",
-             "+refs/tags/%s:refs/tags/%s" % (DEV_TAG, DEV_TAG)], check=False)
+             "+refs/tags/%s:refs/tags/%s" % (DEV_TAG, DEV_TAG)], check=False, timeout=60)
     return sha
+
+
+def have_commit(commit):
+    """Whether commit is in this clone, fetching it from origin when it isn't (a promotion made
+    from another clone)."""
+    if not commit:
+        return False
+    if run(["git", "-C", REPO, "cat-file", "-e", commit + "^{commit}"], check=False).returncode == 0:
+        return True
+    run(["git", "-C", REPO, "fetch", "-q", "--no-tags", "origin", commit], check=False, timeout=60)
+    return run(["git", "-C", REPO, "cat-file", "-e", commit + "^{commit}"], check=False).returncode == 0
 
 
 def values_at(commit):
@@ -491,6 +505,9 @@ def recover(env):
         if c["name"] == "server":
             want = c["image"]
     _, _, synced, _ = app_state(ns)
+    if not have_commit(synced):
+        die("recover", "the synced commit %s isn't in this clone or on origin; `git fetch origin` and retry"
+            % (synced[:12] or "?"))
     tag = image_tag_at(synced)
     if not tag or not want.endswith(":" + tag):
         die("recover", "updateRevision %s runs %s, not image.tag %s of the synced commit %s; refusing"
