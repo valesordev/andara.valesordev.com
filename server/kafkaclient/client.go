@@ -231,6 +231,15 @@ func (c Config) Check(topic string, err error) error {
 	return ae
 }
 
+// LineAllowed is the per-minute limit of the package's error line, for a
+// caller's own line about the same failure (a request path's line, which
+// carries its trace): whether the line for kind on c's client may be written
+// now, and how many were held back since the last. kind keys it apart from
+// the package's own line.
+func (c Config) LineAllowed(kind string) (suppressed int, ok bool) {
+	return c.Metrics.allowLine(c.ClientID, kind)
+}
+
 // failure counts an authentication or authorization failure and writes its
 // error line, at most one per client ID and reason per minute.
 func (c Config) failure(ae *AuthError, broker string) {

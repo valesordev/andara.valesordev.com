@@ -149,6 +149,73 @@ func TestProducer_ATopicRefusalIsAnAuthErrorNotADegradedPartition(t *testing.T) 
 	}
 }
 
+// Codex on PR #620: a refusal on a retry proves only that the retry wrote
+// nothing. When an earlier attempt of the same record left the process (here
+// the broker drops the connection under the first produce request, so its
+// fate is unknown), the Submit keeps the outcome-unknown settlement instead of
+// a bare AuthError, so its client_ref isn't dropped and a resubmission can't
+// append the Command twice. The refusal is still in the chain and counted.
+func TestProducer_ARefusalAfterAnEarlierAttemptKeepsTheOutcomeUnknown(t *testing.T) {
+	f := newSASLFixture(t)
+	const p = int32(19)
+	attempts := 0
+	f.c.ControlKey(int16(kmsg.Produce), func(req kmsg.Request) (kmsg.Response, error, bool) {
+		pr := req.(*kmsg.ProduceRequest)
+		if len(pr.Topics) == 0 || len(pr.Topics[0].Partitions) == 0 || pr.Topics[0].Partitions[0].Partition != p {
+			return nil, nil, false
+		}
+		f.c.KeepControl()
+		attempts++
+		if attempts == 1 {
+			return nil, errors.New("kfake: drop the connection mid-produce"), true
+		}
+		resp := pr.ResponseKind().(*kmsg.ProduceResponse)
+		st := kmsg.NewProduceResponseTopic()
+		st.Topic, st.TopicID = pr.Topics[0].Topic, pr.Topics[0].TopicID
+		sp := kmsg.NewProduceResponseTopicPartition()
+		sp.Partition, sp.ErrorCode = p, kerr.TopicAuthorizationFailed.Code
+		st.Partitions = append(st.Partitions, sp)
+		resp.Topics = append(resp.Topics, st)
+		return resp, nil, true
+	})
+
+	_, err := f.k.Produce(context.Background(), cmdOn(t, p))
+	var u *Unsettled
+	if !errors.As(err, &u) {
+		t.Fatalf("Produce = %v, want an Unsettled outcome (an earlier attempt may have landed)", err)
+	}
+	if !kafkaclient.Refused(err) {
+		t.Fatalf("Produce = %v, want the refusal in the chain", err)
+	}
+	<-u.Settled()
+	if _, ferr := u.Outcome(); !errors.Is(ferr, ErrOutcomeUnknown) {
+		t.Fatalf("settled as %v, want ErrOutcomeUnknown", ferr)
+	}
+	if got := testutil.ToFloat64(f.kc.Metrics.Failures.WithLabelValues("andara-server-ingress", kafkaclient.ReasonTopicUnauthorized)); got != 1 {
+		t.Fatalf("topic_unauthorized = %v, want 1", got)
+	}
+}
+
+// Codex on PR #620: the Submit's trace-bearing refusal line goes through the
+// same per-minute limit as the package's own line, so a revoked ACL under
+// steady Submits writes one a minute, not one per Submit.
+func TestProducer_TheRefusalLineIsRateLimited(t *testing.T) {
+	f := newSASLFixture(t)
+	const p = int32(11)
+	f.refuseProduces(p, kerr.TopicAuthorizationFailed.Code)
+	for range 5 {
+		if _, err := f.k.Produce(context.Background(), cmdOn(t, p)); !kafkaclient.Refused(err) {
+			t.Fatalf("Produce = %v", err)
+		}
+	}
+	if n := strings.Count(f.logs.String(), "command produce refused"); n != 1 {
+		t.Fatalf("%d refusal lines for 5 refused Submits within a minute, want 1:\n%s", n, f.logs.String())
+	}
+	if got := testutil.ToFloat64(f.kc.Metrics.Failures.WithLabelValues("andara-server-ingress", kafkaclient.ReasonTopicUnauthorized)); got != 5 {
+		t.Fatalf("topic_unauthorized = %v, want every refusal (5)", got)
+	}
+}
+
 // AC-12: with SASL on and the tap attached, the tap follows every connection
 // (the SCRAM exchange included, tapLoss stays 0), a produce to a healthy
 // Partition is acknowledged, and a NOT_ENOUGH_REPLICAS the broker answers

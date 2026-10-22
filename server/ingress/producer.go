@@ -439,17 +439,22 @@ func (k *KafkaProducer) Produce(ctx context.Context, cmd *logv1.LoggedCommand) (
 	retries := k.retries.Load() - retriesBefore
 	span.SetAttributes(attribute.Int64("retries", int64(retries)), attribute.Float64("acks_wait_ms", float64(wait.Microseconds())/1000))
 	if err != nil && fired {
-		// A broker that refuses the principal the topic wrote nothing: the
-		// record is not in the log, the Partition is healthy, and a retry
-		// would be refused again (AW-SRV-044 AC-8).
+		// A broker that refuses the principal the topic wrote nothing on the
+		// attempt it refused, the Partition is healthy, and a retry would be
+		// refused again (AW-SRV-044 AC-8).
 		if ae := k.kc.Check(k.topic, err); kafkaclient.Refused(ae) {
 			kafkaclient.SpanError(span, ae)
-			attrs := []slog.Attr{slog.Int("partition", int(partition)), slog.String("reason", kafkaclient.ErrorName(ae)), slog.String("error", ae.Error())}
-			if sc := trace.SpanContextFromContext(ctx); sc.HasTraceID() {
-				attrs = append(attrs, slog.String("trace_id", sc.TraceID().String()))
+			k.logRefusal(ctx, partition, ae)
+			// Only that attempt left the process, so the record is not in
+			// the log. If an earlier one left too, its acknowledgement may
+			// have been lost after it landed: the refusal doesn't rule it
+			// out, so the Submit keeps the outcome-unknown settlement below
+			// (Codex on PR #620). Process-wide, like settle's counter, so
+			// concurrent produces err towards unknown.
+			if k.written.Load()-writtenBefore <= 1 {
+				return command.Accepted{}, ae
 			}
-			k.log.LogAttrs(ctx, slog.LevelError, "command produce refused: the principal may not write the commands topic", attrs...)
-			return command.Accepted{}, ae
+			err = ae
 		}
 	}
 	if err != nil {
@@ -491,6 +496,24 @@ func (k *KafkaProducer) Produce(ctx context.Context, cmd *logv1.LoggedCommand) (
 	}
 	span.SetAttributes(attribute.Int64("offset", rec.Offset))
 	return command.Accepted{Partition: rec.Partition, Offset: rec.Offset}, nil
+}
+
+// logRefusal is the Submit's error line for a refused produce, with its
+// trace; one a minute, the kafkaclient line's limit, so a revoked ACL under
+// steady Submits doesn't write one per Submit.
+func (k *KafkaProducer) logRefusal(ctx context.Context, partition int32, ae error) {
+	suppressed, ok := k.kc.LineAllowed(kafkaclient.ErrorName(ae) + "/submit")
+	if !ok {
+		return
+	}
+	attrs := []slog.Attr{slog.Int("partition", int(partition)), slog.String("reason", kafkaclient.ErrorName(ae)), slog.String("error", ae.Error())}
+	if sc := trace.SpanContextFromContext(ctx); sc.HasTraceID() {
+		attrs = append(attrs, slog.String("trace_id", sc.TraceID().String()))
+	}
+	if suppressed > 0 {
+		attrs = append(attrs, slog.Int("suppressed", suppressed))
+	}
+	k.log.LogAttrs(ctx, slog.LevelError, "command produce refused: the principal may not write the commands topic", attrs...)
 }
 
 // classify names a failed produce. A full buffer is pending_full. For
