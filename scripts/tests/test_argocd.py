@@ -207,6 +207,41 @@ class RecoverAndBroker(unittest.TestCase):
         self.assertEqual(code, 1)
         self.assertIn("the synced commit ffffffffffff isn't in this clone or on origin", err)
 
+    def test_have_commit_fetches_a_commit_only_origin_has(self):
+        d = tempfile.mkdtemp()
+        self.addCleanup(lambda: subprocess.run(["rm", "-rf", d]))
+        ident = ["-c", "user.name=t", "-c", "user.email=t@example.invalid"]
+
+        def g(cwd, *a):
+            return subprocess.run(["git", *ident, *a], cwd=cwd, capture_output=True, text=True, check=True).stdout.strip()
+        origin, work, other = (os.path.join(d, n) for n in ("origin.git", "work", "other"))
+        g(d, "init", "-q", "--bare", origin)
+        g(d, "init", "-q", work)
+        g(d, "init", "-q", other)
+        empty = "4b825dc642cb6eb9a060e54bf8d69288fbee4904"
+        only_origin = g(other, "commit-tree", empty, "-m", "promotion made from another clone")
+        g(other, "push", "-q", origin, only_origin + ":refs/tags/dev")
+        g(work, "remote", "add", "origin", origin)
+        mod = load_argocd()
+        mod.REPO = work
+        self.assertTrue(mod.have_commit(only_origin))
+        self.assertFalse(mod.have_commit("f" * 40))
+        self.assertFalse(mod.have_commit(""))
+
+    def test_run_names_a_call_that_doesnt_answer(self):
+        mod = load_argocd()
+        with self.assertRaises(RuntimeError) as e:
+            mod.run(["sleep", "5"], timeout=0.2)
+        self.assertIn("no answer in", str(e.exception))
+
+    def test_uninstall_names_the_tag_dev_needs(self):
+        c = Cluster(app=None)
+        mod = with_cluster(load_argocd(), c)
+        mod.run = lambda *a, **k: SimpleNamespace(returncode=0, stdout="", stderr="")
+        code, out, _ = quiet(mod.uninstall, "dev")
+        self.assertEqual(code, 0)
+        self.assertIn("`make helm-install ENV=dev TAG=<the build make argocd-status showed>` takes them back", out)
+
     def test_preconditions_look_for_the_shared_broker(self):
         mod = load_argocd()
         asked = []
@@ -222,7 +257,7 @@ class RecoverAndBroker(unittest.TestCase):
         code, _, err = quiet(mod.preconditions, "andara-dev")
         self.assertEqual(code, 1)
         self.assertEqual(asked, ["andara-shared"])
-        self.assertIn("no Ready kafka/andara-log in andara-shared", err)
+        self.assertIn("no Ready kafka/andara-log in andara-shared; it comes from the shared broker (AW-INF-055)", err)
 
 
 class Agreement(unittest.TestCase):
@@ -477,6 +512,11 @@ class HelmInstallRefusal(unittest.TestCase):
                                capture_output=True, text=True, env=env)
             self.assertEqual(p.returncode, 2, p.stderr)
             self.assertIn("ENV=dev needs TAG=sha-<12>@sha256:<digest>", p.stderr)
+            self.assertFalse(os.path.exists(log) and open(log).read().strip())
+            # A TAG given, but the frozen :dev, is refused the same way.
+            p = subprocess.run([os.path.join(SCRIPTS, "helm_install.sh"), "dev", "andara-server", "dev", "", "1"],
+                               capture_output=True, text=True, env=env)
+            self.assertEqual(p.returncode, 2, p.stderr)
             self.assertFalse(os.path.exists(log) and open(log).read().strip())
 
     def test_refuses_and_touches_nothing(self):

@@ -91,6 +91,7 @@ class Promote(unittest.TestCase):
             self.waited.append(commit)
             return 2.0, {"tag": commit, "argo": commit, "running": DIGEST, "mismatch": []}
         mod.image_digest = image_digest
+        mod.real_refresh_and_wait = mod.refresh_and_wait
         mod.refresh_and_wait = refresh_and_wait
         return mod
 
@@ -175,6 +176,19 @@ class Promote(unittest.TestCase):
         self.assertEqual(code, 0)
         self.assertLess(out.index("promotion dev-2"), out.index("promotion dev-1"))
         self.assertIn("main:    " + self.main2, out)
+        self.assertNotIn("BEGIN SSH SIGNATURE", out)
+
+    def test_an_argo_call_failure_after_the_push_is_exit_1_with_the_run_id(self):
+        mod = self.mod()
+
+        def boom(commit, pushed_at):
+            raise RuntimeError("kubectl annotate: connection refused")
+        # The module's own wrapper, around an Argo step that raises as argocd.run does.
+        mod.refresh_and_wait = mod.real_refresh_and_wait
+        mod._refresh_and_wait = boom
+        code, _, err = self.run_promote("dev", self.main1, "", "", mod=mod)
+        self.assertEqual(code, 1, err)
+        self.assertRegex(err, r"pushed [0-9a-f]{12}, then Argo CD: kubectl annotate: connection refused run=[0-9a-f]{8}")
 
     # --- AC-2 -----------------------------------------------------------------------------
 

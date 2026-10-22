@@ -480,7 +480,7 @@ argocd-ui:
 argocd-recover:
 	@$(PY) $(SCRIPTS)/argocd.py recover "$(ENV)"
 
-## argocd-uninstall: remove the andara-dev Application without cascading and hand its resources back to Helm; `make helm-install ENV=dev` then works again — ENV=dev
+## argocd-uninstall: remove the andara-dev Application without cascading and hand its resources back to Helm; `make helm-install ENV=dev TAG=<sha-…@sha256:…>` then works again — ENV=dev
 argocd-uninstall:
 	@$(PY) $(SCRIPTS)/argocd.py uninstall "$(ENV)"
 

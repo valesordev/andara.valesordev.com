@@ -37,7 +37,7 @@ NS="andara-${ENVNAME}"
 [[ -f "$VALUES" ]] || { echo "make: helm-install: no values file at $VALUES" >&2; exit 1; }
 # main's values/dev.yaml names `:dev`, which nothing moves since AW-INF-059: dev runs what the Git
 # tag `dev` pins. Installing dev by hand (the take-back path) names that build explicitly.
-if [[ "$ENVNAME" == "dev" && -z "$TAG_SET" ]]; then
+if [[ "$ENVNAME" == "dev" ]] && { [[ -z "$TAG_SET" ]] || ! [[ "$TAG" =~ ^sha-[0-9a-f]{12}(@sha256:[0-9a-f]{64})?$ ]]; }; then
   echo "make: helm-install: ENV=dev needs TAG=sha-<12>@sha256:<digest>, the build \`make argocd-status\` or \`make promote-log\` shows; :dev no longer moves (AW-INF-059)" >&2
   exit 2
 fi

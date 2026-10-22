@@ -545,7 +545,7 @@ def uninstall(env):
             run(kube.kubectl("-n", ns, "annotate", ref, "meta.helm.sh/release-name=andara",
                              "meta.helm.sh/release-namespace=" + ns, "--overwrite"))
             handed += 1
-    say("%d resource(s) in %s given Helm's ownership metadata; `make helm-install ENV=%s` takes them back" % (handed, ns, env))
+    say("%d resource(s) in %s given Helm's ownership metadata; `make helm-install ENV=%s%s` takes them back" % (handed, ns, env, " TAG=<the build make argocd-status showed>" if env == "dev" else ""))
 
 
 def main():
