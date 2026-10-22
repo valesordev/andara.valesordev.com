@@ -99,7 +99,15 @@ func TestDeployKeys_InvalidIsRefused(t *testing.T) {
 	if _, err := Parse([]string{"--deploy-control-socket="}, withTLS(nil), io.Discard); err == nil || !strings.Contains(err.Error(), "deploy.control_socket") {
 		t.Errorf("empty control_socket: err = %v, want one naming deploy.control_socket", err)
 	}
+	if _, err := Parse([]string{"--deploy-image-tag="}, withTLS(nil), io.Discard); err == nil || !strings.Contains(err.Error(), "deploy.image_tag") {
+		t.Errorf("empty image_tag: err = %v, want one naming deploy.image_tag", err)
+	}
+	// The edges that are legal: a 200-character tag, and zero for every
+	// duration (no lead, no drain wait, no expected time back).
 	if _, err := Parse([]string{"--deploy-image-tag=" + strings.Repeat("a", 200)}, withTLS(nil), io.Discard); err != nil {
 		t.Errorf("a 200-character image tag is legal: %v", err)
+	}
+	if _, err := Parse([]string{"--deploy-notice-lead=0s", "--deploy-admit-wait=0s", "--deploy-expected-back=0s"}, withTLS(nil), io.Discard); err != nil {
+		t.Errorf("zero durations are legal: %v", err)
 	}
 }

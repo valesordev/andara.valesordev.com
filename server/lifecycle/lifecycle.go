@@ -226,8 +226,12 @@ func (s *Service) snapshot(ctx context.Context) (*adminv1.PrepareStopResponse, e
 	case round = <-ch:
 	case <-wctx.Done():
 		// Withdrawn, so no round is taken later for a pre-stop that reported
-		// TIMEOUT: the previous complete round stays the recovery point.
-		o.Rounds.CancelForce(ch)
+		// TIMEOUT. A boundary that already took it runs the round to its end
+		// untagged: a valid recovery point, newer than the previous one.
+		if !o.Rounds.CancelForce(ch) {
+			o.Log.LogAttrs(ctx, slog.LevelWarn, "prestop: the round was already taken when the budget ran out; it completes untagged",
+				slog.String("trace_id", trace.SpanContextFromContext(ctx).TraceID().String()))
+		}
 		return failed(adminv1.PrepareStopOutcome_PREPARE_STOP_OUTCOME_TIMEOUT), fmt.Errorf("the round did not complete within snapshot.upload_timeout: %w", wctx.Err())
 	}
 	// The tag shares the round's budget: snapshot.upload_timeout is one term

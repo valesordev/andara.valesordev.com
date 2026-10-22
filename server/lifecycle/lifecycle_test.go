@@ -37,6 +37,9 @@ type fakes struct {
 	slept   []time.Duration
 	forces  int
 	refused bool
+	// admitting, when set, runs inside WaitAdmitted: the time the drain
+	// takes, for the clock tests.
+	admitting func()
 }
 
 func (f *fakes) step(s string) { f.mu.Lock(); f.steps = append(f.steps, s); f.mu.Unlock() }
@@ -51,7 +54,13 @@ func (f *fakes) RefuseRestarting() {
 	f.mu.Unlock()
 	f.step("refuse")
 }
-func (f *fakes) WaitAdmitted(context.Context) bool { f.step("admitted"); return true }
+func (f *fakes) WaitAdmitted(context.Context) bool {
+	if f.admitting != nil {
+		f.admitting()
+	}
+	f.step("admitted")
+	return true
+}
 func (f *fakes) Force() <-chan tickloop.ForcedRound {
 	f.mu.Lock()
 	f.forces++
@@ -236,6 +245,27 @@ func TestPrepareStopTimesOutWaitingForTheRound(t *testing.T) {
 	if !canceled {
 		t.Fatal("the timed-out Force request was not withdrawn")
 	}
+	if strings.Contains(h.logs.String(), "already taken") {
+		t.Fatalf("a withdrawn request is logged as taken:\n%s", h.logs.String())
+	}
+}
+
+// A request the boundary took before the budget ran out can't be withdrawn:
+// pre-stop still reports TIMEOUT, and says the round completes untagged.
+func TestPrepareStopTimeoutAfterTheBoundaryTookTheRoundSaysSo(t *testing.T) {
+	t.Parallel()
+	canceled := false
+	h := newHarness(t, goodRound(), func(o *lifecycle.Options) {
+		o.UploadTimeout = 20 * time.Millisecond
+		o.Rounds = neverRounds{canceled: &canceled, taken: true}
+	})
+	if resp := h.call(t); resp.GetOutcome() != adminv1.PrepareStopOutcome_PREPARE_STOP_OUTCOME_TIMEOUT {
+		t.Fatalf("outcome %v, want TIMEOUT", resp.GetOutcome())
+	}
+	line := logLine(t, h.logs, "prestop: the round was already taken")
+	if !strings.Contains(line, `"level":"WARN"`) || strings.Contains(line, `"trace_id":"00000000000000000000000000000000"`) {
+		t.Fatalf("want a warn line under the round's trace: %s", line)
+	}
 }
 
 // AC-5: a tag cut short by a store error is STORE_ERROR and names no round,
@@ -322,12 +352,17 @@ func (l lateRounds) Force() <-chan tickloop.ForcedRound {
 }
 func (lateRounds) CancelForce(<-chan tickloop.ForcedRound) bool { return false }
 
-type neverRounds struct{ canceled *bool }
+// neverRounds never delivers a round. taken makes CancelForce find the
+// request already taken by a boundary.
+type neverRounds struct {
+	canceled *bool
+	taken    bool
+}
 
 func (neverRounds) Force() <-chan tickloop.ForcedRound { return make(chan tickloop.ForcedRound) }
 func (n neverRounds) CancelForce(<-chan tickloop.ForcedRound) bool {
 	*n.canceled = true
-	return true
+	return !n.taken
 }
 
 func (*fakes) CancelForce(<-chan tickloop.ForcedRound) bool { return false }
@@ -504,7 +539,8 @@ func TestPrepareStopLogsACommitThatNeverComes(t *testing.T) {
 }
 
 // AC-1's refused_ms counts from the refusal and duration_ms from the start,
-// so the notice lead is in duration_ms only (lifecycle.md).
+// so the notice lead is in duration_ms only, and the drain of admitted
+// Submits is in both (lifecycle.md).
 func TestPrepareStopRefusedMsStartsAtTheRefusal(t *testing.T) {
 	t.Parallel()
 	var mu sync.Mutex
@@ -524,8 +560,10 @@ func TestPrepareStopRefusedMsStartsAtTheRefusal(t *testing.T) {
 			return goodRound().Tick
 		}
 	})
+	// The drain takes 3s.
+	h.f.admitting = func() { mu.Lock(); clock = clock.Add(3 * time.Second); mu.Unlock() }
 	resp := h.call(t)
-	if resp.GetDurationMs() != 10_020 || resp.GetRefusedMs() != 20 {
-		t.Fatalf("duration_ms %d refused_ms %d, want 10020 and 20 (notice lead 10s, then 20ms to the commit)", resp.GetDurationMs(), resp.GetRefusedMs())
+	if resp.GetDurationMs() != 13_020 || resp.GetRefusedMs() != 3_020 {
+		t.Fatalf("duration_ms %d refused_ms %d, want 13020 and 3020 (notice lead 10s, the drain 3s, then 20ms to the commit)", resp.GetDurationMs(), resp.GetRefusedMs())
 	}
 }
