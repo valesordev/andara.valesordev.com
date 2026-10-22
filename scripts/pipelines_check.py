@@ -54,8 +54,9 @@ WRITER = re.compile(r"^otelcol\.exporter\.|\.write$")
 # Grafana Cloud tokens, Slack webhooks, private keys and basic auth inside a URL.
 SECRET = re.compile(r"glsa_|glc_|https://hooks\.slack\.com/|-----BEGIN [A-Z ]*PRIVATE KEY-----"
                     r"|[a-z][a-z0-9+.-]*://[^/\s\"'@]+:[^/\s\"'@]+@")
-CREDENTIAL = re.compile(r"\b(password|bearer_token|api_key|client_secret|authorization|credentials|headers"
-                        r"|token|secret)(_file)?\s*=\s*")
+# Any attribute whose name ends in one of these (http_headers, sigv4's secret_key and access_key too).
+CREDENTIAL = re.compile(r"\b\w*?(password|bearer_token|api_key|client_secret|authorization|credentials|headers"
+                        r"|secret_key|access_key|token|secret)(_file)?\s*=\s*")
 PROXY = re.compile(r"\bproxy_[a-z_]+\s*=")
 URL_ATTR = re.compile(r"\burl\s*=\s*")
 SYS_ENV = re.compile(r"\bsys\s*\.\s*env\s*\(")

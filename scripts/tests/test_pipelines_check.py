@@ -68,6 +68,11 @@ BREAKS = [
     ("a password file", _auth(['username      = "1"', 'password_file = "/var/run/secrets/token"']), "credential"),
     ("a literal bearer token", _replace(AUTH, AUTH + '\t\tbearer_token = "abc"\n'), "credential"),
     ("a header map", _replace(AUTH, AUTH + '\t\theaders = {"Authorization" = "Bearer x"}\n'), "credential"),
+    ("scrape http_headers", _replace("\ttargets    = discovery.relabel.shared_kafka.output\n",
+                                     '\ttargets      = discovery.relabel.shared_kafka.output\n'
+                                     '\thttp_headers = {"X-Key" = ["abc"]}\n'), "credential"),
+    ("a sigv4 secret key", _replace(AUTH, AUTH + '\n\t\tsigv4 {\n\t\t\taccess_key = "AKIA0000"\n\t\t\tsecret_key = "s3cr3t"\n\t\t}\n'),
+     "credential"),
     ("a templatefile call", _replace('names = ["andara-shared"]', 'names = [templatefile("x", {})]'), "templatefile"),
     ("a remote_write to Grafana Cloud", _replace(pipelines_check.RECEIVER, OTHER_URL), "remote_write"),
     ("a second remote_write endpoint", _replace(AUTH, AUTH + '\t}\n\n\tendpoint {\n\t\turl = "%s"\n' % OTHER_URL),
