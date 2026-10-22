@@ -131,6 +131,12 @@ alerts:
 observability:
   annotations: true
 
+# Release markers (docs/specs/deploy/lifecycle.md): rolled_back_to names the tag a rollback
+# returned to, empty otherwise. No template reads it; it's the record in the values. On dev a
+# rollback promotion commits it (`make promote ENV=dev TAG=dev-<n>`, AW-INF-059).
+release:
+  rolled_back_to: ""
+
 # The in-cluster snapshot object store (AW-INF-025). server.snapshot.s3_endpoint names this
 # Service where server.snapshot.store is s3; helm-test holds the two together.
 objectstore:

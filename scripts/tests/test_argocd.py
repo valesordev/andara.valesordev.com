@@ -95,7 +95,7 @@ class EnvGuard(unittest.TestCase):
             mod = with_cluster(load_argocd(), c)
             code, _, err = quiet(mod.install, env)
             self.assertEqual(code, 2, env)
-            self.assertIn("only dev follows main", err)
+            self.assertIn("only dev is on Argo CD", err)
             self.assertEqual(c.calls, [], "%s: %s" % (env, c.calls))
 
     def test_every_env_command_refuses_prod(self):
@@ -147,40 +147,101 @@ class Secrets(unittest.TestCase):
         self.assertFalse(any("s3cret" in a for a in args), args)
 
 
-class Seed(unittest.TestCase):
-    """The first render is already pinned; an image.tag Image Updater set is never overwritten."""
+def AGREED(ns):
+    """agreement() with the three answers agreeing, for status tests about something else."""
+    return {"tag": "abc123", "argo": "abc123", "pinned": "", "running": "", "mismatch": []}
 
-    def test_a_new_application_is_created_seeded_and_without_sync(self):
+
+class Application(unittest.TestCase):
+    """AW-INF-059: the Application follows the tag `dev`, which must exist before it's applied, and
+    carries no helm.parameters, so nothing outside the tagged commit decides the render."""
+
+    def mod(self, cluster, tag="c0ffee" * 6 + "abcd"):
+        mod = with_cluster(load_argocd(), cluster)
+        mod.tag_commit = lambda: tag
+        return mod
+
+    def test_no_tag_refuses_and_applies_nothing(self):
         c = Cluster(app=None)
-        mod = with_cluster(load_argocd(), c)
-        quiet(mod.application, "andara-dev")
-        created = c.made("kubectl", "create", "-f", "-")
-        self.assertEqual(len(created), 1)
-        first = json.loads(created[0][1])
-        self.assertNotIn("syncPolicy", first["spec"])
-        self.assertEqual(first["spec"]["source"]["helm"]["parameters"],
-                         [{"name": "image.tag", "value": "dev@sha256:" + "ab" * 32}])
-        # The file turns sync on only after the create.
-        order = [i for i, (a, _) in enumerate(c.calls) if "create" in a or "--server-side" in a]
-        self.assertEqual(order, sorted(order))
-        self.assertTrue(c.made("apply", "--server-side"))
+        code, _, err = quiet(self.mod(c, tag="").application, "andara-dev")
+        self.assertEqual(code, 1)
+        self.assertIn("make promote ENV=dev SHA=<main sha>", err)
+        self.assertEqual(c.made("apply"), [])
 
-    def test_an_existing_parameter_is_kept(self):
-        app = {"spec": {"source": {"helm": {"parameters": [{"name": "image.tag", "value": "dev@sha256:" + "cd" * 32}]}}}}
-        c = Cluster(app=app)
-        mod = with_cluster(load_argocd(), c)
-        quiet(mod.application, "andara-dev")
-        self.assertEqual(c.made("create"), [])
+    def test_a_new_application_is_the_file_alone(self):
+        c = Cluster(app=None)
+        code, out, _ = quiet(self.mod(c).application, "andara-dev")
+        self.assertEqual(code, 0)
         self.assertEqual(c.made("patch"), [])
+        self.assertEqual(c.made("create"), [])
+        applies = c.made("apply", "--server-side")
+        self.assertEqual(len(applies), 1)
+        self.assertIn(os.path.join(REPO, "deploy", "argocd", "andara-dev.yaml"), applies[0][0])
+        self.assertIn("follows tag dev", out)
         self.assertEqual([a for a, _ in c.calls if a[0].endswith("image_digest.sh")], [])
 
-    def test_an_application_found_without_the_parameter_is_seeded_before_the_file(self):
-        c = Cluster(app={"spec": {"source": {"helm": {}}}, "metadata": {"name": "andara-dev"}})
-        mod = with_cluster(load_argocd(), c)
-        quiet(mod.application, "andara-dev")
+    def test_image_updater_s_parameter_is_removed_before_the_file(self):
+        app = {"spec": {"source": {"helm": {"parameters": [{"name": "image.tag", "value": "dev@sha256:" + "cd" * 32}]}}}}
+        c = Cluster(app=app)
+        quiet(self.mod(c).application, "andara-dev")
         patches = [i for i, (a, _) in enumerate(c.calls) if "patch" in a]
         applies = [i for i, (a, _) in enumerate(c.calls) if "--server-side" in a]
         self.assertTrue(patches and applies and max(patches) < min(applies), c.calls)
+        self.assertIn("/spec/source/helm/parameters", c.calls[patches[0]][0][-1])
+
+
+class Agreement(unittest.TestCase):
+    """AW-INF-059 Observability: argocd-status's three answers (the tag's commit, Argo's synced
+    revision, andara-0's digest against the digest that commit pins) and exit 1 on any mismatch."""
+
+    TAG = "a" * 40
+    DIGEST = "sha256:" + "ab" * 32
+
+    def mod(self, argo, running, pinned="sha-0123456789ab@" + DIGEST, tag=TAG):
+        mod = load_argocd()
+        mod.tag_commit = lambda: tag
+        mod.image_tag_at = lambda c: pinned if c == tag else ""
+        mod.app_state = lambda name: ("Synced", "Healthy", argo, {"x": 1})
+        mod.running_digest = lambda ns: running
+        return mod
+
+    def test_one_answer(self):
+        a = self.mod(self.TAG, self.DIGEST).agreement("andara-dev")
+        self.assertEqual(a["mismatch"], [])
+        self.assertEqual(a["pinned"], self.DIGEST)
+
+    def test_argo_behind_the_tag(self):
+        a = self.mod("b" * 40, self.DIGEST).agreement("andara-dev")
+        self.assertEqual(len(a["mismatch"]), 1)
+        self.assertIn("argo synced bbbbbbbbbbbb, tag dev is aaaaaaaaaaaa", a["mismatch"][0])
+
+    def test_running_another_digest(self):
+        a = self.mod(self.TAG, "sha256:" + "cd" * 32).agreement("andara-dev")
+        self.assertIn("andara-0 runs", a["mismatch"][0])
+
+    def test_an_unpinned_tag_disagrees(self):
+        a = self.mod(self.TAG, self.DIGEST, pinned="dev").agreement("andara-dev")
+        self.assertIn("pins no digest", a["mismatch"][0])
+
+    def test_no_tag(self):
+        a = self.mod(self.TAG, self.DIGEST, tag="").agreement("andara-dev")
+        self.assertEqual(a["mismatch"], ["no tag dev on origin"])
+
+    def test_status_exits_1_on_a_mismatch_while_synced_and_healthy(self):
+        mod = self.mod("b" * 40, self.DIGEST)
+        mod.kubectl_json = lambda *a: {}
+        mod.active_packs = lambda ns: [("andara.core", 1)]
+        mod.stalled = lambda ns: None
+        code, out, _ = quiet(mod.status, "dev")
+        self.assertEqual(code, 1)
+        self.assertIn("disagree     argo synced", out)
+
+    def test_running_digest_reads_the_server_container_s_image_id(self):
+        mod = load_argocd()
+        mod.kubectl_json = lambda *a: {"status": {"containerStatuses": [
+            {"name": "sidecar", "imageID": "x@sha256:" + "11" * 32},
+            {"name": "server", "imageID": "ghcr.io/valesordev/andara-server@" + self.DIGEST}]}}
+        self.assertEqual(mod.running_digest("andara-dev"), self.DIGEST)
 
 
 class Stalled(unittest.TestCase):
@@ -281,6 +342,7 @@ class StatusWaitingOk(unittest.TestCase):
     def run_status(self, waiting_ok, sync="Synced", health="Progressing"):
         mod = load_argocd()
         mod.app_state = lambda name: (sync, health, "abc123", {"x": 1})
+        mod.agreement = AGREED
         mod.kubectl_json = lambda *a: {}
         mod.active_packs = lambda ns: [("andara.core", 1)]
         mod.stalled = lambda ns: None
@@ -306,6 +368,7 @@ class StatusStalledOrWaiting(unittest.TestCase):
     def run_status(self, waiting_ok, stuck, content_waiting):
         mod = load_argocd()
         mod.app_state = lambda name: ("Synced", "Progressing", "abc123", {"x": 1})
+        mod.agreement = AGREED
         mod.kubectl_json = lambda *a: {}
         mod.active_packs = lambda ns: [("andara.core", 1)]
         mod.stalled = lambda ns: stuck
@@ -357,6 +420,7 @@ class StatusStalledOrWaiting(unittest.TestCase):
         asked = []
         mod = load_argocd()
         mod.app_state = lambda name: ("Synced", "Healthy", "abc123", {"x": 1})
+        mod.agreement = AGREED
         mod.kubectl_json = lambda *a: {}
         mod.active_packs = lambda ns: [("andara.core", 1)]
         mod.stalled = lambda ns: None

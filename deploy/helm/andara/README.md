@@ -17,8 +17,7 @@ chart, and one `Deployment` per projector. Story: [AW-INF-003](https://github.co
 | `../tests/alerts_test.yaml` | `promtool test rules` over `files/alerts.yaml`: the compose shape and the per-namespace cluster shape | yes, with every rule change |
 | `../values/{local,dev,prod}.yaml` | per-environment values | yes |
 | `files/content`, `files/content-templates` | symlinks to `testdata/content/valid` and `content/core/templates`, which the chart renders as ConfigMaps when `contentVolume.render` is set | no — edit the targets |
-| `../../argocd/andara-dev.yaml` | the Argo CD Application that makes `dev` follow `main` (AW-INF-019) | yes |
-| `../../argocd/andara-dev-image-updater.yaml` | Image Updater: `:dev` by digest, written to the Application's `image.tag` | yes |
+| `../../argocd/andara-dev.yaml` | the Argo CD Application that makes `dev` follow the Git tag `dev` (AW-INF-019, AW-INF-059) | yes |
 | `../../argocd/argocd-values.yaml` | Argo CD's settings: annotation tracking, the Ingress health check | yes |
 | `../../k8s/cert-manager/andara-ca.yaml` | the private CA chain (cluster-scoped; applied by `make platform-up` after the CA root restore, not by the chart) | yes |
 | `../../k8s/cert-manager/letsencrypt.yaml` | the `letsencrypt` and `letsencrypt-staging` ClusterIssuers, DNS-01 through Cloudflare (applied by `make platform-up` when `CLOUDFLARE_API_TOKEN` is set) | yes |
@@ -34,7 +33,7 @@ chart, and one `Deployment` per projector. Story: [AW-INF-003](https://github.co
 | `make values-schema` / `values-schema-check` | regenerate / verify the generated files and hold `keys.yaml` against `server/**/*.go`; check is in `make check` |
 | `make helm-test` | render-level assertions (PVC retention, no secret material, schema rejections, probes, ordinal→Partitions); in `make check` |
 | `make image [TAG=]` | build `andara-server:<tag>` from `deploy/compose/Dockerfile.server` |
-| `make image-publish` | build for linux/amd64 and push `ghcr.io/valesordev/andara-server:sha-<12 hex>` then `:dev`; what `.github/workflows/publish.yaml` runs on every merge to `main` (AW-INF-013) |
+| `make image-publish` | build for linux/amd64 and push `ghcr.io/valesordev/andara-server:sha-<12 hex>`, printing its digest; nothing moves `:dev` (AW-INF-059); what `.github/workflows/publish.yaml` runs on every merge to `main` (AW-INF-013) |
 | `make kafka-install ENV=<dev\|prod>` | Kafka `andara-log` (`deploy/k8s/kafka/`) in `andara-<env>`, waits for Ready, applies `deploy/kafka/topics.yaml` through the `rpk` toolbox; refuses unless `platform-up`'s Strimzi watches the namespace (it watches `andara-shared` only; the shared broker is AW-INF-055's) |
 | `make kafka-broker-bounce ENV=<env>` | delete one broker; after it rejoins with every partition in sync, assert once that the server never left Ready, never logged `command log unreachable`, and refused no Submit |
 | `make image-check ENV=<env> [TAG=dev] [REGISTRY_ONLY=1]` | prove a published tag pulls anonymously (and a `sha-` tag carries its commit), then from the cluster with a throwaway `/bin/true` pod in `andara-<env>` |
@@ -44,8 +43,9 @@ chart, and one `Deployment` per projector. Story: [AW-INF-003](https://github.co
 | `make platform-up [PROFILE=box\|ci] [REQUIRE_LETSENCRYPT=1]` | install and reconcile the platform at `deploy/platform/versions.yaml`'s pins against `ANDARA_KUBE_CONTEXT` (default `kind-andara`): a release whose version or values differ is upgraded, one that matches prints `unchanged`. `box`: cert-manager, the CA root restore, `andara-ca`, the `letsencrypt` issuers (skipped without `CLOUDFLARE_API_TOKEN`, read from `.local/box.env`), Traefik, the namespace `andara-shared`, Strimzi watching it, Argo CD. `ci`: cert-manager, `andara-ca`, Traefik (AW-INF-054) |
 | `make platform-check` | `versions.yaml` is valid and no script or workflow pins a platform item outside it; in `make check` |
 | `make stream-soak ENV=<env> [SOAK=5m]` | hold a Subscribe through the edge for `SOAK`, renew the edge certificate mid-stream, assert Traefik counted gRPC; nightly at 60 m in CI |
-| `make argocd-install [ENV=dev]` | Argo CD (at `deploy/platform/versions.yaml`'s pin) and Image Updater (1.3.1) into `argocd`, settings from `deploy/argocd/argocd-values.yaml`; a no-op when installed as pinned. With `ENV=dev`: dev's two Secrets if absent (`ANDARA_BOOTSTRAP_OPERATOR` only then), the Application seeded with `:dev`'s digest, and `deploy/argocd/` applied (AW-INF-019) |
-| `make argocd-status [ENV=dev]` | sync and health, the `main` revision synced, the image the StatefulSet runs and the commit it was built from; names `argocd-recover` when the rollout is stuck, or `make content-seed` when the server is up and waiting for its first content (AW-SRV-042); exit 1 unless `Synced`/`Healthy` |
+| `make argocd-install [ENV=dev]` | Argo CD (at `deploy/platform/versions.yaml`'s pin) into `argocd`, settings from `deploy/argocd/argocd-values.yaml`; a no-op when installed as pinned. With `ENV=dev`: refuses until the Git tag `dev` exists (`make promote`), then dev's two Secrets if absent (`ANDARA_BOOTSTRAP_OPERATOR` only then), and `deploy/argocd/andara-dev.yaml` applied, removing any `helm.parameters` a live Application carries (AW-INF-019, AW-INF-059) |
+| `make promote ENV=dev SHA=<main sha>` / `TAG=dev-<n> [PIN_ROUND=<round>]` | move `dev`: one signed commit on `release/dev` (image digest, or the rollback markers), signed tags `dev` and `dev-<n>`, one atomic push, Argo CD's hard refresh, then a wait until `argocd-status` agrees; Brian's shell only (`docs/runbooks/promote.md`, AW-INF-059) |
+| `make argocd-status [ENV=dev]` | sync and health, and the three answers to "which image is `dev`": the commit the tag `dev` points at, Argo's synced revision, the digest `andara-0` runs (against the digest that commit pins), with the commit the image was built from; names `argocd-recover` when the rollout is stuck, or `make content-seed` when the server is up and waiting for its first content (AW-SRV-042); exit 1 unless `Synced`/`Healthy` and the three agree |
 | `make argocd-ui` | the UI on `localhost:8090` (`ARGOCD_UI_PORT=`) by port-forward, and where the admin password is |
 | `make argocd-recover ENV=dev` | Kubernetes' forced rollback: delete an `andara` pod stuck on a build that never became Ready, once the StatefulSet's `updateRevision` is the Application's current image; refuses otherwise |
 | `make argocd-uninstall ENV=dev` | remove the Application without cascading and give its resources Helm's ownership metadata, so `make helm-install ENV=dev` takes them back |
@@ -153,23 +153,24 @@ The cluster's side of the contract with the workstation `nginx` (ADR-0013 decisi
 it), and `172.16.0.0/12` in the Admin allowlist because a connection from the box reaches Traefik
 from the docker bridge, not from 127.0.0.1. `dev` and `prod` are `andara-dev.solo7.valesordev.com` and `andara.solo7.valesordev.com` on the
 cluster's `letsencrypt` ClusterIssuer (clients need no CA file), and pull from `ghcr.io/valesordev/andara-server`,
-which CI publishes on every merge to `main` (AW-INF-013): `dev` follows the moving `:dev` tag (`pullPolicy: Always`),
-and `make helm-install ENV=dev TAG=sha-<12 hex>` pins a build. `prod`'s tag is always overridden by `make deploy TAG=`
+which CI publishes on every merge to `main` (AW-INF-013): `dev` runs the `sha-<12 hex>@sha256:…` the Git tag `dev`
+pins (`make promote`, AW-INF-059). `prod`'s tag is always overridden by `make deploy TAG=`
 (AW-INF-007).
 
 | Environment | Deployed by |
 |-------------|-------------|
 | `local` | `make helm-install ENV=local`, a kind-loaded image |
-| `dev` | **Argo CD**, following `main` (AW-INF-019); `make helm-install ENV=dev` refuses while it does |
+| `dev` | **Argo CD**, following the Git tag `dev` that `make promote` moves (AW-INF-019, AW-INF-059); `make helm-install ENV=dev` refuses while it does |
 | `prod` | `make deploy` / `make rollback` (AW-INF-007) |
 
-**`dev` follows `main` (AW-INF-019).** The `andara-dev` Application (`deploy/argocd/andara-dev.yaml`) renders
-this chart from `main` with `values/dev.yaml`, with automated sync, `prune` and `selfHeal`. A new build reaches
-`dev` without a commit: when `publish` moves `:dev`, Image Updater writes `image.tag=dev@sha256:<digest>` onto the
-Application (`argocd` write-back; nothing writes to `main`), and Argo CD rolls the StatefulSet. A merge that changes
-what the chart renders (a fixture under `testdata/content/valid`, a value) reaches `dev` through Argo CD's git poll.
-Every merge restarts the World on `dev`, docs-only ones included, because `publish` builds every merge.
-`make argocd-status` says what runs and which commit built it. Not managed, so never pruned: the Kafka CR and its
+**`dev` follows the tag `dev` (AW-INF-019, AW-INF-059, ADR-0013 decision 7).** The `andara-dev` Application
+(`deploy/argocd/andara-dev.yaml`) renders this chart at the Git tag `dev` with `values/dev.yaml`, with automated
+sync, `prune` and `selfHeal`. A merge to `main` publishes `sha-<12 hex>` and changes nothing on `dev`.
+`make promote ENV=dev SHA=<main sha>` cuts `release/dev` from that `main` commit plus one signed commit pinning
+`image.tag: sha-<12>@sha256:<digest>`, moves the signed tag `dev` to it and adds the history tag `dev-<n>`, so the
+tagged tree is that commit's chart and values plus the image line. `make promote ENV=dev TAG=dev-<n>` rolls back
+with a new commit on that tag's commit. `make argocd-status` says what runs, and fails unless the tag, Argo's
+revision and the running digest agree. The runbook is `docs/runbooks/promote.md`. Not managed, so never pruned: the Kafka CR and its
 topics, the two Secrets, the snapshot PVC, the object store (`make objectstore-install`), and the cluster platform.
 The state projector's replica count is ignored (`ignoreDifferences`, `RespectIgnoreDifferences`), so
 `make projector-stop` holds until `projector-start`. **To take `dev` back:**

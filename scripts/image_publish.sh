@@ -4,21 +4,15 @@
 
 # `make image-publish` — build the server image and push it to ghcr (AW-INF-013).
 #
-# Two tags per commit: `sha-<12 hex>`, immutable, which a deploy or a rollback names, and
-# `dev`, which moves to the latest main and is what values/dev.yaml pulls. The sha tag is
-# pushed first so that `dev` never names a digest the registry does not hold under a
-# name that will outlive it.
+# One tag per commit: `sha-<12 hex>`, immutable, which a deploy, a rollback or `make promote`
+# names. Nothing moves `:dev` any more: `dev` runs what the Git tag `dev` pins by digest
+# (AW-INF-059, ADR-0013 decision 7), so a merge to main publishes an image and runs nothing.
 #
 # linux/amd64 only: the box's nodes. CI runs this on merge to main after `docker login`.
 #
 # The build context is `git archive HEAD`, not the working directory, so a `sha-` tag is
 # exactly its commit: an untracked or ignored file cannot reach the image. A dirty tree is
 # still refused, because VERSION would say `-dirty` about an image that is not.
-#
-# `:dev` moves only when HEAD is still origin/main's head at push time. GitHub does not
-# order runs in a concurrency group, only serializes them, so an older run admitted after a
-# newer one would otherwise move `:dev` backwards; with the check it pushes its `sha-` tag
-# and leaves `:dev` to the newer run. Run by hand on any other commit, it does the same.
 set -euo pipefail
 
 REPO_IMAGE="${1:?usage: image_publish.sh <registry-image> <version> <commit> <revision>}"
@@ -40,12 +34,4 @@ git archive --format=tar HEAD \
       -t "$REPO_IMAGE:$SHA_TAG" -
 docker push "$REPO_IMAGE:$SHA_TAG"
 echo "image-publish: $REPO_IMAGE:$SHA_TAG ($VERSION, $REVISION)"
-
-git fetch -q origin main
-if [[ "$(git rev-parse HEAD)" != "$(git rev-parse origin/main)" ]]; then
-  echo "image-publish: HEAD is not origin/main's head ($(git rev-parse --short=12 origin/main)); :dev left to that commit's run"
-  exit 0
-fi
-docker tag "$REPO_IMAGE:$SHA_TAG" "$REPO_IMAGE:dev"
-docker push "$REPO_IMAGE:dev"
-echo "image-publish: $REPO_IMAGE:dev -> $SHA_TAG"
+echo "image-publish: digest $(docker inspect --format '{{index .RepoDigests 0}}' "$REPO_IMAGE:$SHA_TAG" | sed 's/.*@//')"

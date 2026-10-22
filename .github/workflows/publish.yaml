@@ -2,8 +2,9 @@
 # Copyright 2026 Valesor Development
 
 # Publish the server image on every merge to main (AW-INF-013): ghcr.io/valesordev/andara-server
-# as :sha-<12 hex>, immutable, and :dev, which values/dev.yaml pulls. The build is
-# `make image-publish` and the proof is `make image-check`, so this file only logs in.
+# as :sha-<12 hex>, immutable, which `make promote` names (AW-INF-059): nothing runs a build
+# until someone promotes it. The build is `make image-publish` and the proof is
+# `make image-check`, so this file only logs in.
 #
 # Then andara-cli (AW-INF-020): `make cli-release` builds the five archives, and
 # `make cli-release-publish` attaches them to the rolling `cli-dev` pre-release, which Builders
@@ -17,10 +18,9 @@ on:
   push:
     branches: [main]
 
-# One run at a time. GitHub serializes a group but does not order it, so what keeps :dev
-# on the newest commit is image_publish.sh moving :dev only when its commit is still main's
-# head (AC-6). GitHub keeps one pending run per group, so a commit whose run is replaced
-# while queued gets no sha- tag; dev still converges.
+# One run at a time. GitHub keeps one pending run per group, so a commit whose run is
+# replaced while queued gets no sha- tag, and `make promote` refuses that commit until
+# someone runs `make image-publish` on it.
 concurrency:
   group: publish-main
   cancel-in-progress: false
@@ -50,7 +50,7 @@ jobs:
         run: make image-check REGISTRY_ONLY=1 TAG="sha-$(git rev-parse --short=12 HEAD)"
 
   cli:
-    # After the image, so `cli-dev` never names a commit whose `:dev` image failed to publish.
+    # After the image, so `cli-dev` never names a commit whose image failed to publish.
     needs: publish
     runs-on: ubuntu-latest
     permissions:

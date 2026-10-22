@@ -2,23 +2,26 @@
 # SPDX-License-Identifier: Apache-2.0
 # Copyright 2026 Valesor Development
 
-"""dev follows main on the box: Argo CD and Image Updater (AW-INF-019).
+"""dev follows the Git tag `dev` on the box: Argo CD (AW-INF-019, AW-INF-059).
 
-  argocd.py install              make argocd-install: Argo CD and Image Updater into `argocd`,
-                                 at the pinned chart versions; a no-op when they're installed
+  argocd.py install              make argocd-install: Argo CD into `argocd`, at the pinned chart
+                                 version; a no-op when it's installed
   argocd.py install dev          make argocd-install ENV=dev: the above, then dev's Secrets (if
-                                 absent), the image seed, and the andara-dev Application
-  argocd.py status [dev]         make argocd-status: sync, health, the synced main revision,
-                                 and the image the StatefulSet runs with the commit it was built from
+                                 absent) and the andara-dev Application, once `make promote` has
+                                 pushed the tag `dev` it follows
+  argocd.py status [dev]         make argocd-status: sync, health, and the three answers to "which
+                                 image is dev" (the commit `dev` points at, Argo's synced revision,
+                                 the digest andara-0 runs), with the commit the image was built from
   argocd.py ui                   make argocd-ui: port-forward the UI to localhost:ARGOCD_UI_PORT
   argocd.py recover dev          make argocd-recover ENV=dev: Kubernetes' forced-rollback step
   argocd.py uninstall dev        make argocd-uninstall ENV=dev: remove the Application without
                                  cascading, and hand every resource back to Helm
 
-Only dev: prod stays on `make deploy` (AW-INF-007) and local on a kind-loaded image.
+Only dev: prod stays on `make deploy` (AW-INF-007) and local on a kind-loaded image. What dev runs
+changes only through `make promote` (scripts/promote.py, ADR-0013 decision 7).
 
-Progress lines are `argocd: <step>`. Exit: 0 ok · 1 a precondition missing, a refusal, or not
-Synced/Healthy · 2 bad usage · 3 a tool is missing.
+Progress lines are `argocd: <step>`. Exit: 0 ok · 1 a precondition missing, a refusal, not
+Synced/Healthy, or the three answers disagree · 2 bad usage · 3 a tool is missing.
 """
 import json
 import os
@@ -34,14 +37,14 @@ import kube
 
 REPO = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 ARGO_REPO = "https://argoproj.github.io/argo-helm"
-# Argo CD's chart and version are deploy/platform/versions.yaml's (AW-INF-054). Image Updater isn't a
-# platform item: it keeps its pin here until AW-INF-059 removes it.
+# Argo CD's chart and version are deploy/platform/versions.yaml's (AW-INF-054).
 VERSIONS = os.path.join(REPO, "deploy", "platform", "versions.yaml")
-IMAGE_UPDATER_CHART_VERSION = "1.3.1"    # Argo CD Image Updater v1.3.0
 NS = "argocd"
 APP_FILE = os.path.join(REPO, "deploy", "argocd", "andara-dev.yaml")
-UPDATER_FILE = os.path.join(REPO, "deploy", "argocd", "andara-dev-image-updater.yaml")
 VALUES = os.path.join(REPO, "deploy", "helm", "values", "dev.yaml")
+VALUES_PATH = "deploy/helm/values/dev.yaml"
+# The Git tag the Application follows, which `make promote` moves (AW-INF-059).
+DEV_TAG = "dev"
 FIELD_MANAGER = "andara-argocd-install"
 TRACKING = "argocd.argoproj.io/tracking-id"
 SYNC_DEADLINE = 600
@@ -81,7 +84,7 @@ def env_ns(cmd, env):
     if env == "dev":
         return "andara-dev"
     if env in ("local", "prod"):
-        die(cmd, "ENV=%s: only dev follows main; prod is `make deploy` (AW-INF-007), local a kind-loaded image" % env, 2)
+        die(cmd, "ENV=%s: only dev is on Argo CD; prod is `make deploy` (AW-INF-007), local a kind-loaded image" % env, 2)
     die(cmd, "usage: make argocd-%s ENV=dev" % cmd, 2)
 
 
@@ -123,9 +126,7 @@ def argocd_chart():
 def install_argocd():
     need("install", "helm", "kubectl")
     install_chart("argocd", *argocd_chart(), ARGOCD_VALUES_FILE)
-    install_chart("argocd-image-updater", "argocd-image-updater", IMAGE_UPDATER_CHART_VERSION)
     run(kube.kubectl("-n", NS, "rollout", "status", "deploy/argocd-server", "--timeout=5m"))
-    run(kube.kubectl("-n", NS, "rollout", "status", "deploy/argocd-image-updater-controller", "--timeout=5m"), check=False)
     say("Argo CD Ready in %s" % NS)
 
 
@@ -146,12 +147,18 @@ def preconditions(ns):
     for issuer in dict.fromkeys(("andara-ca", edge)):
         if not issuer_ready(issuer):
             die("install", "ClusterIssuer %s is not Ready; run `make platform-up`" % issuer)
-    k = kubectl_json("-n", ns, "get", "kafka", "andara-log") or {}
+    # The broker dev.yaml names: andara-log-kafka-bootstrap.<namespace>.svc, the shared one in
+    # andara-shared since AW-INF-059 (ADR-0013 amendment 16), or a bare name in dev's own.
+    brokers = str((((yaml.safe_load(open(VALUES)) or {}).get("server") or {}).get("kafka") or {}).get("brokers") or "")
+    parts = brokers.split(":", 1)[0].split(".")
+    kns = parts[1] if len(parts) > 1 else ns
+    k = kubectl_json("-n", kns, "get", "kafka", "andara-log") or {}
     ready = [c for c in k.get("status", {}).get("conditions", []) if c.get("type") == "Ready"]
     if not ready or ready[0].get("status") != "True":
-        die("install", "no Ready kafka/andara-log in %s; run `make kafka-install ENV=dev` first" % ns)
+        hint = "make kafka-install ENV=dev" if kns == ns else "make shared-up"
+        die("install", "no Ready kafka/andara-log in %s; run `%s` first" % (kns, hint))
     say("preconditions: traefik, cert-manager, ClusterIssuers %s, kafka/andara-log in %s"
-        % (", ".join(dict.fromkeys(("andara-ca", edge))), ns))
+        % (", ".join(dict.fromkeys(("andara-ca", edge))), kns))
 
 
 def secrets(ns):
@@ -176,49 +183,45 @@ def secrets(ns):
         say("secret andara-server-bootstrap exists; left as it is")
 
 
-def image_tag_param(app):
-    for p in (((app or {}).get("spec") or {}).get("source") or {}).get("helm", {}).get("parameters") or []:
-        if p.get("name") == "image.tag":
-            return p.get("value", "")
-    return ""
+def tag_commit():
+    """The commit the tag `dev` points at on origin, or "" when there's none. Fetched too, so
+    values_at() can read it."""
+    p = run(["git", "-C", REPO, "ls-remote", "origin", "refs/tags/%s^{}" % DEV_TAG], check=False)
+    sha = p.stdout.split("\t", 1)[0].strip() if p.returncode == 0 else ""
+    if sha:
+        run(["git", "-C", REPO, "fetch", "-q", "--no-tags", "origin",
+             "+refs/tags/%s:refs/tags/%s" % (DEV_TAG, DEV_TAG)], check=False)
+    return sha
 
 
-def seed_value():
-    v = (yaml.safe_load(open(VALUES)) or {}).get("image", {})
-    repo, tag = v["repository"], v["tag"]
-    p = run([os.path.join(REPO, "scripts", "image_digest.sh"), repo, tag], check=False)
-    if p.returncode:
-        die("install", "cannot resolve %s:%s to a digest; is it published? (make image-check ENV=dev)" % (repo, tag))
-    return "%s@%s" % (tag, p.stdout.strip())
+def values_at(commit):
+    """dev.yaml at a commit, parsed, or {} when the commit isn't here."""
+    p = run(["git", "-C", REPO, "show", "%s:%s" % (commit, VALUES_PATH)], check=False)
+    return (yaml.safe_load(p.stdout) or {}) if p.returncode == 0 else {}
+
+
+def image_tag_at(commit):
+    return str(((values_at(commit) if commit else {}).get("image") or {}).get("tag") or "")
 
 
 def application(ns):
-    """Create or update the Application, with image.tag seeded before automated sync is on."""
+    """Create or update the Application. It follows the tag `dev`, so the tag must exist first:
+    `make promote ENV=dev SHA=<main sha>` makes it."""
     app_doc = yaml.safe_load(open(APP_FILE))
     name = app_doc["metadata"]["name"]
+    if not tag_commit():
+        die("install", "no tag %s on origin, and the Application follows it; run `make promote ENV=dev "
+            "SHA=<main sha>` first (docs/runbooks/promote.md)" % DEV_TAG)
     live = kubectl_json("-n", NS, "get", "application", name)
-    if not image_tag_param(live):
-        seed = seed_value()
-        if live is None:
-            # Created with the seed and without syncPolicy, so nothing renders `:dev` unpinned.
-            first = json.loads(json.dumps(app_doc))
-            first["spec"].pop("syncPolicy", None)
-            first["spec"]["source"]["helm"]["parameters"] = [{"name": "image.tag", "value": seed}]
-            run(kube.kubectl("create", "-f", "-"), input=json.dumps(first))
-            say("application %s created, image.tag seeded %s, sync off" % (name, seed))
-        else:
-            # Found without the parameter: turn sync off, seed, then the file turns it on.
-            run(kube.kubectl("-n", NS, "patch", "application", name, "--type", "json", "-p",
-                             json.dumps([{"op": "remove", "path": "/spec/syncPolicy"}])), check=False)
-            params = [{"name": "image.tag", "value": seed}]
-            run(kube.kubectl("-n", NS, "patch", "application", name, "--type", "merge", "-p",
-                             json.dumps({"spec": {"source": {"helm": {"parameters": params}}}})))
-            say("application %s had no image.tag; seeded %s" % (name, seed))
-    else:
-        say("application %s keeps image.tag %s (Image Updater's)" % (name, image_tag_param(live)))
+    # An Application Image Updater wrote to (AW-INF-019) carries image.tag as a parameter in no
+    # commit, which would override the promoted values; it goes.
+    if ((((live or {}).get("spec") or {}).get("source") or {}).get("helm") or {}).get("parameters"):
+        run(kube.kubectl("-n", NS, "patch", "application", name, "--type", "json", "-p",
+                         json.dumps([{"op": "remove", "path": "/spec/source/helm/parameters"}])))
+        say("application %s: removed helm.parameters, which no commit carries" % name)
     run(kube.kubectl("apply", "--server-side", "--force-conflicts", "--field-manager", FIELD_MANAGER, "-f", APP_FILE))
-    run(kube.kubectl("apply", "--server-side", "--force-conflicts", "--field-manager", FIELD_MANAGER, "-f", UPDATER_FILE))
-    say("applied deploy/argocd/: application %s (automated sync, prune, selfHeal) and its image updater" % name)
+    say("applied deploy/argocd/andara-dev.yaml: application %s follows tag %s (automated sync, prune, selfHeal)"
+        % (name, DEV_TAG))
     return name
 
 
@@ -376,6 +379,37 @@ def content_waiting(ns):
     return world_reset.waiting_for_content(ns)
 
 
+def running_digest(ns):
+    """The digest andara-0's server container runs (its imageID), or ""."""
+    pod = kubectl_json("-n", ns, "get", "pod", "andara-0") or {}
+    for cs in (pod.get("status") or {}).get("containerStatuses") or []:
+        if cs.get("name") == "server":
+            m = re.search(r"sha256:[0-9a-f]{64}", cs.get("imageID") or "")
+            return m.group(0) if m else ""
+    return ""
+
+
+def agreement(ns):
+    """The three answers to "which image is dev" (AW-INF-059): the commit the tag `dev` points at,
+    Argo CD's synced revision, and the digest andara-0 runs, held against the digest that commit's
+    dev.yaml pins. "mismatch" lists every disagreement; empty is one answer."""
+    tag = tag_commit()
+    _, _, argo, _ = app_state(ns)
+    pinned = image_tag_at(tag)
+    want = pinned.split("@", 1)[1] if "@" in pinned else ""
+    running = running_digest(ns)
+    mismatch = []
+    if not tag:
+        mismatch.append("no tag %s on origin" % DEV_TAG)
+    elif argo != tag:
+        mismatch.append("argo synced %s, tag %s is %s" % (argo[:12] or "?", DEV_TAG, tag[:12]))
+    if tag and not want:
+        mismatch.append("%s at %s pins no digest (image.tag %r)" % (VALUES_PATH, tag[:12], pinned))
+    elif tag and running != want:
+        mismatch.append("andara-0 runs %s, the tag pins %s" % (running[:19] or "?", want[:19]))
+    return {"tag": tag, "argo": argo, "pinned": want, "running": running, "mismatch": mismatch}
+
+
 def status(env, waiting_ok=False):
     """Print the Application's state; exit 1 unless Synced and Healthy. With waiting_ok (an
     install whose server is waiting for its first content, AW-SRV-042), Synced is enough: the
@@ -391,11 +425,16 @@ def status(env, waiting_ok=False):
         if c["name"] == "server":
             image = c["image"]
     built = image_revision(image) if "@" in image else "?"
+    a = agreement(ns)
     print("application  %s" % name)
-    print("sync         %s   main@%s" % (sync, rev[:12] or "?"))
+    print("sync         %s   %s@%s" % (sync, DEV_TAG, rev[:12] or "?"))
     print("health       %s" % health)
+    print("tag dev      %s   pins %s" % (a["tag"][:12] or "?", a["pinned"] or "?"))
+    print("running      %s" % (a["running"] or "?"))
     print("image        %s" % image)
     print("built from   %s" % built)
+    for m in a["mismatch"]:
+        print("disagree     %s" % m)
     packs = active_packs(ns)
     if isinstance(packs, str):
         print("content      %s" % packs)
@@ -413,7 +452,7 @@ def status(env, waiting_ok=False):
         print("waiting      andara-0 is up and waiting for content — next: make content-seed ENV=%s" % (env or "dev"))
     if waiting_ok and sync == "Synced":
         return
-    if sync != "Synced" or health != "Healthy":
+    if sync != "Synced" or health != "Healthy" or a["mismatch"]:
         sys.exit(1)
 
 
@@ -451,10 +490,11 @@ def recover(env):
     for c in rev.get("data", {}).get("spec", {}).get("template", {}).get("spec", {}).get("containers", []):
         if c["name"] == "server":
             want = c["image"]
-    _, _, _, app = app_state(ns)
-    tag = image_tag_param(app)
+    _, _, synced, _ = app_state(ns)
+    tag = image_tag_at(synced)
     if not tag or not want.endswith(":" + tag):
-        die("recover", "updateRevision %s runs %s, not the Application's image.tag %s; refusing" % (update, want or "?", tag or "?"))
+        die("recover", "updateRevision %s runs %s, not image.tag %s of the synced commit %s; refusing"
+            % (update, want or "?", tag or "?", synced[:12] or "?"))
     run(kube.kubectl("-n", ns, "delete", "pod", "andara-0", "--wait=false"))
     say("deleted andara-0 (revision %s); the StatefulSet recreates it at %s (%s)" % (on, update, want))
 
@@ -474,7 +514,6 @@ def uninstall(env):
                          json.dumps({"metadata": {"finalizers": None}})))
         run(kube.kubectl("-n", NS, "delete", "application", name, "--wait=true"))
         say("application %s removed without cascading" % name)
-    run(kube.kubectl("-n", NS, "delete", "imageupdater", name, "--ignore-not-found"), check=False)
     # Hand everything the Application tracked to Helm, so `helm upgrade --install` adopts it,
     # including anything the chart gained after the move that Helm never created (AC-10).
     kinds = run(kube.kubectl("api-resources", "--namespaced", "--verbs=list,patch", "-o", "name")).stdout.split()
