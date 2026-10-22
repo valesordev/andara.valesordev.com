@@ -4,6 +4,7 @@
 package kafkaclient
 
 import (
+	"fmt"
 	"go/ast"
 	"go/parser"
 	"go/token"
@@ -23,6 +24,14 @@ var rawClientAllowlist = map[string]string{}
 
 // kgoPath is the import path whose NewClient only this package may call.
 const kgoPath = "github.com/twmb/franz-go/pkg/kgo"
+
+// constructorDir is this package, relative to the repository root: the only
+// directory whose own files may call kgo.NewClient. Its subpackages may not.
+const constructorDir = "server/kafkaclient"
+
+// skippedDirs are the directories the scan doesn't enter: tooling and
+// dependencies, and testdata, which Go never builds.
+var skippedDirs = map[string]bool{".git": true, ".claude": true, "vendor": true, "node_modules": true, "testdata": true}
 
 // rawClientCalls is every call of kgo's NewClient in the file, under whatever
 // name the file imports kgo as, by line.
@@ -66,9 +75,53 @@ func rawClientCalls(fset *token.FileSet, f *ast.File) []int {
 	return lines
 }
 
-// AC-1: no Go file outside this package builds a franz-go client itself, test
-// files included, every build tag included: each goes through New, which
-// brings SASL. The allowlist is the only exemption.
+// scanTree is every raw client call in the Go files under root, as
+// "path:line" relative to root, outside constructorDir's own files and the
+// allowlist; and how many files it parsed. Parsing ignores build constraints,
+// so test files and integration, smoke and soak files are read like any
+// other.
+func scanTree(root string, allow map[string]string) (violations []string, scanned int, err error) {
+	fset := token.NewFileSet()
+	err = filepath.WalkDir(root, func(path string, d fs.DirEntry, err error) error {
+		if err != nil {
+			return err
+		}
+		if d.IsDir() {
+			if path != root && skippedDirs[d.Name()] {
+				return fs.SkipDir
+			}
+			return nil
+		}
+		if !strings.HasSuffix(path, ".go") {
+			return nil
+		}
+		rel, err := filepath.Rel(root, path)
+		if err != nil {
+			return err
+		}
+		rel = filepath.ToSlash(rel)
+		f, err := parser.ParseFile(fset, path, nil, parser.SkipObjectResolution)
+		if err != nil {
+			return err
+		}
+		scanned++
+		if filepath.ToSlash(filepath.Dir(rel)) == constructorDir {
+			return nil
+		}
+		if _, ok := allow[rel]; ok {
+			return nil
+		}
+		for _, line := range rawClientCalls(fset, f) {
+			violations = append(violations, fmt.Sprintf("%s:%d", rel, line))
+		}
+		return nil
+	})
+	return violations, scanned, err
+}
+
+// AC-1: no Go file in the repository outside this package's own files builds a
+// franz-go client itself, test files and every build tag included: each goes
+// through New, which brings SASL. The allowlist is the only exemption.
 func TestEveryKafkaClientGoesThroughTheConstructor(t *testing.T) {
 	root, err := filepath.Abs(filepath.Join("..", ".."))
 	if err != nil {
@@ -77,51 +130,71 @@ func TestEveryKafkaClientGoesThroughTheConstructor(t *testing.T) {
 	if _, err := os.Stat(filepath.Join(root, "go.mod")); err != nil {
 		t.Fatalf("repository root not found from %s: %v", root, err)
 	}
-	self := filepath.Join(root, "server", "kafkaclient")
-	fset := token.NewFileSet()
-	scanned := 0
-	for _, dir := range []string{"server", "cmd", "internal", "admin"} {
-		err := filepath.WalkDir(filepath.Join(root, dir), func(path string, d fs.DirEntry, err error) error {
-			if err != nil {
-				return err
-			}
-			if d.IsDir() {
-				if path == self {
-					return fs.SkipDir
-				}
-				return nil
-			}
-			if !strings.HasSuffix(path, ".go") {
-				return nil
-			}
-			// Parsing ignores build constraints, so integration, smoke and
-			// soak files are read like any other.
-			f, err := parser.ParseFile(fset, path, nil, parser.SkipObjectResolution)
-			if err != nil {
-				return err
-			}
-			scanned++
-			rel, _ := filepath.Rel(root, path)
-			rel = filepath.ToSlash(rel)
-			if _, ok := rawClientAllowlist[rel]; ok {
-				return nil
-			}
-			for _, line := range rawClientCalls(fset, f) {
-				t.Errorf("%s:%d calls kgo.NewClient; build the client with kafkaclient.New, which brings SASL", rel, line)
-			}
-			return nil
-		})
-		if err != nil {
-			t.Fatal(err)
-		}
+	violations, scanned, err := scanTree(root, rawClientAllowlist)
+	if err != nil {
+		t.Fatal(err)
 	}
 	if scanned < 100 {
 		t.Fatalf("scanned %d Go files; the walk is not reading the tree", scanned)
+	}
+	for _, v := range violations {
+		t.Errorf("%s calls kgo.NewClient; build the client with kafkaclient.New, which brings SASL", v)
 	}
 	for rel, why := range rawClientAllowlist {
 		if why == "" {
 			t.Errorf("allowlisted %s gives no reason", rel)
 		}
+	}
+}
+
+// The walk itself, on a fixture tree: a raw client in a _test.go file, in a
+// file behind a build tag, in a top-level directory outside server/, and in a
+// subpackage of the constructor's package are all reported; the
+// constructor's own files, testdata and an allowlisted file are not.
+func TestScanTreeReportsEveryRawClient(t *testing.T) {
+	root := t.TempDir()
+	raw := "package p\n\nimport \"github.com/twmb/franz-go/pkg/kgo\"\n\nfunc f() { kgo.NewClient() }\n"
+	tagged := "//go:build integration\n\n" + raw
+	files := map[string]string{
+		"server/x/x_test.go":                        raw,
+		"server/x/y_integration_test.go":            tagged,
+		"content/lang/z.go":                         raw,
+		"server/kafkaclient/kafkatest/k.go":         raw,
+		"server/kafkaclient/client.go":              raw,
+		"server/x/testdata/fixture.go":              raw,
+		"admin/allowed.go":                          raw,
+		"server/x/clean.go":                         "package p\n",
+		"server/kafkaclient/kafkatest/kafkatest.go": "package kafkatest\n",
+	}
+	for rel, src := range files {
+		p := filepath.Join(root, filepath.FromSlash(rel))
+		if err := os.MkdirAll(filepath.Dir(p), 0o755); err != nil {
+			t.Fatal(err)
+		}
+		if err := os.WriteFile(p, []byte(src), 0o600); err != nil {
+			t.Fatal(err)
+		}
+	}
+	got, scanned, err := scanTree(root, map[string]string{"admin/allowed.go": "a fixture"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	want := map[string]bool{
+		"server/x/x_test.go:5":                true,
+		"server/x/y_integration_test.go:7":    true,
+		"content/lang/z.go:5":                 true,
+		"server/kafkaclient/kafkatest/k.go:5": true,
+	}
+	if len(got) != len(want) {
+		t.Fatalf("violations %v, want %v", got, want)
+	}
+	for _, v := range got {
+		if !want[v] {
+			t.Errorf("unexpected violation %s", v)
+		}
+	}
+	if scanned != len(files)-1 { // testdata isn't parsed
+		t.Errorf("scanned %d files, want %d", scanned, len(files)-1)
 	}
 }
 
