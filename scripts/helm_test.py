@@ -493,8 +493,11 @@ def test_kafka_on_the_box():
     dev runs the sim and the Account store on it (the chart renders only what is set, so
     the memory switches must be absent, leaving the `kafka` defaults). local stays
     broker-free."""
-    # dev on the box's shared Kafka in andara-shared (AW-INF-055); prod on its own cluster's.
-    wants = {"dev": "andara-log-kafka-bootstrap.andara-shared.svc:9092",
+    # dev's broker moves to the shared Kafka together with its prefix, in AW-INF-059 (ADR-0013
+    # amendment 16; Codex on #618): moved alone, a dev that Argo CD syncs from main would ask the
+    # shared broker for unprefixed topics it never creates. prod is on its own cluster's.
+    shared = "andara-log-kafka-bootstrap.andara-shared.svc:9092"
+    wants = {"dev": "andara-log-kafka-bootstrap:9092",
              "prod": "andara-log-kafka-bootstrap:9092"}
     for env, want in wants.items():
         rc, out, err = render(env)
@@ -514,9 +517,9 @@ def test_kafka_on_the_box():
              % (data.get("ANDARA_SIM_SOURCE"), data.get("ANDARA_AUTH_STORE")))
     if data.get("ANDARA_KAFKA_TOPIC_PREFIX") != "local":
         fail("local: ANDARA_KAFKA_TOPIC_PREFIX is %r, want 'local'" % data.get("ANDARA_KAFKA_TOPIC_PREFIX"))
-    if data.get("ANDARA_KAFKA_BROKERS") != wants["dev"]:
+    if data.get("ANDARA_KAFKA_BROKERS") != shared:
         fail("local: ANDARA_KAFKA_BROKERS is %r, want the shared broker %r"
-             % (data.get("ANDARA_KAFKA_BROKERS"), wants["dev"]))
+             % (data.get("ANDARA_KAFKA_BROKERS"), shared))
 
 
 def test_topic_prefix_required_for_local():

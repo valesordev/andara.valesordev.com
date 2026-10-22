@@ -186,13 +186,15 @@ server still runs broker-free until AW-INF-060. So a `dev` install is `make shar
 `ANDARA_BOOTSTRAP_OPERATOR=<user>:<password> make helm-install ENV=dev`. `helm-install` refuses while
 `kafka/andara-log` in `andara-shared` is not Ready. It also refuses without the operator credential, because
 `local`'s default is public and this edge is not. `dev`'s sim and Accounts live on the broker.
-`make kafka-broker-bounce ENV=dev` shows losing one broker costs the World nothing.
+`make kafka-broker-bounce ENV=dev` shows losing one broker costs the World nothing. `values/dev.yaml` still names the
+old in-namespace bootstrap: dev's broker and its `dev` prefix change together in AW-INF-059 (ADR-0013 amendment 16),
+because either alone, synced from `main`, points dev at topics that don't exist.
 
 ### Shared services
 
 `andara-shared` holds what `local` and `dev` share on the box (ADR-0013 decisions 3–5). Today that's the Kafka
-`andara-log`, reached as `andara-log-kafka-bootstrap.andara-shared.svc:9092`, which both values files set as
-`server.kafka.brokers`. `make shared-up` installs it and `make cluster-rebuild` runs `shared-up`. Resetting or
+`andara-log`, reached as `andara-log-kafka-bootstrap.andara-shared.svc:9092`, which `values/local.yaml` sets as
+`server.kafka.brokers` (and `values/dev.yaml` will, with its prefix, in AW-INF-059). `make shared-up` installs it and `make cluster-rebuild` runs `shared-up`. Resetting or
 destroying `andara-local` or `andara-dev` never touches it.
 
 - **Topics are per environment, by prefix.** Each environment's topics are `<prefix>.<name>`, with the prefix from
