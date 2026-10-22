@@ -182,6 +182,10 @@ type Snapshotter struct {
 	// (AW-SRV-054), nil when none is waiting; the result goes to its channel.
 	forceMu sync.Mutex
 	forced  chan ForcedRound
+	// inClaim, set only by tests, runs inside claimForced between taking the
+	// in-flight slot and clearing the request: the window a withdrawal must
+	// not reach into.
+	inClaim func()
 }
 
 // ForcedRound is how a round Force asked for ended: its tick, the State Hash
@@ -248,6 +252,9 @@ func (s *Snapshotter) claimForced() (ch chan ForcedRound, pending bool) {
 	}
 	if !s.inFlight.CompareAndSwap(false, true) {
 		return nil, true
+	}
+	if s.inClaim != nil {
+		s.inClaim()
 	}
 	ch, s.forced = s.forced, nil
 	return ch, true

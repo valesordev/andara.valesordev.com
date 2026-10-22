@@ -121,9 +121,42 @@ func TestCancelForceWithdrawsTheRequest(t *testing.T) {
 	}
 }
 
+// A withdrawal that arrives while the boundary is claiming the request waits
+// for the claim, finds the request taken, and reports withdrawn=false; the
+// round goes to the request. Deterministic: the withdrawal is started inside
+// the claim's window and given 50ms to reach into it.
+func TestCancelForceCannotReachIntoTheClaim(t *testing.T) {
+	t.Parallel()
+	h := newRoundHarness(t, func(o *tickloop.SnapshotOptions) { o.OnRound = nil })
+	e := snapshotEngine(t)
+	ch := h.s.Force()
+	var withdrawn bool
+	done := make(chan struct{})
+	h.s.SetInClaim(func() {
+		go func() { withdrawn = h.s.CancelForce(ch); close(done) }()
+		select {
+		case <-done:
+		case <-time.After(50 * time.Millisecond):
+		}
+	})
+	forced := h.s.Maybe(context.Background(), e)
+	<-done
+	h.s.Wait()
+	if !forced || withdrawn {
+		t.Fatalf("forced %v, withdrawn %v: a withdrawal reached into the claim", forced, withdrawn)
+	}
+	select {
+	case <-ch:
+	default:
+		t.Fatal("the claimed round did not report to its request")
+	}
+}
+
 // A withdrawal racing the boundary either wins, and no round is taken, or
 // loses, and the round taken reports to the request it was taken for: a
-// boundary never takes a forced round whose request was withdrawn.
+// boundary never takes a forced round whose request was withdrawn. This is
+// a stress test, so it hits the window only sometimes;
+// TestCancelForceCannotReachIntoTheClaim holds the window open on purpose.
 func TestCancelForceRacingTheBoundary(t *testing.T) {
 	t.Parallel()
 	// No OnRound: the harness's channel would fill long before the loop ends.
