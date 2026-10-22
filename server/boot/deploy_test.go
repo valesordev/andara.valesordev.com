@@ -97,6 +97,44 @@ func TestServingObservesTheInterruptionOnce(t *testing.T) {
 	}
 }
 
+// AC-7 measures to the first serving answer: a Runtime that is ready but has
+// not completed its first live tick, or is lagging, is not serving, and
+// observes nothing until it is.
+func TestTheInterruptionWaitsForTheFirstLiveTick(t *testing.T) {
+	t.Parallel()
+	head := time.Unix(1_760_000_000, 0)
+	rt, logs, _ := deployRuntime(t, head.Add(42*time.Second))
+	rt.Cfg.SimTickBudget = 100 * time.Millisecond
+	var ticks uint64
+	var lag time.Duration
+	rt.live = func() (uint64, time.Duration) { return ticks, lag }
+	rt.noteRecovered(context.Background(), nil, recovery.Report{HeadProducedAt: head})
+
+	for _, c := range []struct {
+		name  string
+		ticks uint64
+		lag   time.Duration
+	}{{"no live tick yet", 0, 0}, {"lagging 10 budgets", 1, time.Second}} {
+		ticks, lag = c.ticks, c.lag
+		if rt.Ready() {
+			t.Fatalf("%s: Ready", c.name)
+		}
+		if got := histCount(t, rt.deploy.hist); got != 0 {
+			t.Fatalf("%s: observed %d before serving", c.name, got)
+		}
+	}
+	if strings.Contains(logs.String(), "deploy interruption") {
+		t.Fatalf("logged an interruption before serving:\n%s", logs)
+	}
+	ticks, lag = 1, 0
+	if !rt.Ready() {
+		t.Fatal("not ready after the first live tick")
+	}
+	if got := histCount(t, rt.deploy.hist); got != 1 {
+		t.Fatalf("observed %d at the first serving answer, want 1", got)
+	}
+}
+
 // A boot whose log had no Tick Boundary Record observes nothing.
 func TestServingWithNoBoundaryObservesNothing(t *testing.T) {
 	t.Parallel()
