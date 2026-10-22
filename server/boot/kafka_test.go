@@ -29,17 +29,17 @@ func TestNew_RefusesAPasswordFileThatHoldsNoPassword(t *testing.T) {
 	if err := os.WriteFile(empty, nil, 0o600); err != nil {
 		t.Fatal(err)
 	}
-	newWith := func(brokers []string, file string) (*Runtime, error, string) {
+	newWith := func(brokers []string, file string) (*Runtime, string, error) {
 		cfg := config.Config{ServiceName: "andara-server", Environment: "dev", LogLevel: "info", KafkaTopicPrefix: "it7",
 			KafkaBrokers: brokers, KafkaSASLUsername: "andara-server-dev", KafkaSASLPasswordFile: file}
 		var logs bytes.Buffer
 		tel := telemetry.Setup(cfg, &logs)
 		t.Cleanup(func() { tel.Shutdown(context.Background()) })
 		rt, err := New(cfg, tel)
-		return rt, err, logs.String()
+		return rt, logs.String(), err
 	}
 	for name, file := range map[string]string{"missing": filepath.Join(dir, "absent"), "empty": empty} {
-		_, err, logs := newWith([]string{"127.0.0.1:1"}, file)
+		_, logs, err := newWith([]string{"127.0.0.1:1"}, file)
 		if err == nil || !strings.Contains(err.Error(), file) {
 			t.Errorf("%s: New = %v, want an error naming %s", name, err, file)
 		}
@@ -47,7 +47,7 @@ func TestNew_RefusesAPasswordFileThatHoldsNoPassword(t *testing.T) {
 			t.Errorf("%s: no error line naming the file:\n%s", name, logs)
 		}
 	}
-	rt, err, logs := newWith([]string{"127.0.0.1:1"}, good)
+	rt, logs, err := newWith([]string{"127.0.0.1:1"}, good)
 	if err != nil {
 		t.Fatalf("a readable password file: %v", err)
 	}
@@ -57,7 +57,7 @@ func TestNew_RefusesAPasswordFileThatHoldsNoPassword(t *testing.T) {
 	if strings.Contains(logs, "s3cret") {
 		t.Fatalf("the password is in the log:\n%s", logs)
 	}
-	if _, err, _ := newWith(nil, filepath.Join(dir, "absent")); err != nil {
+	if _, _, err := newWith(nil, filepath.Join(dir, "absent")); err != nil {
 		t.Fatalf("no brokers, no Kafka client to authenticate: %v", err)
 	}
 }
