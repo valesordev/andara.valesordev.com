@@ -309,12 +309,16 @@ def push(commit, n, before_dev):
     # operator made one; it's put back to origin's and named only when it was.
     restored = "dev and dev-%d" % n
     if git("rev-parse", "--verify", "--quiet", "refs/heads/" + BRANCH, check=False):
+        git("fetch", "-q", "--no-tags", REMOTE, "+refs/heads/%s:refs/remotes/%s/%s" % (BRANCH, REMOTE, BRANCH),
+            check=False)
         remote = git("rev-parse", "--verify", "--quiet", "refs/remotes/%s/%s" % (REMOTE, BRANCH), check=False)
         if remote:
             git("update-ref", "refs/heads/" + BRANCH, remote, check=False)
             if git("rev-parse", "--verify", "--quiet", "refs/heads/" + BRANCH, check=False) == remote:
                 restored = "dev, dev-%d and %s" % (n, BRANCH)
             else:
+                if not note:
+                    note = " (local %s restored)" % restored
                 note += " (local %s NOT reset; fix with `git update-ref refs/heads/%s %s`)" % (BRANCH, BRANCH, remote)
     raise Fail("push refused, nothing promoted%s: %s"
                % (note or " (local %s restored)" % restored, (p.stderr or p.stdout).strip()))

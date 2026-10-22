@@ -361,6 +361,24 @@ class Promote(unittest.TestCase):
         self.assertIn("(local dev, dev-2 and release/dev restored)", err)
         self.assertEqual(sh(self.work, "git", "rev-parse", "refs/heads/release/dev"), origin_branch)
 
+    def test_a_release_branch_that_does_not_reset_says_so_with_the_fix(self):
+        self.run_promote("dev", self.main1, "", "")
+        origin_branch = self.remote("refs/heads/release/dev")
+        sh(self.work, "git", "update-ref", "refs/heads/release/dev", self.main2)
+        self.refuse_pushes()
+        code, _, err = self.run_promote("dev", self.main2, "", "", mod=self.mod_failing("refs/heads/release/dev"))
+        self.assertEqual(code, 1, err)
+        self.assertIn("(local dev and dev-2 restored)", err)
+        self.assertIn("local release/dev NOT reset; fix with `git update-ref refs/heads/release/dev %s`" % origin_branch, err)
+        self.assertNotIn("release/dev restored", err)
+
+    def test_a_failed_first_promotion_delete_says_so_with_the_fix(self):
+        self.refuse_pushes()
+        code, _, err = self.run_promote("dev", self.main1, "", "", mod=self.mod_failing("-d", "refs/tags/dev"))
+        self.assertEqual(code, 1, err)
+        self.assertRegex(err, r"dev is [0-9a-f]{12}, want absent")
+        self.assertIn("git update-ref -d refs/tags/dev`", err)
+
     def test_a_refused_first_promotion_leaves_no_local_tags(self):
         hook = os.path.join(self.origin, "hooks", "pre-receive")
         with open(hook, "w") as f:
