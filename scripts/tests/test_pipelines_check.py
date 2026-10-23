@@ -257,6 +257,7 @@ class Resources(unittest.TestCase):
             ("a string holding \\\" and }", self.tf.replace("  enabled ", '  description = "a \\" }"\n  enabled ')),
             ("an interpolation holding a \"}\"", self.tf.replace("  enabled ", '  description = "${"}"}"\n  enabled ')),
             ("a $${ escape", self.tf.replace("  enabled ", '  description = "$${x} %%{y}"\n  enabled ')),
+            ("an escape past the last code point", self.tf.replace("  enabled ", '  description = "\\UFFFFFFFF"\n  enabled ')),
             ("a module with a relative source", self.tf + '\nmodule "m" {\n  source = "../../modules/stack"\n}\n'),
         ]
         for name, tf in accepts:
@@ -318,6 +319,8 @@ class Resources(unittest.TestCase):
             ("an import block naming the type",
              {HERE: good + '\nimport {\n  to = %s.shared_kafka\n  id = "shared-kafka"\n}\n' % TYPE}, elsewhere),
             # Terraform decodes a label's escapes: this is a pipeline resource with inline contents.
+            ("a type label written with a \\U escape",
+             {HERE: good + "\n" + INLINE_RESOURCE.replace(TYPE, TYPE[:-1] + "\\U00000065")}, exact),
             ("a type label written with an escape",
              {HERE: good + "\n" + INLINE_RESOURCE.replace(TYPE, TYPE[:-1] + "\\u0065")}, exact),
             ("the type named in a string, written with escapes",

@@ -30,7 +30,9 @@ for_each, count or dynamic; every `module` there has a relative source inside th
 tf_policy's HCL tokenizer and parser, the ones the Terraform gate uses, so strings, heredocs, `$${`
 escapes and interpolations are read as Terraform reads them; an unparseable file is refused. Labels and
 strings are compared with their escapes decoded (`\u0065` is `e`), and a module source holding a
-backslash is refused, as tf_policy refuses it.
+backslash is refused, as tf_policy refuses it. Heredoc text is decoded too, although Terraform reads a
+heredoc's backslashes literally: the tokenizer doesn't tell the two apart, so an escaped type name in a
+heredoc is refused as a mention, which errs towards refusing.
 
 Every refusal prints `pipelines-check: refused: <file>:<line>: <rule>: <detail>`.
 
@@ -264,7 +266,8 @@ def hcl_unescape(value):
     def one(m):
         e = m.group(1)
         if e[0] in "uU" and len(e) > 1:
-            return chr(min(int(e[1:], 16), 0x10FFFF))
+            code = int(e[1:], 16)
+            return chr(code) if code <= 0x10FFFF else m.group(0)
         return HCL_SIMPLE.get(e, m.group(0))
     return HCL_ESCAPE.sub(one, value)
 
