@@ -226,10 +226,13 @@ class FakeNet:
     """kubectl as shared.netcheck uses it. verdicts maps (namespace, pod) to a list of probe outputs,
     one per exec, the last repeated; a namespace in scratch_like stands for the unlabelled one."""
 
-    def __init__(self, verdicts=None, labels=None):
+    BLOCKED = "probe-ran\nresolved\nanchored\nblocked\n"
+
+    def __init__(self, verdicts=None, labels=None, fail=()):
         self.labels = labels if labels is not None else {"andara-local": "local", "andara-dev": "dev"}
         self.verdicts = verdicts or {}
-        self.calls, self.applied, self.execs = [], [], {}
+        self.fail = set(fail)       # of "create", "apply", "wait"
+        self.calls, self.applied, self.execs, self.ready = [], [], {}, set()
 
     def __call__(self, cmd, capture_output=True, text=True, input=None):
         args = cmd[cmd.index("--context") + 2:]
@@ -243,16 +246,32 @@ class FakeNet:
                 return types.SimpleNamespace(returncode=1, stdout="", stderr="NotFound")
             lab = {"andara.valesor/env": self.labels[args[2]]} if self.labels[args[2]] else {}
             return ok(json.dumps({"metadata": {"name": args[2], "labels": lab}}))
+        no = types.SimpleNamespace(returncode=1, stdout="", stderr="boom")
         if args[:2] == ["apply", "-f"]:
+            if "apply" in self.fail:
+                return no
             self.applied.append(json.loads(input))
             return ok()
-        if args[0] in ("create", "wait", "delete"):
+        if args[0] == "create" and "create" in self.fail:
+            return no
+        if args[0] == "wait":
+            if "wait" in self.fail:
+                return no
+            self.ready.add((ns, args[2].split("/", 1)[1]))
+            return ok()
+        if args[:2] == ["get", "pod"]:
+            return ok(json.dumps({"status": {"phase": "Pending", "containerStatuses": [
+                {"state": {"waiting": {"reason": "ImagePullBackOff"}}}]}}))
+        if args[0] in ("create", "delete"):
             return ok()
         if args[0] == "exec":
             pod = args[1]
+            if (ns, pod) not in self.ready:
+                raise AssertionError("exec in %s/%s before its Ready wait" % (ns, pod))
             key = (ns, pod) if (ns, pod) in self.verdicts else ("scratch", pod) if ns.startswith("andara-netcheck-") else (ns, pod)
-            seq = self.verdicts.get(key, ["probe-ran\nconnected\n" if "-other" not in pod and not ns.startswith("andara-netcheck-")
-                                          else "probe-ran\nblocked\n"])
+            seq = self.verdicts.get(key, ["probe-ran\nresolved\nanchored\nconnected\n"
+                                          if "-other" not in pod and not ns.startswith("andara-netcheck-")
+                                          else self.BLOCKED])
             n = self.execs.get((ns, pod), 0)
             self.execs[(ns, pod)] = n + 1
             return ok(seq[min(n, len(seq) - 1)])
@@ -330,7 +349,7 @@ class NetCheck(unittest.TestCase):
                        ["probe-ran\nblocked\n", "probe-ran\nblocked\n", "probe-ran\nconnected\n"]})
         code, out, err = self.run_net(net)
         self.assertEqual(code, 0, err)
-        net = FakeNet({("andara-dev", "andara-netcheck-abc123"): ["probe-ran\nblocked\n"]})
+        net = FakeNet({("andara-dev", "andara-netcheck-abc123"): [FakeNet.BLOCKED]})
         code, out, _ = self.run_net(net, deadline=10)
         self.assertEqual(code, 1)
         self.assertIn("FAIL an andara pod in andara-dev: blocked (want connected)", out)
@@ -350,6 +369,47 @@ class NetCheck(unittest.TestCase):
             self.assertEqual(code, 1, labels)
             self.assertIn("andara-dev is missing or isn't labelled andara.valesor/env=dev; run `make shared-up`", err)
             self.assertFalse([a for _, a in net.calls if a[0] in ("create", "apply", "delete")])
+
+    def test_a_refusal_from_a_probe_that_couldnt_resolve_or_reach_the_anchor_fails(self):
+        # Reviewer on the netcheck PR: broken DNS or egress in the probe pod reads as blocked with
+        # no policy at all (live-assertions rule 3).
+        for out in ("probe-ran\nanchored\nblocked\n", "probe-ran\nresolved\nblocked\n"):
+            net = FakeNet({("scratch", "andara-netcheck-abc123"): [out]})
+            code, stdout, _ = self.run_net(net)
+            self.assertEqual(code, 1, out)
+            self.assertIn("FAIL an andara pod in an unlabelled namespace: unanchored (want blocked)", stdout)
+
+    def test_a_probe_that_isnt_ready_names_itself_and_why_and_still_cleans_up(self):
+        net = FakeNet(fail={"wait"})
+        code, _, err = self.run_net(net)
+        self.assertEqual(code, 1)
+        self.assertIn("probe andara-local/andara-netcheck-abc123 not Ready within 120s (ImagePullBackOff)", err)
+        self.assertEqual(len(self.cleanup(net)), 4)
+        self.assertFalse([a for _, a in net.calls if a[0] == "exec"])
+
+    def test_a_failed_create_or_apply_fails_and_cleans_up_what_it_made(self):
+        net = FakeNet(fail={"create"})
+        code, _, err = self.run_net(net)
+        self.assertEqual(code, 1)
+        self.assertNotIn(("", "namespace", "andara-netcheck-abc123"), self.cleanup(net))
+        net = FakeNet(fail={"apply"})
+        code, _, err = self.run_net(net)
+        self.assertEqual(code, 1)
+        self.assertIn("creating probe andara-local/andara-netcheck-abc123: boom", err)
+        self.assertIn(("", "namespace", "andara-netcheck-abc123"), self.cleanup(net))
+        self.assertFalse([a for _, a in net.calls if a[0] in ("wait", "exec")])
+
+    def test_a_namespace_labelled_for_the_other_environment_refuses(self):
+        net = FakeNet(labels={"andara-local": "local", "andara-dev": "local"})
+        code, _, err = self.run_net(net)
+        self.assertEqual(code, 1)
+        self.assertIn("andara-dev is missing or isn't labelled andara.valesor/env=dev", err)
+
+    def test_a_verdict_without_the_marker_is_no_verdict(self):
+        net = FakeNet({("scratch", "andara-netcheck-abc123"): ["resolved\nanchored\nblocked\n"]})
+        code, _, err = self.run_net(net)
+        self.assertEqual(code, 1)
+        self.assertIn("gave no verdict", err)
 
     def test_the_probe_image_is_the_toolbox_s(self):
         self.assertRegex(shared.tools_image(), r"^docker\.redpanda\.com/redpandadata/redpanda:v\d")
