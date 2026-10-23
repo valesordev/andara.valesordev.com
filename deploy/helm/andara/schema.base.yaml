@@ -208,7 +208,8 @@ properties:
     properties:
       rolled_back_to: {type: string, description: "The tag a rollback returned to; empty on a forward deploy or promotion"}
 # dev's topics carry the `dev.` prefix on the shared broker (ADR-0013 amendment 16, AW-INF-059):
-# an empty prefix there would read and write prod's topic names. AW-INF-055 adds local.
+# an empty prefix there would read and write prod's topic names. local's check is
+# templates/configmap.yaml's `required` (AW-INF-055).
 allOf:
   - if:
       required: [server]

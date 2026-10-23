@@ -2,6 +2,7 @@
 # Copyright 2026 Valesor Development
 
 """`make env-destroy` (AW-INF-021 AC-7): refusals, idempotence, and the Application before the namespace."""
+import json
 import os
 import subprocess
 import sys
@@ -71,9 +72,11 @@ class Cluster:
         return -1
 
 
-def run(cluster):
+def run(cluster, topics_step=None):
     with mock.patch.object(env_destroy, "kubectl", cluster.kubectl), \
-            mock.patch.object(env_destroy.time, "sleep", lambda n: None):
+            mock.patch.object(env_destroy.time, "sleep", lambda n: None), \
+            mock.patch.object(env_destroy, "delete_topics",
+                              topics_step or (lambda env: cluster.calls.append(("topics", env)))):
         return env_destroy.main(["dev", "andara-dev"])
 
 
@@ -95,7 +98,92 @@ class Destroy(unittest.TestCase):
     def test_an_unreadable_application_stops_before_any_delete(self):
         c = Cluster(app="forbidden")
         self.assertEqual(run(c), 1)
-        self.assertFalse([x for x in c.calls if "delete" in x or "patch" in x], c.calls)
+        self.assertFalse([x for x in c.calls if "delete" in x or "patch" in x or "topics" in x], c.calls)
+
+    def test_the_environments_topics_go_after_the_namespace(self):
+        c = Cluster()
+        self.assertEqual(run(c), 0)
+        self.assertLess(c.index("delete", "namespace"), c.index("topics"))
+        self.assertIn(("topics", "dev"), c.calls)
+
+
+class SharedTopics(unittest.TestCase):
+    """AW-INF-055: env-destroy starts the environment from nothing on the shared broker too, and
+    never names the other environment's topics."""
+
+    def broker(self, live, refuse_group=None, sticky=False):
+        """A broker whose deletes take effect at once, unless `sticky` (never)."""
+        calls = []
+        live = list(live)
+
+        def run(args):
+            calls.append(list(args))
+            if args[:2] == ["topic", "delete"] and not sticky and args[2] in live:
+                live.remove(args[2])
+            if args[:2] == ["topic", "list"]:
+                return types.SimpleNamespace(returncode=0, stderr="",
+                                             stdout=json.dumps([{"name": n, "partitions": 1} for n in live]))
+            if args[:2] == ["group", "delete"]:
+                if args[2] == refuse_group:
+                    return types.SimpleNamespace(returncode=1, stdout="", stderr="GROUP_AUTHORIZATION_FAILED")
+                return types.SimpleNamespace(returncode=1, stdout="", stderr="GROUP_ID_NOT_FOUND: not found")
+            return types.SimpleNamespace(returncode=0, stdout="", stderr="")
+        return run, calls
+
+    def test_only_its_own_prefixed_topics_and_groups(self):
+        live = ["dev.andara.commands.v1", "dev.andara.audit.v1", "local.andara.commands.v1", "__consumer_offsets"]
+        run, calls = self.broker(live)
+        with mock.patch("sys.stdout"):
+            env_destroy.delete_topics("dev", run=run)
+        deleted = [c[2] for c in calls if c[:2] == ["topic", "delete"]]
+        self.assertEqual(sorted(deleted), ["dev.andara.audit.v1", "dev.andara.commands.v1"])
+        groups = [c[2] for c in calls if c[:2] == ["group", "delete"]]
+        self.assertIn("andara-sim-dev", groups)
+        self.assertTrue(all(g.endswith("-dev") for g in groups), groups)
+        self.assertFalse([c for c in calls if any("local" in str(a) for a in c)], calls)
+
+    def test_it_waits_until_the_deleted_topics_leave_the_listing(self):
+        live = ["dev.andara.commands.v1"]
+        lists = []
+        base, calls = self.broker(live)
+
+        def run(args):
+            if args[:2] == ["topic", "list"]:
+                lists.append(1)
+                # Still listed on the first read after the delete, gone on the next.
+                shown = live if len(lists) <= 2 else []
+                return types.SimpleNamespace(returncode=0, stderr="",
+                                             stdout=json.dumps([{"name": n, "partitions": 1} for n in shown]))
+            return base(args)
+
+        sleeps = []
+        with mock.patch("sys.stdout"):
+            env_destroy.delete_topics("dev", run=run, sleep=sleeps.append)
+        self.assertEqual(len(lists), 3)
+        self.assertEqual(sleeps, [2])
+
+    def test_a_topic_that_never_leaves_fails_at_the_deadline(self):
+        run, _ = self.broker(["dev.andara.commands.v1"], sticky=True)
+        t = [0]
+
+        def clock():
+            t[0] += 100
+            return t[0]
+        with self.assertRaises(env_destroy.StepFailed) as e:
+            env_destroy.delete_topics("dev", run=run, sleep=lambda s: None, clock=clock)
+        self.assertIn("still listed", str(e.exception))
+
+    def test_a_refused_group_delete_fails_naming_it(self):
+        run, _ = self.broker([], refuse_group="andara-sim-dev")
+        with self.assertRaises(env_destroy.StepFailed) as e:
+            env_destroy.delete_topics("dev", run=run)
+        self.assertIn("andara-sim-dev", str(e.exception))
+
+    def test_an_environment_without_a_prefix_is_refused(self):
+        run, calls = self.broker(["andara.commands.v1"])
+        with self.assertRaises(env_destroy.StepFailed):
+            env_destroy.delete_topics("prod", run=run)
+        self.assertEqual(calls, [])
 
 
 if __name__ == "__main__":

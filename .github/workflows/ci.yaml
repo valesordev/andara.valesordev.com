@@ -108,6 +108,10 @@ jobs:
       # AW-INF-053: every kubectl, helm and kind call names ANDARA_KUBE_CONTEXT's cluster.
       - name: kube context
         run: make kube-context-check
+      # AW-INF-055 AC-9: the KafkaUsers rendered from topics.yaml grant no principal topic Create,
+      # Alter or AlterConfigs, and no literal `*`.
+      - name: kafka users
+        run: make kafka-users-check
       # AW-INF-029. On a pull request the merge base with origin/main comes from
       # fetch-depth: 0 above. On a push to main it compares with the commit main was at before
       # the push, so a multi-commit push is checked whole; main's runs are never cancelled (the

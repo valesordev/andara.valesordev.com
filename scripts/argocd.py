@@ -45,6 +45,8 @@ VALUES = os.path.join(REPO, "deploy", "helm", "values", "dev.yaml")
 VALUES_PATH = "deploy/helm/values/dev.yaml"
 # The Git tag the Application follows, which `make promote` moves (AW-INF-059).
 DEV_TAG = "dev"
+# The namespace label the shared Kafka's listener admits (kafka.sh's ENV_LABEL, AW-INF-055).
+ENV_LABEL = "andara.valesor/env"
 FIELD_MANAGER = "andara-argocd-install"
 TRACKING = "argocd.argoproj.io/tracking-id"
 SYNC_DEADLINE = 600
@@ -158,7 +160,15 @@ def preconditions(ns):
     k = kubectl_json("-n", kns, "get", "kafka", "andara-log") or {}
     ready = [c for c in k.get("status", {}).get("conditions", []) if c.get("type") == "Ready"]
     if not ready or ready[0].get("status") != "True":
-        die("install", "no Ready kafka/andara-log in %s; it comes from the shared broker (AW-INF-055)" % kns)
+        die("install", "no Ready kafka/andara-log in %s; run `make shared-up` first" % kns)
+    # The shared Kafka's listener admits the server only from a namespace labelled with its
+    # environment (deploy/k8s/kafka/kafka.yaml), which shared-up sets and env-destroy removes.
+    if kns != ns:
+        want = ns[len("andara-"):]
+        got = ((kubectl_json("get", "namespace", ns) or {}).get("metadata", {}).get("labels") or {}).get(ENV_LABEL)
+        if got != want:
+            die("install", "namespace %s isn't labelled %s=%s, so the shared Kafka won't admit its server; "
+                "run `make shared-up` first" % (ns, ENV_LABEL, want))
     say("preconditions: traefik, cert-manager, ClusterIssuers %s, kafka/andara-log in %s"
         % (", ".join(dict.fromkeys(("andara-ca", edge))), kns))
 

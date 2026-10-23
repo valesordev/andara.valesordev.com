@@ -34,8 +34,12 @@ chart, and one `Deployment` per projector. Story: [AW-INF-003](https://github.co
 | `make helm-test` | render-level assertions (PVC retention, no secret material, schema rejections, probes, ordinal→Partitions); in `make check` |
 | `make image [TAG=]` | build `andara-server:<tag>` from `deploy/compose/Dockerfile.server` |
 | `make image-publish` | build for linux/amd64 and push `ghcr.io/valesordev/andara-server:sha-<12 hex>`, printing its digest; nothing moves `:dev` (AW-INF-059); what `.github/workflows/publish.yaml` runs on every merge to `main` (AW-INF-013) |
-| `make kafka-install ENV=prod` | Kafka `andara-log` (`deploy/k8s/kafka/`) in `andara-<env>`, waits for Ready, applies `deploy/kafka/topics.yaml` through the `rpk` toolbox; refuses unless `platform-up`'s Strimzi watches the namespace (it watches `andara-shared` only; the shared broker is AW-INF-055's) |
-| `make kafka-broker-bounce ENV=prod` | delete one broker; after it rejoins with every partition in sync, assert once that the server never left Ready, never logged `command log unreachable`, and refused no Submit |
+| `make shared-up` | the shared services in `andara-shared` (see *Shared services* below): the Kafka `andara-log` (`deploy/k8s/kafka/`), waits for Ready, labels `andara-local` and `andara-dev`, and applies both environments' prefixed topics; refuses with exit 3 unless `platform-up`'s Strimzi watches `andara-shared`; idempotent |
+| `make shared-down CONFIRM=andara-shared` | delete the shared Kafka and its PVCs, which hold every environment's Command history; without the CONFIRM it exits 2 and removes nothing. The namespace stays (`platform-up`'s) |
+| `make shared-check` | each `andara-shared` PVC's use against its size (exit 1 over 80%), each broker's bytes per environment prefix, and every topic outside both prefixes on its own line; an unprefixed `andara.` topic other than `andara.test.` fails it |
+| `make kafka-install ENV=<local\|dev>` | the shared Kafka, as `shared-up`, then only `ENV`'s prefixed topics |
+| `make kafka-broker-bounce ENV=dev` | delete one shared broker; after it rejoins with every partition in sync, assert once that `ENV`'s server never left Ready, never logged `command log unreachable`, and refused no Submit. Both environments lose the broker while it's gone |
+| `make kafka-users` / `kafka-users-check` | print the per-environment `KafkaUser`s rendered from `deploy/kafka/topics.yaml`'s `principals` / check that none grants a topic Create, Alter or AlterConfigs or a literal `*`, each stays inside its prefix, and each workload has one per environment; the check is in `make check`. AW-INF-056 applies them |
 | `make image-check ENV=<env> [TAG=dev] [REGISTRY_ONLY=1]` | prove a published tag pulls anonymously (and a `sha-` tag carries its commit), then from the cluster with a throwaway `/bin/true` pod in `andara-<env>` |
 | `make kind-load` | load the image into the kind cluster `ANDARA_KUBE_CONTEXT` names, without its `kind-` prefix (`andara` by default); a context that isn't a `kind-` one exits 2 |
 | `make kube-context-check` | no `kubectl`, `helm` or `kind` call in `scripts/`, the `Makefile` or a workflow's `run:` step acts on the ambient context, and none moves `current-context`; in `make check` (AW-INF-053) |
@@ -178,12 +182,36 @@ The state projector's replica count is ignored (`ignoreDifferences`, `RespectIgn
 with the build `make argocd-status` shows (`helm-install ENV=dev` refuses without `TAG`: `:dev` no longer moves);
 nothing restarts and no data moves.
 
-**The broker (AW-INF-014).** `prod` runs Apache Kafka `andara-log` in its namespace, three brokers under the
-Strimzi operator (ADR-0002 §7: Kafka in production), from `make kafka-install ENV=prod`; `dev` uses the shared
-`andara-log` in `andara-shared` under its topic prefix `dev` (ADR-0013 amendment 16, AW-INF-055, AW-INF-059);
-`local` stays broker-free. `helm-install` and `argocd-install` refuse while the `kafka/andara-log` the values
-file's `server.kafka.brokers` names is not Ready. It also refuses without the operator credential,
-because `local`'s default is public and this edge is not. `dev`'s sim and Accounts live on the broker. Its content
-still comes from the same ConfigMaps as `local`, as compose reads a directory, until AW-SRV-012.
-`make kafka-broker-bounce ENV=prod` shows losing one broker costs the World nothing; `ENV=dev` refuses (exit 2), since
-the shared broker's bounce is AW-INF-055's.
+**The broker (AW-INF-014, AW-INF-055).** `dev` runs on Apache Kafka `andara-log`, three brokers under the Strimzi
+operator (ADR-0002 §7: Kafka in production), shared with `local` in `andara-shared` (*Shared services*, below). `local`'s
+server still runs broker-free until AW-INF-060. So a `dev` install is `make shared-up` first, then
+`ANDARA_BOOTSTRAP_OPERATOR=<user>:<password> make helm-install ENV=dev TAG=<sha-…@sha256:…>` (or `make promote`).
+`helm-install` and `argocd-install` refuse while the `kafka/andara-log` the values file's `server.kafka.brokers`
+names is not Ready. `helm-install` also refuses without the operator credential, because `local`'s default is public
+and this edge is not. `dev`'s sim and Accounts live on the broker, under its prefix `dev` (AW-INF-059, ADR-0013
+amendment 16). `make kafka-broker-bounce ENV=dev` shows losing one broker costs the World nothing.
+
+### Shared services
+
+`andara-shared` holds what `local` and `dev` share on the box (ADR-0013 decisions 3–5). Today that's the Kafka
+`andara-log`, reached as `andara-log-kafka-bootstrap.andara-shared.svc:9092`, which `values/local.yaml` sets as
+`server.kafka.brokers`, as does `values/dev.yaml` (AW-INF-059). `make shared-up` installs it and `make cluster-rebuild` runs `shared-up`. Resetting or
+destroying `andara-local` or `andara-dev` never touches it.
+
+- **Topics are per environment, by prefix.** Each environment's topics are `<prefix>.<name>`, with the prefix from
+  `deploy/kafka/topics.yaml`'s `environments`: `local.andara.commands.v1`, `dev.andara.commands.v1`. The chart's
+  `server.kafka.topic_prefix` is `local` in `values/local.yaml` and `dev` in `values/dev.yaml`, and a `local` or `dev`
+  render without it fails (ADR-0013 amendment 16). Partition counts are the same in both. `local`'s topics are RF 1 with
+  `min.insync.replicas` 1 and bounded to 64 MiB per partition and 7 days; `dev`'s are RF 3, ISR 2, with the
+  retention `topics.yaml` declares.
+- **Who may connect.** The listener's NetworkPolicy, which Strimzi renders from `networkPolicyPeers` in
+  `deploy/k8s/kafka/kafka.yaml`, admits a pod labelled `app.kubernetes.io/name: andara` (the server and every
+  projector) in a namespace labelled `andara.valesor/env` `local` or `dev`, and the `rpk` toolbox
+  (`app.kubernetes.io/name: andara-kafka-tools`) in `andara-shared`, and the broker pool itself, for the tools run in a broker pod (`shared-check`'s `kafka-log-dirs`, `kafka-broker-bounce`'s `kafka-topics`). Nothing else connects, including an `andara` pod
+  in an unlabelled namespace. `make shared-up` sets the labels.
+- **Principals.** The per-environment `KafkaUser`s (`andara-server-dev`, `andara-projector-state-local`, …) are
+  rendered from `topics.yaml` and checked by `make kafka-users-check`. AW-INF-056 applies them with SASL and the
+  authorizer. Until then, `local`'s retention bound is the only bound on what it can take of the brokers.
+- **What sharing costs.** One environment can fill the brokers' disks or exhaust their partitions or connections for
+  both, and a broker fault puts both read-only at once. `make shared-check` is the control for the disks.
+  `docs/specs/kafka/broker-contract.md` states the shared failure domain.

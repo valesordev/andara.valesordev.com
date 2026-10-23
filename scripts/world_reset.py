@@ -2,16 +2,23 @@
 # SPDX-License-Identifier: Apache-2.0
 # Copyright 2026 Valesor Development
 
-"""`make world-reset ENV=<env> CONFIRM=<namespace>` — start an environment's World over.
+"""`make world-reset ENV=<env> CONFIRM=<namespace> [BROKER=compose|cluster]` — start an
+environment's World over.
 
-    scripts/world_reset.py <env> <confirm>
+    scripts/world_reset.py <env> <confirm> [--broker compose|cluster]
 
 Recreates the World's log topics and the Account store, and empties the snapshot store and
 the projector's state, keeping content (AW-INF-021, feedback item 2). Every Character and
 Account is destroyed. The bootstrap operator comes back from its Secret on the next boot.
 
-Refused with exit 2 before anything touches the cluster: ENV=prod, ENV=local (whose World is
-`make down VOLUMES=1`), a missing CONFIRM, or a CONFIRM that isn't the target namespace.
+The topics are the environment's own on the shared broker, `<prefix>.<name>` from
+deploy/kafka/topics.yaml (AW-INF-055): a reset of local never touches a `dev.` topic, and the
+reverse.
+
+Refused with exit 2 before anything touches the cluster: ENV=prod; ENV=local on the compose
+broker (the default while compose exists; its World is `make down VOLUMES=1`), while local on
+`--broker cluster` resets andara-local (ADR-0013 amendment 23); `--broker` with any other
+environment; a missing CONFIRM, or a CONFIRM that isn't the target namespace.
 
 Steps, in order, each named on failure:
   0. Preconditions, before anything changes: the Argo CD Application is readable (only a
@@ -44,7 +51,8 @@ import projector  # noqa: E402
 import topics  # noqa: E402
 
 # Named explicitly: a topic added to topics.yaml later is kept unless it's added here. Never
-# andara.content.* or andara.audit.v1.
+# andara.content.* or andara.audit.v1. These are the names within an environment; reset_names
+# puts the environment's prefix on them.
 RESET_TOPICS = ["andara.commands.v1", "andara.events.v1", "andara.state.v1", "andara.accounts.v1"]
 SERVER = "statefulset/andara"
 SERVER_POD = "andara-0"
@@ -92,19 +100,37 @@ def scale(ns, ref, n):
 
 
 def check_args(argv):
+    """(env, namespace, broker), or refuse with exit 2."""
+    argv = list(argv)
+    broker = ""
+    if "--broker" in argv:
+        i = argv.index("--broker")
+        broker = argv[i + 1] if i + 1 < len(argv) else ""
+        del argv[i:i + 2]
+        if broker not in topics.BROKERS:
+            refuse("--broker is compose or cluster, not '%s'" % broker)
     if len(argv) != 2 or not argv[0]:
-        refuse("usage: make world-reset ENV=<env> CONFIRM=andara-<env>")
+        refuse("usage: make world-reset ENV=<env> CONFIRM=andara-<env> [BROKER=compose|cluster]")
     env, confirm = argv
     if env == "prod":
         refuse("prod is never reset")
-    if env == "local":
-        refuse("local's World is `make down VOLUMES=1`")
+    if broker and env != "local":
+        refuse("BROKER means something only for local; %s is always the cluster's" % env)
+    if env == "local" and (broker or topics.default_broker()) != "cluster":
+        refuse("local's World on the compose broker is `make down VOLUMES=1`; "
+               "BROKER=cluster resets andara-local on the shared broker")
     ns = "andara-" + env
     if not confirm:
         refuse("CONFIRM is missing; it must be the namespace, %s" % ns)
     if confirm != ns:
         refuse("CONFIRM=%s is not the namespace %s" % (confirm, ns))
-    return env, ns
+    return env, ns, broker or "cluster"
+
+
+def reset_names(env, decl=topics.DECL):
+    """RESET_TOPICS as the environment's topics: `<prefix>.<name>` (AW-INF-055)."""
+    prefix = topics.environment(decl, env)["prefix"]
+    return [topics.topic_name(prefix, n) for n in RESET_TOPICS]
 
 
 def argo_policy(ns):
@@ -150,26 +176,29 @@ def restore_argo(app, policy):
     say("restored Argo CD's automated sync on %s" % app)
 
 
-def reset_topics(env, run):
+def reset_topics(env, run, sleep=time.sleep):
+    """Delete the environment's RESET_TOPICS and recreate them. Always the shared Kafka: local
+    on compose is refused before this (check_args)."""
+    names = reset_names(env)
     live = topics.existing_topics(run)
-    for name in RESET_TOPICS:
+    for name in names:
         if name not in live:
             continue
         res = run(["topic", "delete", name])
         if res.returncode != 0:
             raise StepFailed("delete %s: %s" % (name, (res.stderr or res.stdout).strip()))
     deadline = time.time() + TOPIC_DELETE_DEADLINE
-    while set(RESET_TOPICS) & set(topics.existing_topics(run)):
+    while set(names) & set(topics.existing_topics(run)):
         if time.time() > deadline:
             raise StepFailed("topics still present %ds after delete" % TOPIC_DELETE_DEADLINE)
-        time.sleep(2)
-    say("deleted %s" % ", ".join(RESET_TOPICS))
-    if topics.run_action("apply", env, [], run) != 0:
+        sleep(2)
+    say("deleted %s" % ", ".join(names))
+    if topics.run_action("apply", env, [], run, rp=False) != 0:
         raise StepFailed("recreate topics from deploy/kafka/topics.yaml")
 
 
-def reset(env, ns):
-    run = topics.rpk_runner(env)
+def reset(env, ns, broker="cluster"):
+    run = topics.rpk_runner(env, broker)
     argo_policy(ns)
     store = snapshot_store(ns)
     if store not in ("fs", "s3"):
@@ -268,9 +297,9 @@ def wait_up(ns, deadline=READY_DEADLINE, sleep=time.sleep, clock=time.monotonic)
 
 
 def main(argv):
-    env, ns = check_args(argv)
+    env, ns, broker = check_args(argv)
     try:
-        reset(env, ns)
+        reset(env, ns, broker)
     except StepFailed as e:
         print("world-reset: %s" % e, file=sys.stderr)
         return 1

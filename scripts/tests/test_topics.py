@@ -30,13 +30,26 @@ class RpkPrefix(unittest.TestCase):
         p = mock.patch.dict(os.environ, dict(env, KUBECONFIG=fixture), clear=True)
         p.start()
         self.addCleanup(p.stop)
-        for env in ("dev", "prod"):
-            with self.subTest(env=env):
-                p = topics.rpk_prefix(env, compose_redpanda_running=True, host_rpk=True)
+        for env, broker in (("dev", "compose"), ("prod", "compose"), ("local", "cluster")):
+            with self.subTest(env=env, broker=broker):
+                p = topics.rpk_prefix(env, compose_redpanda_running=True, host_rpk=True, broker=broker)
                 self.assertNotIn("docker", p)
-                self.assertEqual(p[:5], ["kubectl", "--context", "kind-andara", "-n", "andara-" + env])
+                # One shared broker for every environment (AW-INF-055), never andara-<env>.
+                self.assertEqual(p[:5], ["kubectl", "--context", "kind-andara", "-n", "andara-shared"])
                 self.assertIn(topics.CLUSTER_TOOLBOX, p)
                 self.assertEqual(p[-3:], ["rpk", "-X", "brokers=" + topics.CLUSTER_BOOTSTRAP])
+
+    def test_the_kafka_namespace_is_overridable(self):
+        fixture = os.path.join(os.path.dirname(os.path.abspath(__file__)), "fixtures", "kubeconfig")
+        env = {k: v for k, v in os.environ.items() if k != "ANDARA_KUBE_CONTEXT"}
+        with mock.patch.dict(os.environ, dict(env, KUBECONFIG=fixture, ANDARA_KAFKA_NAMESPACE="ci-kafka"),
+                             clear=True):
+            self.assertEqual(topics.rpk_prefix("dev", False, False)[3:5], ["-n", "ci-kafka"])
+
+    def test_the_compose_broker_is_only_locals(self):
+        self.assertTrue(topics.redpanda("local", "compose"))
+        self.assertFalse(topics.redpanda("local", "cluster"))
+        self.assertFalse(topics.redpanda("dev", "compose"))
 
 
 if __name__ == "__main__":
@@ -53,6 +66,11 @@ import textwrap  # noqa: E402
 from types import SimpleNamespace  # noqa: E402
 
 DECL = textwrap.dedent("""\
+    environments:
+      local:
+        prefix: ""
+      dev:
+        prefix: ""
     defaults:
       replication_factor:
         local: 1
@@ -286,3 +304,212 @@ class Apply(unittest.TestCase):
         self.assertEqual(code, 1)
         self.assertIn("events: retention.ms is '500', declaration says '1000'", err)
         self.assertEqual(b.alters(), [])
+
+
+# --- AW-INF-055: one shared broker, each environment's topics under its prefix ------------------
+
+PREFIXED = textwrap.dedent("""\
+    environments:
+      local:
+        prefix: local
+        retention.bytes: 67108864
+        retention.ms: 604800000
+        segment.bytes: 16777216
+        segment.ms: 86400000
+      dev:
+        prefix: dev
+      prod:
+        prefix: ""
+    defaults:
+      replication_factor:
+        local: 1
+        dev: 3
+        prod: 3
+      config:
+        min.insync.replicas:
+          local: 1
+          dev: 2
+          prod: 2
+    topics:
+      - name: andara.log.v1
+        partitions: 4
+        cleanup.policy: delete
+        retention.ms: -1
+      - name: andara.kv.v1
+        partitions: 2
+        cleanup.policy: compact
+    broker:
+      assert:
+        unclean.leader.election.enable: "false"
+      local:
+        some.local.setting: "1"
+    principals:
+      - name: andara-server
+        topics:
+          andara.log.v1: [Read, Write]
+    """)
+
+REAL_DECL = topics.DECL
+
+
+class Prefixed(unittest.TestCase):
+    def setUp(self):
+        fd, self.decl = tempfile.mkstemp(suffix=".yaml")
+        with os.fdopen(fd, "w") as f:
+            f.write(PREFIXED)
+        self.addCleanup(os.unlink, self.decl)
+
+    def apply(self, broker, env, rp, action="apply", allow=()):
+        out, err = io.StringIO(), io.StringIO()
+        try:
+            with contextlib.redirect_stderr(err):
+                code = topics.run_action(action, env, list(allow), broker, decl=self.decl, out=out,
+                                         err=err, rp=rp)
+        except SystemExit as e:
+            code = e.code
+        return code, out.getvalue(), err.getvalue()
+
+    def creates(self, b):
+        return {c[2]: c for c in b.calls if c[:2] == ["topic", "create"]}
+
+    def test_names_are_prefix_dot_name_and_prod_is_bare(self):
+        self.assertEqual(topics.topic_name("dev", "andara.commands.v1"), "dev.andara.commands.v1")
+        self.assertEqual(topics.topic_name("", "andara.commands.v1"), "andara.commands.v1")
+
+    def test_dev_creates_only_dev_topics_with_rf_3_and_isr_2(self):
+        b = FakeBroker({"local.andara.log.v1": (4, {"cleanup.policy": "delete"})})
+        code, out, _ = self.apply(b, "dev", rp=False)
+        self.assertEqual(code, 0, out)
+        made = self.creates(b)
+        self.assertEqual(sorted(made), ["dev.andara.kv.v1", "dev.andara.log.v1"])
+        log = made["dev.andara.log.v1"]
+        self.assertEqual(log[3:7], ["-p", "4", "-r", "3"])
+        self.assertIn("min.insync.replicas=2", log)
+        self.assertIn("retention.ms=-1", log)
+        self.assertFalse(any("retention.bytes" in a for a in log), "dev keeps its declared retention")
+        # The other environment's topic is never read, let alone altered.
+        self.assertFalse([c for c in b.calls if "local.andara.log.v1" in c])
+        self.assertIn("prefix=dev", out)
+
+    def test_local_on_the_cluster_is_bounded_and_kafka(self):
+        b = FakeBroker({})
+        code, out, _ = self.apply(b, "local", rp=False)
+        self.assertEqual(code, 0, out)
+        made = self.creates(b)
+        self.assertEqual(sorted(made), ["local.andara.kv.v1", "local.andara.log.v1"])
+        for name, cmd in made.items():
+            with self.subTest(topic=name):
+                self.assertEqual(cmd[5:7], ["-r", "1"])
+                self.assertIn("min.insync.replicas=1", cmd)
+                # Every local topic rolls segments at 16 MiB and at most a day (the contract's
+                # segment.ms <= 86400000), or no bound touches the active segment.
+                self.assertIn("segment.bytes=16777216", cmd)
+                self.assertIn("segment.ms=86400000", cmd)
+        log, kv = made["local.andara.log.v1"], made["local.andara.kv.v1"]
+        # local's bound wins over the delete topic's own retention (-1 on the log) …
+        self.assertIn("retention.bytes=67108864", log)
+        self.assertIn("retention.ms=604800000", log)
+        # … and a compacted topic declares no retention (broker-contract.md, `local.` bounds).
+        self.assertFalse([a for a in kv if a.startswith("retention.")], kv)
+        # Kafka, not Redpanda: no Redpanda cluster setting is written to the shared broker.
+        self.assertFalse([c for c in b.calls if c[:3] == ["cluster", "config", "set"]])
+
+    def test_local_on_kafka_asserts_the_broker_settings(self):
+        cfg = {"cleanup.policy": "delete", "retention.ms": "604800000", "retention.bytes": "67108864",
+               "min.insync.replicas": "1"}
+        b = FakeBroker({"local.andara.log.v1": (4, dict(cfg)),
+                        "local.andara.kv.v1": (2, dict(cfg, **{"cleanup.policy": "compact"}))})
+        code, _, err = self.apply(b, "local", rp=False, action="diff")
+        self.assertEqual(code, 1)
+        self.assertIn("unclean.leader.election.enable is not reported", err)
+
+    def test_an_existing_local_topic_at_kafkas_segment_defaults_is_drift_and_aligned(self):
+        # Without segment.* in COMPARED, a live topic left at 1 GiB / 7 days would never be bounded.
+        cfg = {"cleanup.policy": "delete", "retention.ms": "604800000", "retention.bytes": "67108864",
+               "min.insync.replicas": "1", "unclean.leader.election.enable": "false",
+               "segment.bytes": "1073741824", "segment.ms": "604800000"}
+        kv = dict(cfg, **{"cleanup.policy": "compact"})
+        for k in ("retention.ms", "retention.bytes"):
+            del kv[k]
+        live = {"local.andara.log.v1": (4, cfg), "local.andara.kv.v1": (2, kv)}
+        code, _, err = self.apply(FakeBroker(live), "local", rp=False, action="diff")
+        self.assertEqual(code, 1)
+        for key, have, want in (("segment.bytes", "1073741824", "16777216"), ("segment.ms", "604800000", "86400000")):
+            self.assertIn("local.andara.log.v1: %s is '%s', declaration says '%s'" % (key, have, want), err)
+        b = FakeBroker(live)
+        code, out, err = self.apply(b, "local", rp=False)
+        self.assertEqual(code, 0, err)
+        altered = {(c[2], c[4].split("=")[0]) for c in b.alters()}
+        for topic in ("local.andara.log.v1", "local.andara.kv.v1"):
+            self.assertIn((topic, "segment.bytes"), altered)
+            self.assertIn((topic, "segment.ms"), altered)
+        self.assertNotIn("data loss accepted", out)
+
+    def test_local_on_compose_still_writes_redpandas_settings(self):
+        b = FakeBroker({})
+        code, _, _ = self.apply(b, "local", rp=True)
+        self.assertEqual(code, 0)
+        self.assertIn(["cluster", "config", "set", "some.local.setting", "1"], b.calls)
+
+    def test_a_lower_retention_bytes_is_data_loss(self):
+        self.assertTrue(topics.destructive("retention.bytes", "-1", "67108864"))
+        self.assertTrue(topics.destructive("retention.bytes", None, "67108864"))
+        self.assertFalse(topics.destructive("retention.bytes", "67108864", "-1"))
+        cfg = {"cleanup.policy": "delete", "retention.ms": "604800000", "retention.bytes": "-1",
+               "min.insync.replicas": "1"}
+        b = FakeBroker({"local.andara.log.v1": (4, dict(cfg)),
+                        "local.andara.kv.v1": (2, dict(cfg, **{"cleanup.policy": "compact"}))})
+        code, _, err = self.apply(b, "local", rp=True)
+        self.assertEqual(code, 1)
+        self.assertIn("re-run with ALLOW_DATA_LOSS=local.andara.log.v1", err)
+        self.assertEqual(b.alters(), [])
+
+    def test_an_environment_without_a_prefix_entry_is_refused(self):
+        b = FakeBroker({})
+        code, _, err = self.apply(b, "staging", rp=False)
+        self.assertEqual(code, 1)
+        self.assertIn("no environment 'staging'", err)
+        self.assertEqual(b.calls, [])
+
+    def test_the_real_declaration_prefixes_local_and_dev(self):
+        envs = topics.parse_environments(REAL_DECL)
+        self.assertEqual(envs["local"]["prefix"], "local")
+        self.assertEqual(envs["dev"]["prefix"], "dev")
+        self.assertEqual(envs["prod"]["prefix"], "")
+        self.assertEqual(envs["local"]["config"],
+                         {"retention.bytes": "67108864", "retention.ms": "604800000",
+                          "segment.bytes": "16777216", "segment.ms": "86400000"})
+        self.assertEqual(envs["dev"]["config"], {})
+
+
+class Usage(unittest.TestCase):
+    def main(self, *argv):
+        err = io.StringIO()
+        with mock.patch.object(sys, "argv", ["topics.py"] + list(argv)), \
+                mock.patch.object(topics, "rpk_runner", side_effect=AssertionError("reached a broker")), \
+                contextlib.redirect_stderr(err):
+            with self.assertRaises(SystemExit) as e:
+                topics.main()
+        return e.exception.code, err.getvalue()
+
+    def test_broker_with_dev_is_a_usage_error(self):
+        code, err = self.main("apply", "--env", "dev", "--broker", "cluster")
+        self.assertEqual(code, 2)
+        self.assertIn("only for local", err)
+
+    def test_prod_is_refused_before_any_broker(self):
+        # Its unprefixed names would be strays on the shared broker (ADR-0013 decision 10).
+        code, err = self.main("apply", "--env", "prod")
+        self.assertEqual(code, 2)
+        self.assertIn("prod's Kafka is not on this cluster", err)
+
+    def test_the_reserved_groups_are_the_environments(self):
+        groups = topics.consumer_groups("dev")
+        self.assertIn("andara-sim-dev", groups)
+        self.assertIn("andara-projector-state-dev", groups)
+        self.assertTrue(all(g.endswith("-dev") for g in groups), groups)
+
+    def test_an_unknown_broker_is_a_usage_error(self):
+        code, err = self.main("apply", "--env", "local", "--broker", "laptop")
+        self.assertEqual(code, 2)
+        self.assertIn("compose or cluster", err)

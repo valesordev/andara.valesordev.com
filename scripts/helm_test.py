@@ -489,11 +489,13 @@ def test_label_values():
 
 
 def test_kafka_on_the_box():
-    """AW-INF-014 AC-8: prod points at its namespace's Kafka `andara-log`, dev at the shared one in
-    andara-shared under its topic prefix (AW-INF-059 AC-11), and both run the sim and the Account
-    store on it (the chart renders only what is set, so the memory switches must be absent,
-    leaving the `kafka` defaults). local stays broker-free."""
-    wants = {"dev": ("andara-log-kafka-bootstrap.andara-shared.svc:9092", "dev"),
+    """AW-INF-014 AC-8: dev points at the shared Kafka in andara-shared under its topic prefix
+    (AW-INF-059 AC-11) and prod at a bare bootstrap on its own cluster (ADR-0013 decision 10), and
+    both run the sim and the Account store on it (the chart renders only what is set, so the memory
+    switches must be absent, leaving the `kafka` defaults). local names the shared Kafka under
+    `local` (AW-INF-055) but keeps its sim and Account store in memory until AW-INF-060."""
+    shared = "andara-log-kafka-bootstrap.andara-shared.svc:9092"
+    wants = {"dev": (shared, "dev"),
              "prod": ("andara-log-kafka-bootstrap:9092", None)}
     for env, (want, prefix) in wants.items():
         rc, out, err = render(env)
@@ -513,6 +515,23 @@ def test_kafka_on_the_box():
     if data.get("ANDARA_SIM_SOURCE") != "memory" or data.get("ANDARA_AUTH_STORE") != "memory":
         fail("local: expected the broker-free switches, got sim=%r auth=%r"
              % (data.get("ANDARA_SIM_SOURCE"), data.get("ANDARA_AUTH_STORE")))
+    if data.get("ANDARA_KAFKA_TOPIC_PREFIX") != "local":
+        fail("local: ANDARA_KAFKA_TOPIC_PREFIX is %r, want 'local'" % data.get("ANDARA_KAFKA_TOPIC_PREFIX"))
+    if data.get("ANDARA_KAFKA_BROKERS") != shared:
+        fail("local: ANDARA_KAFKA_BROKERS is %r, want the shared broker %r"
+             % (data.get("ANDARA_KAFKA_BROKERS"), shared))
+
+
+def test_topic_prefix_required_for_local():
+    """AW-INF-055 AC-10: a local render with an empty kafka.topic_prefix fails naming the key.
+    dev's is test_dev_topic_prefix_required's (AW-INF-059)."""
+    for args in (("--set", "server.kafka.topic_prefix="),
+                 ("--set", "server.kafka.topic_prefix=", "--set", "server.telemetry.environment=local")):
+        rc, _, err = render("local", *args)
+        if rc == 0:
+            fail("local rendered with %s; the chart should require server.kafka.topic_prefix" % args[1])
+        elif "server.kafka.topic_prefix" not in err:
+            fail("local without a prefix refused, but the message doesn't name the key: %s" % err.strip())
 
 
 SPAWN_ROOM = "purgatory/start"
@@ -791,6 +810,7 @@ def main():
     test_image_source()
     test_label_values()
     test_kafka_on_the_box()
+    test_topic_prefix_required_for_local()
     test_spawn_room_is_purgatory()
     test_argocd_application()
     test_dev_topic_prefix_required()

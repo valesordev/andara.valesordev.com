@@ -8,10 +8,9 @@
 # prod pull the image .github/workflows/publish.yaml pushes to ghcr (AW-INF-013); a TAG= on
 # the command line pins one, and scripts/helm_image_args.sh is the rule.
 #
-# The broker: local runs without one (accounts and commands in memory). prod uses its
-# namespace's Kafka `andara-log` (AW-INF-014, `make kafka-install`), dev the shared one in
-# andara-shared (AW-INF-059); this script refuses to touch their release until the one the
-# values file names is Ready.
+# The broker: local runs without one (accounts and commands in memory). dev uses the shared
+# Kafka `andara-log` in andara-shared (AW-INF-014, AW-INF-055, AW-INF-059), which `make shared-up`
+# creates; this script refuses to touch the release until the broker the values file names is Ready.
 #
 # Content: local and dev read Zone Definitions from a ConfigMap the chart renders out of
 # testdata/content/valid (contentVolume.render), as compose reads a directory, until
@@ -71,7 +70,9 @@ parts = b.split(":", 1)[0].split(".")
 print(parts[1] if len(parts) > 1 else ns)
 PYEOF
 )"
-  if [[ "$KNS" == "$NS" ]]; then khint="run \`make kafka-install ENV=$ENVNAME\` first"; else khint="it comes from the shared broker (AW-INF-055)"; fi
+  # A bare name is a broker in the environment's own namespace: prod's, which isn't on this
+  # cluster (ADR-0013 decision 10), so nothing here installs it.
+  if [[ "$KNS" == "$NS" ]]; then khint="nothing on this cluster installs a Kafka in $NS (ADR-0013 decision 10)"; else khint="run \`make shared-up\` first"; fi
   kready="$(kube_kubectl -n "$KNS" get kafka andara-log \
     -o jsonpath='{.status.conditions[?(@.type=="Ready")].status}' 2>/dev/null || true)"
   [[ "$kready" == "True" ]] \
@@ -106,6 +107,13 @@ done
 
 kube_kubectl get namespace "$NS" >/dev/null 2>&1 || kube_kubectl create namespace "$NS" >/dev/null
 echo "helm-install: namespace $NS"
+# The shared Kafka's listener admits an andara pod only from a namespace carrying this label
+# (deploy/k8s/kafka/kafka.yaml, as `make shared-up` sets it). A namespace env-destroy removed and
+# this script recreated would otherwise wait out --wait on a broker it can't reach.
+if [[ "$ENVNAME" != "local" && "${KNS:-$NS}" != "$NS" ]]; then
+  kube_kubectl label namespace "$NS" "andara.valesor/env=$ENVNAME" --overwrite >/dev/null
+  echo "helm-install: namespace $NS labelled andara.valesor/env=$ENVNAME"
+fi
 
 # Environments whose content comes from ConfigMaps (server.content.source: dir) and whose
 # token key and first operator this script provisions. dev leaves this list when
