@@ -266,6 +266,14 @@ ANDARA_KAFKA_BROKERS: {{ $v | toString | quote }}
 {{- if not (eq (toString $v) "__unset__") }}
 ANDARA_KAFKA_TOPIC_PREFIX: {{ $v | toString | quote }}
 {{- end }}
+{{- $v := dig "kafka" "sasl_username" "__unset__" (.Values.server | default dict) }}
+{{- if not (eq (toString $v) "__unset__") }}
+ANDARA_KAFKA_SASL_USERNAME: {{ $v | toString | quote }}
+{{- end }}
+{{- $v := dig "kafka" "sasl_password_file" "__unset__" (.Values.server | default dict) }}
+{{- if not (eq (toString $v) "__unset__") }}
+ANDARA_KAFKA_SASL_PASSWORD_FILE: {{ $v | toString | quote }}
+{{- end }}
 {{- $v := dig "auth" "store" "__unset__" (.Values.server | default dict) }}
 {{- if not (eq (toString $v) "__unset__") }}
 ANDARA_AUTH_STORE: {{ $v | toString | quote }}
