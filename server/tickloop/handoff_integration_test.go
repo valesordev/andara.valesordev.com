@@ -160,6 +160,11 @@ func TestKafka_AHandoffSurvivesASIGKILLWithTheArriveLost(t *testing.T) {
 	// too. A count of boundaries alone is reached by an idle loop whose
 	// consumer has not yet fetched the Move (AW-SRV-061).
 	first := spawn("lossy")
+	// A failure before the SIGKILL below still stops the first life.
+	t.Cleanup(func() {
+		_ = first.Process.Kill()
+		_ = first.Wait()
+	})
 	waitForMoveApplied(t, bk, events, movePart, moveEnd, 2*sim.DefaultHandoffRetryTicks, 30*time.Second)
 	if err := first.Process.Signal(syscall.SIGKILL); err != nil {
 		t.Fatal(err)
@@ -208,15 +213,24 @@ func TestKafka_AHandoffSurvivesASIGKILLWithTheArriveLost(t *testing.T) {
 		}
 		time.Sleep(300 * time.Millisecond)
 	}
+	// What a second-life failure prints: the replayed World against the
+	// boundaries on the log when it failed.
+	secondWorld := func() string {
+		bs, berr := ReadBoundaries(context.Background(), bk, events)
+		if berr != nil {
+			return fmt.Sprintf("%s (boundaries unread: %v)", handoffWorld(after, nil, movePart), berr)
+		}
+		return handoffWorld(after, bs, movePart)
+	}
 	if err != nil {
-		t.Fatalf("replaying the second life's log: %v", err)
+		t.Fatalf("replaying the second life's log: %v; %s", err, secondWorld())
 	}
 	s := after.State()
 	if s.Zones["wilds"].Entities["alice"] == nil || s.Zones["town"].Entities["alice"] != nil || len(s.Zones["town"].Transit) != 0 {
-		t.Fatalf("alice did not arrive: wilds %v, town %v, transit %v", s.Zones["wilds"].Entities, s.Zones["town"].Entities, s.Zones["town"].Transit)
+		t.Fatalf("alice did not arrive: %s", secondWorld())
 	}
 	if s.Zones["wilds"].Placed["alice"].Seq != 1 || s.Zones["wilds"].Entities["alice"].HandoffSeq != 1 {
-		t.Fatalf("alice should have been placed exactly once, at sequence 1: marks %v", s.Zones["wilds"].Placed)
+		t.Fatalf("alice should have been placed exactly once, at sequence 1: marks %v; %s", s.Zones["wilds"].Placed, secondWorld())
 	}
 }
 
