@@ -214,6 +214,18 @@ ANDARA_SNAPSHOT_S3_ENDPOINT: {{ $v | toString | quote }}
 {{- if not (eq (toString $v) "__unset__") }}
 ANDARA_SNAPSHOT_UPLOAD_TIMEOUT: {{ $v | toString | quote }}
 {{- end }}
+{{- $v := dig "snapshot" "keep_rounds" "__unset__" (.Values.server | default dict) }}
+{{- if not (eq (toString $v) "__unset__") }}
+ANDARA_SNAPSHOT_KEEP_ROUNDS: {{ $v | toString | quote }}
+{{- end }}
+{{- $v := dig "snapshot" "keep_deploy_rounds" "__unset__" (.Values.server | default dict) }}
+{{- if not (eq (toString $v) "__unset__") }}
+ANDARA_SNAPSHOT_KEEP_DEPLOY_ROUNDS: {{ $v | toString | quote }}
+{{- end }}
+{{- $v := dig "snapshot" "max_round_age" "__unset__" (.Values.server | default dict) }}
+{{- if not (eq (toString $v) "__unset__") }}
+ANDARA_SNAPSHOT_MAX_ROUND_AGE: {{ $v | toString | quote }}
+{{- end }}
 {{- $v := dig "recovery" "require_snapshot" "__unset__" (.Values.server | default dict) }}
 {{- if not (eq (toString $v) "__unset__") }}
 ANDARA_RECOVERY_REQUIRE_SNAPSHOT: {{ $v | toString | quote }}
