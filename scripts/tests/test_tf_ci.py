@@ -94,7 +94,8 @@ class Base(unittest.TestCase):
         self.env = {"PATH": os.environ["PATH"], "TF_PLAN_KEY_PROD": KEY, "GITHUB_ACTIONS": "true",
                     "GRAFANA_SOLO7_READ_TOKEN": "read", "GRAFANA_SOLO7_APPLY_TOKEN": "apply",
                     "GRAFANA_SOLO7_IRM_TOKEN": "irm", "SLACK_WEBHOOK_PROD": "https://hooks.slack.invalid/x",
-                    "GRAFANA_SOLO7DEV_READ_TOKEN": "read", "SLACK_WEBHOOK_DEV": "https://hooks.slack.invalid/d"}
+                    "GRAFANA_SOLO7DEV_READ_TOKEN": "read", "GRAFANA_SOLO7DEV_FLEET_READ_TOKEN": "fleet-read",
+                    "SLACK_WEBHOOK_DEV": "https://hooks.slack.invalid/d"}
 
     def fake(self, **kw):
         t = FakeTerraform(**kw)
@@ -775,12 +776,29 @@ class Misc(Base):
     def test_root_env_keeps_the_webhook_and_drops_other_tf_vars(self):
         """The 2026-10-20 drift run: the allow-list dropped TF_VAR_slack_webhook, and every plan through
         root_env (pr-plan, drift, plan-prod, apply-prod) failed on the unset variable."""
-        env = dict(self.env, TF_VAR_other="x", GRAFANA_SOLO7DEV_APPLY_TOKEN="apply", GRAFANA_SOLO7_APPLY_TOKEN="apply")
+        env = dict(self.env, TF_VAR_other="x", GRAFANA_SOLO7DEV_APPLY_TOKEN="apply", GRAFANA_SOLO7_APPLY_TOKEN="apply",
+                   GRAFANA_SOLO7DEV_FLEET_APPLY_TOKEN="fleet-apply")
         for root, op, hook in (("solo7dev", "plan", "/d"), ("solo7dev", "apply", "/d"),
                                ("solo7", "plan", "/x"), ("solo7", "apply", "/x")):
             tenv = tf_ci.root_env(root, env, op)
             self.assertEqual(tenv["TF_VAR_slack_webhook"], "https://hooks.slack.invalid" + hook, (root, op))
             self.assertNotIn("TF_VAR_other", tenv)
+
+    def test_root_env_composes_the_fleet_auth(self):
+        """AW-INF-051: solo7dev's Fleet token passes the allow-list as `<fleet_user>:<token>`; solo7's root has
+        no Fleet provider yet (AW-INF-078), and a missing Fleet token exits 3 naming it."""
+        user = tf.tfvar("solo7dev", "fleet_user")
+        env = dict(self.env, GRAFANA_SOLO7DEV_APPLY_TOKEN="apply", GRAFANA_SOLO7DEV_FLEET_APPLY_TOKEN="fleet-apply",
+                   GRAFANA_SOLO7_APPLY_TOKEN="apply")
+        self.assertEqual(tf_ci.root_env("solo7dev", env, "plan")["GRAFANA_FLEET_MANAGEMENT_AUTH"], user + ":fleet-read")
+        self.assertEqual(tf_ci.root_env("solo7dev", env, "apply")["GRAFANA_FLEET_MANAGEMENT_AUTH"],
+                         user + ":fleet-apply")
+        self.assertNotIn("GRAFANA_FLEET_MANAGEMENT_AUTH", tf_ci.root_env("solo7", env, "plan"))
+        del env["GRAFANA_SOLO7DEV_FLEET_APPLY_TOKEN"]
+        with self.assertRaises(tf.Exit) as e:
+            tf_ci.root_env("solo7dev", env, "apply")
+        self.assertEqual(e.exception.code, 3)
+        self.assertIn("GRAFANA_SOLO7DEV_FLEET_APPLY_TOKEN", e.exception.msg)
 
     def test_pr_plan_refuses_the_irm_root(self):
         self.assertEqual(tf_ci.main(["pr-plan", "--stack", "solo7-irm", "--commit", "x"], self.env), 2)

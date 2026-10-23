@@ -21,8 +21,12 @@ variable already set wins; in a linked worktree with no box.env of its own, the 
 is read; ANDARA_BOX_ENV names another file); a box.env readable by group or others is refused. plan reads
 GRAFANA_<STACK>_READ_TOKEN, apply GRAFANA_<STACK>_APPLY_TOKEN (<STACK> is SOLO7DEV, or SOLO7
 for solo7 and solo7-irm), and both read SLACK_WEBHOOK_DEV (solo7dev) or SLACK_WEBHOOK_PROD
-(solo7). The token reaches the provider only as GRAFANA_AUTH, the webhook as
-TF_VAR_slack_webhook. State is reached with Application Default Credentials.
+(solo7). A root whose provider block sets fleet_management_url also needs
+GRAFANA_<STACK>_FLEET_READ_TOKEN (plan) or GRAFANA_<STACK>_FLEET_APPLY_TOKEN (apply) (AW-INF-051).
+The token reaches the provider only as GRAFANA_AUTH, the Fleet token only as
+GRAFANA_FLEET_MANAGEMENT_AUTH (`<fleet_user>:<token>`, fleet_user from the root's committed
+terraform.tfvars), the webhook as TF_VAR_slack_webhook. State is reached with Application Default
+Credentials.
 
 apply plans to a file, applies exactly that plan, then plans again and fails unless the second
 plan is empty. A plan with nothing to do prints `0 to add, 0 to change, 0 to destroy` and
@@ -112,13 +116,30 @@ def root_dir(root):
     return os.path.join(TF_DIR, TEST_ALERT) if root == TEST_ALERT else os.path.join(TF_DIR, "stacks", root)
 
 
+def tfvar(stack, name):
+    """The string value of name committed in stack's terraform.tfvars."""
+    with open(os.path.join(root_dir(stack), "terraform.tfvars")) as f:
+        m = re.search(r'^%s\s*=\s*"([^"]+)"' % re.escape(name), f.read(), re.M)
+    if not m:
+        raise Exit(1, "no %s in stacks/%s/terraform.tfvars" % (name, stack))
+    return m.group(1)
+
+
 def grafana_url(stack):
     """The grafana_url committed in stack's terraform.tfvars."""
-    with open(os.path.join(root_dir(stack), "terraform.tfvars")) as f:
-        m = re.search(r'^grafana_url\s*=\s*"([^"]+)"', f.read(), re.M)
-    if not m:
-        raise Exit(1, "no grafana_url in stacks/%s/terraform.tfvars" % stack)
-    return m.group(1)
+    return tfvar(stack, "grafana_url")
+
+
+def has_fleet(stack):
+    """Whether stack's provider block configures Fleet Management (solo7dev from AW-INF-051, solo7 in AW-INF-078),
+    read from every .tf file of the root."""
+    root = root_dir(stack)
+    for name in sorted(os.listdir(root)):
+        if name.endswith(".tf"):
+            with open(os.path.join(root, name)) as f:
+                if re.search(r"^\s*fleet_management_url\s*=", f.read(), re.M):
+                    return True
+    return False
 
 
 def check_stack(stack, env):
@@ -169,26 +190,44 @@ def load_box_env(env, path=None):
     return env
 
 
+def fleet_token(stack, op):
+    """The Fleet token variable op reads for stack, or None when its root has no Fleet provider."""
+    if not has_fleet(stack):
+        return None
+    return "GRAFANA_%s_FLEET_%s_TOKEN" % (TOKEN_STACK[stack], "APPLY" if op == "apply" else "READ")
+
+
+def fleet_auth(stack, env, token):
+    """The Fleet provider's basic auth, `<fleet_user>:<token>`; the one place it is composed (AW-INF-051)."""
+    return "%s:%s" % (tfvar(stack, "fleet_user"), env[token])
+
+
 def credentials(stack, op, env):
-    """(token variable, webhook variable or None) for op; Exit 3 naming whichever is unset."""
+    """(token variable, webhook variable or None, Fleet token variable or None) for op; Exit 3 naming
+    whichever is unset."""
     names = []
-    token = None
+    token = fleet = None
     if op in ("plan", "apply"):
         token = "GRAFANA_%s_%s_TOKEN" % (TOKEN_STACK[stack], "READ" if op == "plan" else "APPLY")
         names.append(token)
+        fleet = fleet_token(stack, op)
     webhook = WEBHOOK.get(stack) if op in ("plan", "apply") else None
     if webhook:
         names.append(webhook)
+    if fleet:
+        names.append(fleet)
     unset = [n for n in names if not env.get(n)]
     if unset:
         raise Exit(3, "%s unset (set it in the environment or .local/box.env)" % ", ".join(unset))
-    return token, webhook
+    return token, webhook, fleet
 
 
-def child_env(env, token=None, webhook=None, data_dir=None):
-    """The environment Terraform runs in: the token as GRAFANA_AUTH only, no other Grafana token."""
+def child_env(env, token=None, webhook=None, data_dir=None, fleet=None):
+    """The environment Terraform runs in: the token as GRAFANA_AUTH and fleet (already `user:token`) as
+    GRAFANA_FLEET_MANAGEMENT_AUTH only, no other Grafana token."""
     out = {k: v for k, v in env.items()
            if not (k.startswith("GRAFANA_") and k.endswith("_TOKEN"))
+           and not k.startswith("GRAFANA_FLEET_MANAGEMENT_")
            and not k.startswith("TF_VAR_") and not k.startswith("TF_CLI_ARGS")
            and k not in ("GRAFANA_AUTH", "SLACK_WEBHOOK_DEV", "SLACK_WEBHOOK_PROD", "TF_PLAN_KEY_PROD")}
     out["TF_IN_AUTOMATION"] = "1"
@@ -198,6 +237,8 @@ def child_env(env, token=None, webhook=None, data_dir=None):
         out["GRAFANA_AUTH"] = env[token]
     if webhook:
         out["TF_VAR_slack_webhook"] = env[webhook]
+    if fleet:
+        out["GRAFANA_FLEET_MANAGEMENT_AUTH"] = fleet
     if data_dir:
         out["TF_DATA_DIR"] = data_dir
     return out
@@ -258,8 +299,8 @@ def init(root, env):
 
 
 def cmd_plan(stack, env):
-    token, webhook = credentials(stack, "plan", env)
-    tenv = child_env(env, token, webhook)
+    token, webhook, fleet = credentials(stack, "plan", env)
+    tenv = child_env(env, token, webhook, fleet=fleet and fleet_auth(stack, env, fleet))
     init(stack, tenv)
     say("plan %s" % stack)
     # No lock: a plan writes nothing, and the plan accounts hold objectViewer only (ADR-0012 decision 3).
@@ -269,8 +310,8 @@ def cmd_plan(stack, env):
 
 
 def cmd_apply(stack, env):
-    token, webhook = credentials(stack, "apply", env)
-    tenv = child_env(env, token, webhook)
+    token, webhook, fleet = credentials(stack, "apply", env)
+    tenv = child_env(env, token, webhook, fleet=fleet and fleet_auth(stack, env, fleet))
     cwd = root_dir(stack)
     init(stack, tenv)
     # The saved plan embeds the webhook, so it lives in a private directory and is removed.

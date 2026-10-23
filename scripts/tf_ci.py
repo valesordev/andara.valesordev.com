@@ -131,7 +131,7 @@ def need(env, *names):
 # /proc/self/environ would find only what the plan already holds. TF_VAR_slack_webhook is named on its own:
 # TF_[A-Z_]+ cannot match its lowercase name, and child_env has already dropped every other TF_VAR_*.
 ALLOWED_ENV = re.compile(r"^(PATH|HOME|TMPDIR|LANG|LC_[A-Z]+|TZ|SSL_CERT_FILE|SSL_CERT_DIR|TF_[A-Z_]+"
-                         r"|TF_VAR_slack_webhook|GRAFANA_AUTH"
+                         r"|TF_VAR_slack_webhook|GRAFANA_AUTH|GRAFANA_FLEET_MANAGEMENT_AUTH"
                          r"|" + IRM_TOKEN_VAR + r"|GOOGLE_APPLICATION_CREDENTIALS|GOOGLE_GHA_CREDS_PATH"
                          r"|GOOGLE_CLOUD_PROJECT|GCLOUD_PROJECT|CLOUDSDK_[A-Z_]+)$")
 
@@ -141,13 +141,15 @@ def minimal(tenv):
 
 
 def root_env(root, env, op):
-    """The child environment for root: GRAFANA_AUTH, the webhook, and for solo7-irm the IRM token, plus
-    only what Terraform and the gcs backend need to run (ALLOWED_ENV)."""
+    """The child environment for root: GRAFANA_AUTH, the webhook, the Fleet auth for a root with a Fleet
+    provider (tf.fleet_auth composes it), and for solo7-irm the IRM token, plus only what Terraform and the
+    gcs backend need to run (ALLOWED_ENV)."""
     token = "GRAFANA_%s_%s_TOKEN" % (tf.TOKEN_STACK[root], "APPLY" if op == "apply" else "READ")
     webhook = tf.WEBHOOK.get(root)
-    names = [token] + ([webhook] if webhook else [])
+    fleet = tf.fleet_token(root, "apply" if op == "apply" else "plan")
+    names = [token] + ([webhook] if webhook else []) + ([fleet] if fleet else [])
     need(env, *names)
-    tenv = tf.child_env(env, token, webhook)
+    tenv = tf.child_env(env, token, webhook, fleet=fleet and tf.fleet_auth(root, env, fleet))
     if root == IRM and env.get("GRAFANA_SOLO7_IRM_TOKEN"):
         tenv[IRM_TOKEN_VAR] = env["GRAFANA_SOLO7_IRM_TOKEN"]
     return minimal(tenv)

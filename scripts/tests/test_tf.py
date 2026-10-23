@@ -18,8 +18,12 @@ import tf  # noqa: E402
 DEV = {
     "GRAFANA_SOLO7DEV_READ_TOKEN": "read-token",
     "GRAFANA_SOLO7DEV_APPLY_TOKEN": "apply-token",
+    "GRAFANA_SOLO7DEV_FLEET_READ_TOKEN": "fleet-read-token",
+    "GRAFANA_SOLO7DEV_FLEET_APPLY_TOKEN": "fleet-apply-token",
     "SLACK_WEBHOOK_DEV": "https://hooks.slack.invalid/dev",
 }
+# solo7dev's committed fleet_user (stacks/solo7dev/terraform.tfvars).
+FLEET_USER = tf.tfvar("solo7dev", "fleet_user")
 
 # Terraform 1.16's message for a held gcs lock, colour codes and box-drawing included.
 LOCK_OUTPUT = (
@@ -150,6 +154,58 @@ class CredentialTest(NoBoxEnv):
         self.assertNotIn("READ_TOKEN", err)
         self.assertEqual(fake.calls, [])
 
+    def test_fleet_token_exits_3_naming_it(self):
+        """AW-INF-051: solo7dev's provider configures Fleet, so plan and apply need its Fleet token."""
+        for cmd, drop, other in (("plan", "GRAFANA_SOLO7DEV_FLEET_READ_TOKEN", "FLEET_APPLY"),
+                                 ("apply", "GRAFANA_SOLO7DEV_FLEET_APPLY_TOKEN", "FLEET_READ")):
+            env = dict(DEV)
+            del env[drop]
+            fake = FakeTerraform()
+            rc, _, err = main([cmd, "--stack", "solo7dev"], env, fake)
+            self.assertEqual(rc, 3, cmd)
+            self.assertIn(drop, err)
+            self.assertNotIn(other, err)
+            self.assertEqual(fake.calls, [], "no terraform call before the refusal")
+
+    def test_fleet_auth_is_user_colon_token(self):
+        for cmd, token in (("plan", "fleet-read-token"), ("apply", "fleet-apply-token")):
+            fake = FakeTerraform([(["show"], 0, plan_json(["create"]))])
+            rc, _, _ = main([cmd, "--stack", "solo7dev"], dict(DEV), fake)
+            self.assertEqual(rc, 0, cmd)
+            self.assertTrue(fake.envs)
+            for tenv in fake.envs:
+                self.assertEqual(tenv["GRAFANA_FLEET_MANAGEMENT_AUTH"], "%s:%s" % (FLEET_USER, token))
+
+    def test_ambient_fleet_settings_do_not_reach_terraform(self):
+        env = dict(DEV, GRAFANA_FLEET_MANAGEMENT_URL="https://elsewhere.invalid",
+                   GRAFANA_FLEET_MANAGEMENT_AUTH="1:ambient")
+        fake = FakeTerraform()
+        rc, _, _ = main(["plan", "--stack", "solo7dev"], env, fake)
+        self.assertEqual(rc, 0)
+        for tenv in fake.envs:
+            self.assertNotIn("GRAFANA_FLEET_MANAGEMENT_URL", tenv)
+            self.assertEqual(tenv["GRAFANA_FLEET_MANAGEMENT_AUTH"], FLEET_USER + ":fleet-read-token")
+
+    def test_roots_without_fleet_need_no_fleet_token(self):
+        """solo7's Fleet provider is AW-INF-078's, and solo7-irm has none."""
+        self.assertTrue(tf.has_fleet("solo7dev"))
+        self.assertFalse(tf.has_fleet("solo7"))
+        self.assertFalse(tf.has_fleet("solo7-irm"))
+        fake = FakeTerraform()
+        rc, _, _ = main(["plan", "--stack", "solo7"],
+                        {"GITHUB_ACTIONS": "true", "GRAFANA_SOLO7_READ_TOKEN": "r", "SLACK_WEBHOOK_PROD": "w"}, fake)
+        self.assertEqual(rc, 0)
+        self.assertNotIn("GRAFANA_FLEET_MANAGEMENT_AUTH", fake.envs[-1])
+
+    def test_has_fleet_reads_every_tf_file_and_not_comments(self):
+        with tempfile.TemporaryDirectory() as root, mock.patch.object(tf, "root_dir", lambda stack: root):
+            with open(os.path.join(root, "main.tf"), "w") as f:
+                f.write('provider "grafana" {\n  url = var.grafana_url\n  # fleet_management_url = var.fleet_url\n}\n')
+            self.assertFalse(tf.has_fleet("solo7dev"), "a commented line is not a Fleet provider")
+            with open(os.path.join(root, "providers.tf"), "w") as f:
+                f.write('provider "grafana" {\n  alias                = "fleet"\n  fleet_management_url = var.fleet_url\n}\n')
+            self.assertTrue(tf.has_fleet("solo7dev"), "a Fleet provider in a second .tf file")
+
     def test_token_reaches_terraform_only_as_grafana_auth(self):
         env = dict(DEV, TF_VAR_grafana_auth="leak", TF_CLI_ARGS_plan="-var=x=y", GRAFANA_SOLO7_APPLY_TOKEN="other")
         fake = FakeTerraform()
@@ -173,7 +229,7 @@ class BoxEnvTest(NoBoxEnv):
         os.chmod(tf.BOX_ENV, mode)
 
     def test_loads_and_environment_wins(self):
-        self.write("# box\nexport GRAFANA_SOLO7DEV_READ_TOKEN='from-file'\nSLACK_WEBHOOK_DEV=\"https://w\"\nnot a line\n")
+        self.write("# box\nexport GRAFANA_SOLO7DEV_READ_TOKEN='from-file'\nSLACK_WEBHOOK_DEV=\"https://w\"\nGRAFANA_SOLO7DEV_FLEET_READ_TOKEN=f\nnot a line\n")
         fake = FakeTerraform()
         rc, _, _ = main(["plan", "--stack", "solo7dev"], {"SLACK_WEBHOOK_DEV": "https://env"}, fake)
         self.assertEqual(rc, 0)
@@ -182,14 +238,14 @@ class BoxEnvTest(NoBoxEnv):
 
     def test_worktree_falls_back_to_the_main_checkout(self):
         with open(tf.MAIN_BOX_ENV, "w") as f:
-            f.write("GRAFANA_SOLO7DEV_READ_TOKEN=from-main\nSLACK_WEBHOOK_DEV=https://w\n")
+            f.write("GRAFANA_SOLO7DEV_READ_TOKEN=from-main\nSLACK_WEBHOOK_DEV=https://w\nGRAFANA_SOLO7DEV_FLEET_READ_TOKEN=f\n")
         os.chmod(tf.MAIN_BOX_ENV, 0o600)
         fake = FakeTerraform()
         rc, _, _ = main(["plan", "--stack", "solo7dev"], {}, fake)
         self.assertEqual(rc, 0)
         self.assertEqual(fake.envs[-1]["GRAFANA_AUTH"], "from-main")
         # The worktree's own file wins over the main checkout's.
-        self.write("GRAFANA_SOLO7DEV_READ_TOKEN=from-worktree\nSLACK_WEBHOOK_DEV=https://w\n")
+        self.write("GRAFANA_SOLO7DEV_READ_TOKEN=from-worktree\nSLACK_WEBHOOK_DEV=https://w\nGRAFANA_SOLO7DEV_FLEET_READ_TOKEN=f\n")
         fake = FakeTerraform()
         main(["plan", "--stack", "solo7dev"], {}, fake)
         self.assertEqual(fake.envs[-1]["GRAFANA_AUTH"], "from-worktree")
@@ -197,7 +253,7 @@ class BoxEnvTest(NoBoxEnv):
     def test_andara_box_env_names_the_file(self):
         other = os.path.join(self.dir.name, "elsewhere.env")
         with open(other, "w") as f:
-            f.write("GRAFANA_SOLO7DEV_READ_TOKEN=from-other\nSLACK_WEBHOOK_DEV=https://w\n")
+            f.write("GRAFANA_SOLO7DEV_READ_TOKEN=from-other\nSLACK_WEBHOOK_DEV=https://w\nGRAFANA_SOLO7DEV_FLEET_READ_TOKEN=f\n")
         os.chmod(other, 0o600)
         fake = FakeTerraform()
         rc, _, _ = main(["plan", "--stack", "solo7dev"], {"ANDARA_BOX_ENV": other}, fake)
