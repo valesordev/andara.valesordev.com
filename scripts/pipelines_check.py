@@ -28,8 +28,9 @@ stacks/<root>/pipelines.tf, each reading its contents with exactly
 for_each, count or dynamic; every `module` there has a relative source inside the tree; and there is no
 `*.tf.json`. So no pipeline reaches Fleet without passing the rules above. The .tf files are read with
 tf_policy's HCL tokenizer and parser, the ones the Terraform gate uses, so strings, heredocs, `$${`
-escapes and interpolations are read as Terraform reads them; an unparseable file is refused. A label
-written with escapes is not unescaped: tf-fmt-check keeps the committed labels plain.
+escapes and interpolations are read as Terraform reads them; an unparseable file is refused. Labels and
+strings are compared with their escapes decoded (`\u0065` is `e`), and a module source holding a
+backslash is refused, as tf_policy refuses it.
 
 Every refusal prints `pipelines-check: refused: <file>:<line>: <rule>: <detail>`.
 
@@ -254,6 +255,20 @@ def tf_files(tf_dir):
                 yield os.path.join(dirpath, name)
 
 
+HCL_ESCAPE = re.compile(r"\\(u[0-9A-Fa-f]{4}|U[0-9A-Fa-f]{8}|.)", re.S)
+HCL_SIMPLE = {"n": "\n", "r": "\r", "t": "\t", '"': '"', "\\": "\\"}
+
+
+def hcl_unescape(value):
+    """A string token or label as Terraform reads it: \\n, \\r, \\t, \\", \\\\, \\uNNNN and \\UNNNNNNNN decoded."""
+    def one(m):
+        e = m.group(1)
+        if e[0] in "uU" and len(e) > 1:
+            return chr(min(int(e[1:], 16), 0x10FFFF))
+        return HCL_SIMPLE.get(e, m.group(0))
+    return HCL_ESCAPE.sub(one, value)
+
+
 def contents_source(attr):
     """The <name> of a contents attribute that is exactly the literal file() of a pipeline, else None."""
     toks = [(t.type, t.value) for t in attr.toks]
@@ -286,15 +301,15 @@ def resource_refusals(tf_dir, sources):
                 continue
             src = b.attrs().get("source")
             value = tf_policy.literal(src.toks) if src else None
-            inside = value is not None and value.startswith(("./", "../")) and os.path.realpath(
+            inside = value is not None and "\\" not in value and value.startswith(("./", "../")) and os.path.realpath(
                 os.path.join(os.path.dirname(path), value)).startswith(root + os.sep)
             if not inside:
                 found.append((path, b.line, "terraform", "module %s: its source must be a relative path inside "
                               "deploy/terraform/grafana, so this check reads it" % ".".join(b.labels)))
         in_place = len(rel) == 3 and rel[0] == "stacks" and rel[2] == "pipelines.tf"
         declared = [b for b in items if isinstance(b, tf_policy.Block) and b.type == "resource"
-                    and len(b.labels) == 2 and b.labels[0] == PIPELINE_TYPE]
-        mentions = [t.line for t in toks if t.type in ("ident", "str") and PIPELINE_TYPE in t.value]
+                    and len(b.labels) == 2 and hcl_unescape(b.labels[0]) == PIPELINE_TYPE]
+        mentions = [t.line for t in toks if t.type in ("ident", "str") and PIPELINE_TYPE in hcl_unescape(t.value)]
         if mentions and not in_place:
             found.append((path, mentions[0], "terraform",
                           "%s is declared only in stacks/<root>/pipelines.tf" % PIPELINE_TYPE))
