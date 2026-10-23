@@ -28,8 +28,19 @@ new pod ──▶ recover (AW-SRV-007) ──▶ verify hash ──▶ /readyz s
 ```
 
 The kubelet ignores a preStop hook's exit code and sends `SIGTERM` when it returns or when the grace
-period's budget for it is spent. A `prestop` that times out or fails therefore leaves the previous
-complete round as the recovery point: the replay is longer, never wrong.
+period's budget for it is spent. A `prestop` that times out or fails therefore leaves the newest
+complete round as the recovery point: the replay is longer, never wrong. That is usually the round before
+pre-stop's. It is pre-stop's own when the round completed but its tag did not. A tag cut short leaves
+`deploy:<tag>` on some of the round's objects, so `ListSnapshotRounds` names no round by it (Round tags) and the next
+boot correlates no `deploy_id`, while retention counts that round as tagged. Nothing deletes the partial tag:
+`WorldStore` has no Delete, and the cost is one `snapshot.keep_deploy_rounds` slot. *(2026-10-23, `AW-SRV-054` §8.)*
+
+A pre-stop that arrives while a periodic round is in flight waits for it (one round at a time), and the two
+rounds share pre-stop's one `snapshot.upload_timeout` budget, which the grace bound (Configuration) counts once.
+Two healthy but slow rounds can therefore report `TIMEOUT`. This is accepted. The outcome is the safe one above,
+and the alternatives were weighed and refused: counting the timeout twice would raise the grace bound and the
+90 s default, and abandoning the periodic round adds a cancel path to the round-in-flight rule for a rare case.
+Read a pre-stop `TIMEOUT` as "no new tagged round", not as a store fault. *(2026-10-23, `AW-SRV-054` §8.)*
 
 ### Rulings
 
