@@ -22,6 +22,8 @@ import (
 	logv1 "github.com/valesordev/andara/gen/go/andara/log/v1"
 	statev1 "github.com/valesordev/andara/gen/go/andara/state/v1"
 	"github.com/valesordev/andara/internal/eventually"
+	"github.com/valesordev/andara/server/kafkaclient"
+	"github.com/valesordev/andara/server/kafkaclient/kafkatest"
 	"github.com/valesordev/andara/server/sim"
 	"github.com/valesordev/andara/server/simtest"
 	"github.com/valesordev/andara/server/store"
@@ -170,12 +172,12 @@ func TestSnapshotWrittenIsNotReadAsABoundary(t *testing.T) {
 
 // readSnapshotWritten drains the events topic and returns every
 // SnapshotWritten on it, waiting until want of them have arrived.
-func readSnapshotWritten(t *testing.T, bs []string, topic string, want int) []*logv1.SnapshotWritten {
+func readSnapshotWritten(t *testing.T, bs kafkaclient.Config, topic string, want int) []*logv1.SnapshotWritten {
 	t.Helper()
 	ctx, cancel := context.WithTimeout(context.Background(), 60*time.Second)
 	defer cancel()
-	cl, err := kgo.NewClient(
-		kgo.SeedBrokers(bs...),
+	cl, err := kafkaclient.New(
+		bs.For("andara-it"),
 		kgo.ConsumeTopics(topic),
 		kgo.ConsumeResetOffset(kgo.NewOffset().AtStart()),
 	)
@@ -290,8 +292,8 @@ func TestSnapshotRoundWaitsForTheBrokersBoundaryAck(t *testing.T) {
 func TestSnapshotRoundsCompleteAgainAfterALeaderRestart(t *testing.T) {
 	bs := brokers(t)
 	commands, events := topics(t, bs)
-	px := newLeaderProxy(t, bs[0], BoundaryPartition)
-	pub, err := NewKafkaPublisher(context.Background(), []string{px.Addr()}, "snapshot-leader-restart-test", commands, events)
+	px := newLeaderProxy(t, bs.Brokers[0], BoundaryPartition)
+	pub, err := NewKafkaPublisher(context.Background(), kafkatest.Config([]string{px.Addr()}), "snapshot-leader-restart-test", commands, events)
 	if err != nil {
 		t.Fatal(err)
 	}

@@ -25,7 +25,7 @@ import (
 // prefixed resolves Topics for an it<nonce> prefix (ADR-0013 Amendment 17:
 // never an environment's name) and creates its commands topic, deleted with
 // the it-<nonce> group when the test ends.
-func prefixed(t *testing.T, bk []string) (kafkaclient.Topics, string, string) {
+func prefixed(t *testing.T, bk kafkaclient.Config) (kafkaclient.Topics, string, string) {
 	t.Helper()
 	nonce := fmt.Sprint(time.Now().UnixNano() % 1_000_000_000)
 	tp, err := kafkaclient.TopicsFor(config.Config{KafkaTopicPrefix: "it" + nonce})
@@ -33,7 +33,7 @@ func prefixed(t *testing.T, bk []string) (kafkaclient.Topics, string, string) {
 		t.Fatal(err)
 	}
 	group := "it-" + nonce
-	cl, err := kgo.NewClient(kgo.SeedBrokers(bk...))
+	cl, err := kafkaclient.New(bk.For("andara-it"))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -64,7 +64,7 @@ func TestPrefix_IngressAndTheTickLoopSourceUseThePrefixedCommandsTopic(t *testin
 		t.Fatalf("commands topic %q, want %q", tp.Commands(), want)
 	}
 
-	prod, err := ingress.NewKafkaProducer(ingress.ProducerOptions{Brokers: bk, Topic: tp.Commands(), ClientID: "andara-server", Deadline: 10 * time.Second})
+	prod, err := ingress.NewKafkaProducer(ingress.ProducerOptions{Kafka: bk, Topic: tp.Commands(), ClientID: "andara-server", Deadline: 10 * time.Second})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -77,7 +77,7 @@ func TestPrefix_IngressAndTheTickLoopSourceUseThePrefixedCommandsTopic(t *testin
 
 	// The record the produce acknowledged is on the prefixed topic, keyed
 	// with the nonce.
-	cl, err := kgo.NewClient(kgo.SeedBrokers(bk...), kgo.FetchIsolationLevel(kgo.ReadCommitted()),
+	cl, err := kafkaclient.New(bk.For("andara-it"), kgo.FetchIsolationLevel(kgo.ReadCommitted()),
 		kgo.ConsumePartitions(map[string]map[int32]kgo.Offset{tp.Commands(): {acc.Partition: kgo.NewOffset().At(acc.Offset)}}))
 	if err != nil {
 		t.Fatal(err)
@@ -101,7 +101,7 @@ func TestPrefix_IngressAndTheTickLoopSourceUseThePrefixedCommandsTopic(t *testin
 	// The tick loop's source reads it from there, and commits under the
 	// it- group alone.
 	src, err := NewKafkaSource(context.Background(), KafkaSourceOptions{
-		Brokers: bk, Group: group, Topic: tp.Commands(), Start: map[int32]int64{acc.Partition: acc.Offset}, LagEvery: 200 * time.Millisecond,
+		Kafka: bk, Group: group, Topic: tp.Commands(), Start: map[int32]int64{acc.Partition: acc.Offset}, LagEvery: 200 * time.Millisecond,
 	})
 	if err != nil {
 		t.Fatal(err)

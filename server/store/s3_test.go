@@ -16,8 +16,15 @@ import (
 	"github.com/valesordev/andara/server/sim"
 )
 
+// s3PairUnset is the skip when the suite's S3 pair is missing.
+const s3PairUnset = "ANDARA_S3_TEST_ACCESS_KEY and ANDARA_S3_TEST_SECRET_KEY must both be set (the suite's S3 user, not the root pair)"
+
 // The S3 store against a real S3-compatible endpoint. Skipped unless one is
-// named, the way the broker-backed tests skip without ANDARA_KAFKA_BROKERS:
+// named, the way the broker-backed tests skip without ANDARA_KAFKA_BROKERS,
+// and unless the suite's own S3 pair is (AW-SRV-044 AC-9). On the shared
+// object store that pair is the suite's user (AW-INF-058), never the root
+// pair. For a throwaway MinIO on your own machine, where the root pair is the
+// only user, it may stand in:
 //
 //	docker run -d --rm -p 19000:9000 \
 //	  -e MINIO_ROOT_USER=andaratest -e MINIO_ROOT_PASSWORD=andaratest123 \
@@ -27,16 +34,20 @@ import (
 //	  go test ./server/store/
 //
 // Not build-tagged, because unlike the broker tests these need no `make up`:
-// the skip is the whole gate, and the day AW-INF-002 puts MinIO in the local
-// stack this starts running with one environment variable.
+// the skip is the whole gate.
 func s3Store(t *testing.T) (*S3, string) {
 	t.Helper()
 	endpoint := os.Getenv("ANDARA_S3_TEST_ENDPOINT")
 	if endpoint == "" {
 		t.Skip("ANDARA_S3_TEST_ENDPOINT not set; see the comment on s3Store for a one-line MinIO")
 	}
+	// The suite's own pair, never the store's root pair (AW-SRV-044 AC-9):
+	// without it there is nothing to authenticate as, so the tests skip.
 	access := os.Getenv("ANDARA_S3_TEST_ACCESS_KEY")
 	secret := os.Getenv("ANDARA_S3_TEST_SECRET_KEY")
+	if access == "" || secret == "" {
+		t.Skip(s3PairUnset)
+	}
 	// A bucket per test, removed when it ends, so tests do not see each
 	// other's objects and a failure leaves nothing behind.
 	bucket := fmt.Sprintf("andara-test-%d", time.Now().UnixNano())

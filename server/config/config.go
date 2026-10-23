@@ -62,6 +62,12 @@ type Config struct {
 	// (AW-SRV-058, ADR-0013 decision 4): empty or [a-z0-9]+, joined to every
 	// topic name with a dot. Empty is the unprefixed names prod keeps.
 	KafkaTopicPrefix string
+	// KafkaSASLUsername is the principal the process's Kafka clients
+	// authenticate as with SCRAM-SHA-512 (AW-SRV-044, ADR-0011 §6). Empty
+	// means no SASL.
+	KafkaSASLUsername string
+	// KafkaSASLPasswordFile holds the password, read on each new connection.
+	KafkaSASLPasswordFile string
 
 	// Accounts and authentication (AW-SRV-008). AuthStore is kafka or memory;
 	// memory loses every Account on restart and exists for development.
@@ -312,6 +318,12 @@ const (
 	DefaultSnapshotFSPath        = "/var/lib/andara/snapshots"
 	DefaultSnapshotUploadTimeout = 30 * time.Second
 
+	// DefaultKafkaSASLPasswordFile is kafka.sasl_password_file's default:
+	// the workload's Secret mount and the key Strimzi's User Operator writes
+	// (ADR-0011 decision 6). kafkaclient.DefaultPasswordFile is the same
+	// path; a test there holds them equal.
+	DefaultKafkaSASLPasswordFile = "/etc/andara/secrets/kafka/password"
+
 	// Recovery (AW-SRV-007). The linger is off by default: on a cluster the
 	// scrape keeps only Ready pods and it would only slow the crash-loop
 	// alert; compose sets 60s.
@@ -419,6 +431,7 @@ func defaults() Config {
 		SnapshotMaxStall:         DefaultSnapshotMaxStallMS * time.Millisecond,
 		SnapshotStore:            DefaultSnapshotStore,
 		SnapshotFSPath:           DefaultSnapshotFSPath,
+		KafkaSASLPasswordFile:    DefaultKafkaSASLPasswordFile,
 		SnapshotUploadTimeout:    DefaultSnapshotUploadTimeout,
 		RecoveryReplayBatch:      DefaultRecoveryReplayBatch,
 		RecoveryVerifyTimeout:    DefaultRecoveryVerifyTimeout,
@@ -483,6 +496,8 @@ func Parse(args []string, env EnvLookup, errOut io.Writer) (Config, error) {
 		return nil
 	})
 	fs.StringVar(&c.KafkaTopicPrefix, "kafka-topic-prefix", c.KafkaTopicPrefix, "prefix joined to every topic name with a dot; empty or [a-z0-9]+ (ANDARA_KAFKA_TOPIC_PREFIX)")
+	fs.StringVar(&c.KafkaSASLUsername, "kafka-sasl-username", c.KafkaSASLUsername, "SCRAM-SHA-512 principal of every Kafka client; empty for no SASL (ANDARA_KAFKA_SASL_USERNAME)")
+	fs.StringVar(&c.KafkaSASLPasswordFile, "kafka-sasl-password-file", c.KafkaSASLPasswordFile, "file holding the SASL password, read on each new connection (ANDARA_KAFKA_SASL_PASSWORD_FILE)")
 	fs.StringVar(&c.AuthStore, "auth-store", c.AuthStore, "account store: kafka or memory (ANDARA_AUTH_STORE)")
 	fs.DurationVar(&c.AuthSessionTTL, "auth-session-ttl", c.AuthSessionTTL, "session token lifetime; must exceed session.linkdead_max (ANDARA_AUTH_SESSION_TTL)")
 	fs.DurationVar(&c.AuthRefreshTTL, "auth-refresh-ttl", c.AuthRefreshTTL, "refresh token lifetime (ANDARA_AUTH_REFRESH_TTL)")
@@ -1071,8 +1086,10 @@ type fileConfig struct {
 		MaxVersion *uint32 `yaml:"max_version"`
 	} `yaml:"protocol"`
 	Kafka *struct {
-		Brokers     []string `yaml:"brokers"`
-		TopicPrefix *string  `yaml:"topic_prefix"`
+		Brokers          []string `yaml:"brokers"`
+		TopicPrefix      *string  `yaml:"topic_prefix"`
+		SASLUsername     *string  `yaml:"sasl_username"`
+		SASLPasswordFile *string  `yaml:"sasl_password_file"`
 	} `yaml:"kafka"`
 	Auth *struct {
 		Store        *string `yaml:"store"`
@@ -1288,6 +1305,12 @@ func applyFile(c *Config, path string) error {
 	}
 	if fc.Kafka != nil && fc.Kafka.TopicPrefix != nil {
 		c.KafkaTopicPrefix = *fc.Kafka.TopicPrefix
+	}
+	if fc.Kafka != nil && fc.Kafka.SASLUsername != nil {
+		c.KafkaSASLUsername = *fc.Kafka.SASLUsername
+	}
+	if fc.Kafka != nil && fc.Kafka.SASLPasswordFile != nil {
+		c.KafkaSASLPasswordFile = *fc.Kafka.SASLPasswordFile
 	}
 	if a := fc.Auth; a != nil {
 		if a.Store != nil {
@@ -1703,6 +1726,12 @@ func applyEnv(c *Config, env EnvLookup) error {
 	}
 	if v, ok := env("ANDARA_KAFKA_TOPIC_PREFIX"); ok {
 		c.KafkaTopicPrefix = v
+	}
+	if v, ok := env("ANDARA_KAFKA_SASL_USERNAME"); ok {
+		c.KafkaSASLUsername = v
+	}
+	if v, ok := env("ANDARA_KAFKA_SASL_PASSWORD_FILE"); ok {
+		c.KafkaSASLPasswordFile = v
 	}
 	for _, sv := range []struct {
 		name string

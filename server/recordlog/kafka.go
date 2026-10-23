@@ -25,9 +25,9 @@ import (
 // stale — reads from the start of every partition to the end offset captured
 // at the moment Replay began, and stops.
 type Kafka struct {
-	topic   string
-	brokers []string
-	opts    []kgo.Opt
+	topic  string
+	kc     kafkaclient.Config // the producer's
+	replay kafkaclient.Config
 
 	mu     sync.Mutex
 	client *kgo.Client
@@ -36,8 +36,8 @@ type Kafka struct {
 
 // KafkaOptions configures a Kafka log.
 type KafkaOptions struct {
-	Brokers []string
-	Topic   string
+	Kafka kafkaclient.Config
+	Topic string
 	// ClientID appears in broker logs and metrics. Defaults to andara-server.
 	ClientID string
 	// ProduceTimeout bounds a single Append. Zero means 10s.
@@ -53,7 +53,7 @@ type KafkaOptions struct {
 // applied. The partitioner is pinned to the murmur2 key hash the topics'
 // history was written under, so a library upgrade cannot move a key and
 // split its compaction history (AW-SRV-053).
-func producerOpts(o KafkaOptions) []kgo.Opt {
+func producerOpts(o KafkaOptions) (kafkaclient.Config, []kgo.Opt) {
 	if o.ClientID == "" {
 		o.ClientID = "andara-server"
 	}
@@ -61,8 +61,6 @@ func producerOpts(o KafkaOptions) []kgo.Opt {
 		o.ProduceTimeout = 10 * time.Second
 	}
 	opts := []kgo.Opt{
-		kgo.SeedBrokers(o.Brokers...),
-		kgo.ClientID(o.ClientID),
 		kgo.RequiredAcks(kgo.AllISRAcks()),
 		kgo.RecordPartitioner(kgo.StickyKeyPartitioner(nil)),
 		kgo.ProducerBatchCompression(kgo.ZstdCompression()),
@@ -73,20 +71,18 @@ func producerOpts(o KafkaOptions) []kgo.Opt {
 	if o.MaxRecordBytes > 0 {
 		opts = append(opts, kgo.ProducerBatchMaxBytes(o.MaxRecordBytes))
 	}
-	return opts
+	return o.Kafka.For(o.ClientID), opts
 }
 
 // ProducerSite describes the producer NewKafka builds for o.
 func ProducerSite(name string, o KafkaOptions) kafkaclient.Site {
-	return kafkaclient.Site{Name: name, Role: kafkaclient.Producer, Opts: producerOpts(o), Partitioning: kafkaclient.KeyHash}
+	return kafkaclient.Site{Name: name, Role: kafkaclient.Producer, Opts: kafkaclient.SiteOpts(producerOpts(o)), Partitioning: kafkaclient.KeyHash}
 }
 
 // replayOpts are the options a replay consumer is built with: a bounded
 // replay of a delete-policy topic from the start, no position resumed.
-func replayOpts(brokers []string, topic string) []kgo.Opt {
-	return []kgo.Opt{
-		kgo.SeedBrokers(brokers...),
-		kgo.ClientID("andara-server-replay"),
+func replayOpts(kc kafkaclient.Config, topic string) (kafkaclient.Config, []kgo.Opt) {
+	return kc.For("andara-server-replay"), []kgo.Opt{
 		kgo.ConsumeTopics(topic),
 		kgo.ConsumeResetOffset(kgo.NewOffset().AtStart()),
 		kgo.FetchIsolationLevel(kgo.ReadCommitted()),
@@ -95,8 +91,8 @@ func replayOpts(brokers []string, topic string) []kgo.Opt {
 
 // ReplaySite describes the consumer Replay builds. oneShot names its row in
 // the contract's table of one-shot readers.
-func ReplaySite(name string, brokers []string, topic string, oneShot kafkaclient.OneShot) kafkaclient.Site {
-	return kafkaclient.Site{Name: name, Role: kafkaclient.Consumer, Opts: replayOpts(brokers, topic), OneShot: oneShot}
+func ReplaySite(name string, kc kafkaclient.Config, topic string, oneShot kafkaclient.OneShot) kafkaclient.Site {
+	return kafkaclient.Site{Name: name, Role: kafkaclient.Consumer, Opts: kafkaclient.SiteOpts(replayOpts(kc, topic)), OneShot: oneShot}
 }
 
 // NewKafka connects to the brokers and verifies the topic exists. It does
@@ -104,7 +100,7 @@ func ReplaySite(name string, brokers []string, topic string, oneShot kafkaclient
 // applied by `make topics-apply` (AW-INF-004), never by a producer that
 // happened to start first.
 func NewKafka(ctx context.Context, o KafkaOptions) (*Kafka, error) {
-	if len(o.Brokers) == 0 {
+	if len(o.Kafka.Brokers) == 0 {
 		return nil, errors.New("recordlog: no brokers configured")
 	}
 	if o.Topic == "" {
@@ -116,8 +112,8 @@ func NewKafka(ctx context.Context, o KafkaOptions) (*Kafka, error) {
 	if o.ProduceTimeout <= 0 {
 		o.ProduceTimeout = 10 * time.Second
 	}
-	base := producerOpts(o)
-	client, err := kgo.NewClient(base...)
+	pc, popts := producerOpts(o)
+	client, err := kafkaclient.New(pc, popts...)
 	if err != nil {
 		return nil, fmt.Errorf("recordlog: connect %s: %w", o.Topic, err)
 	}
@@ -129,13 +125,13 @@ func NewKafka(ctx context.Context, o KafkaOptions) (*Kafka, error) {
 	md, err := adm.ListTopics(ctx, o.Topic)
 	if err != nil {
 		client.Close()
-		return nil, fmt.Errorf("recordlog: describe %s: %w", o.Topic, err)
+		return nil, fmt.Errorf("recordlog: describe %s: %w", o.Topic, pc.Check(o.Topic, err))
 	}
 	if !md.Has(o.Topic) {
 		client.Close()
 		return nil, fmt.Errorf("recordlog: topic %s does not exist; run `make topics-apply`", o.Topic)
 	}
-	return &Kafka{topic: o.Topic, brokers: o.Brokers, opts: base, client: client}, nil
+	return &Kafka{topic: o.Topic, kc: pc, replay: o.Kafka, client: client}, nil
 }
 
 // Append produces one record and waits for acks=all.
@@ -148,7 +144,7 @@ func (k *Kafka) Append(ctx context.Context, key string, value []byte) error {
 	}
 	res := c.ProduceSync(ctx, &kgo.Record{Topic: k.topic, Key: []byte(key), Value: value})
 	if err := res.FirstErr(); err != nil {
-		return fmt.Errorf("recordlog: append to %s: %w", k.topic, err)
+		return fmt.Errorf("recordlog: append to %s: %w", k.topic, k.kc.Check(k.topic, err))
 	}
 	return nil
 }
@@ -165,17 +161,17 @@ func (k *Kafka) Replay(ctx context.Context, fn func(Record) error) error {
 	adm := kadm.NewClient(k.client)
 	starts, err := adm.ListStartOffsets(ctx, k.topic)
 	if err != nil {
-		return fmt.Errorf("recordlog: start offsets of %s: %w", k.topic, err)
+		return fmt.Errorf("recordlog: start offsets of %s: %w", k.topic, k.kc.Check(k.topic, err))
 	}
 	ends, err := adm.ListEndOffsets(ctx, k.topic)
 	if err != nil {
-		return fmt.Errorf("recordlog: end offsets of %s: %w", k.topic, err)
+		return fmt.Errorf("recordlog: end offsets of %s: %w", k.topic, k.kc.Check(k.topic, err))
 	}
 	if err := starts.Error(); err != nil {
-		return fmt.Errorf("recordlog: start offsets of %s: %w", k.topic, err)
+		return fmt.Errorf("recordlog: start offsets of %s: %w", k.topic, k.kc.Check(k.topic, err))
 	}
 	if err := ends.Error(); err != nil {
-		return fmt.Errorf("recordlog: end offsets of %s: %w", k.topic, err)
+		return fmt.Errorf("recordlog: end offsets of %s: %w", k.topic, k.kc.Check(k.topic, err))
 	}
 	// end is the first offset each non-empty partition does NOT owe us. A
 	// partition whose start equals its end is empty and is not waited on.
@@ -190,7 +186,8 @@ func (k *Kafka) Replay(ctx context.Context, fn func(Record) error) error {
 		return nil
 	}
 
-	consumer, err := kgo.NewClient(replayOpts(k.brokers, k.topic)...)
+	rc, ropts := replayOpts(k.replay, k.topic)
+	consumer, err := kafkaclient.New(rc, ropts...)
 	if err != nil {
 		return fmt.Errorf("recordlog: replay consumer for %s: %w", k.topic, err)
 	}
@@ -199,7 +196,7 @@ func (k *Kafka) Replay(ctx context.Context, fn func(Record) error) error {
 	for len(end) > 0 {
 		fetches := consumer.PollFetches(ctx)
 		if err := fetches.Err0(); err != nil {
-			return fmt.Errorf("recordlog: replay %s: %w", k.topic, err)
+			return fmt.Errorf("recordlog: replay %s: %w", k.topic, rc.Check(k.topic, err))
 		}
 		var ferr error
 		fetches.EachPartition(func(p kgo.FetchTopicPartition) {

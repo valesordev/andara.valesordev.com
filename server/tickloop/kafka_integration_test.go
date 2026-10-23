@@ -21,30 +21,31 @@ import (
 	"time"
 
 	"github.com/twmb/franz-go/pkg/kadm"
-	"github.com/twmb/franz-go/pkg/kgo"
 
 	logv1 "github.com/valesordev/andara/gen/go/andara/log/v1"
 	"github.com/valesordev/andara/internal/eventually"
+	"github.com/valesordev/andara/server/kafkaclient"
+	"github.com/valesordev/andara/server/kafkaclient/kafkatest"
 	"github.com/valesordev/andara/server/sim"
 	"github.com/valesordev/andara/server/simtest"
 )
 
-func brokers(t *testing.T) []string {
+func brokers(t *testing.T) kafkaclient.Config {
 	t.Helper()
 	v := os.Getenv("ANDARA_KAFKA_BROKERS")
 	if v == "" {
 		t.Skip("ANDARA_KAFKA_BROKERS not set; run `make up` and `make test-integration`")
 	}
-	return strings.Split(v, ",")
+	return kafkatest.Config(strings.Split(v, ","))
 }
 
 // topics creates a throwaway commands topic (64 partitions) and events
 // topic, deleted when the test ends.
-func topics(t *testing.T, brokers []string) (commands, events string) {
+func topics(t *testing.T, brokers kafkaclient.Config) (commands, events string) {
 	t.Helper()
 	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
 	defer cancel()
-	cl, err := kgo.NewClient(kgo.SeedBrokers(brokers...))
+	cl, err := kafkaclient.New(brokers.For("andara-it"))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -69,7 +70,7 @@ func topics(t *testing.T, brokers []string) (commands, events string) {
 
 // produce writes the scripted log to the commands topic through the
 // publisher, one record at a time so the broker's batching is its own.
-func produce(t *testing.T, brokers []string, topic string, n int) int {
+func produce(t *testing.T, brokers kafkaclient.Config, topic string, n int) int {
 	t.Helper()
 	// Only Commands are produced; the events topic is never written.
 	pub, err := NewKafkaPublisher(context.Background(), brokers, "test", topic, "unused-events")
@@ -91,7 +92,7 @@ func produce(t *testing.T, brokers []string, topic string, n int) int {
 
 // startLoop recovers from the events topic, then runs a loop over the
 // throwaway topics until ctx is done. What a server does at boot.
-func startLoop(ctx context.Context, brokers []string, commands, events, group string, seed uint64, checkpointEvery int) (*Loop, *sim.Engine, error) {
+func startLoop(ctx context.Context, brokers kafkaclient.Config, commands, events, group string, seed uint64, checkpointEvery int) (*Loop, *sim.Engine, error) {
 	e, err := simtest.NewEngine(seed)
 	if err != nil {
 		return nil, nil, err
@@ -99,7 +100,7 @@ func startLoop(ctx context.Context, brokers []string, commands, events, group st
 	if _, err := Recover(ctx, brokers, commands, events, e, nil); err != nil {
 		return nil, nil, err
 	}
-	src, err := NewKafkaSource(ctx, KafkaSourceOptions{Brokers: brokers, Group: group, Start: e.State().Offsets, Topic: commands, LagEvery: 200 * time.Millisecond})
+	src, err := NewKafkaSource(ctx, KafkaSourceOptions{Kafka: brokers, Group: group, Start: e.State().Offsets, Topic: commands, LagEvery: 200 * time.Millisecond})
 	if err != nil {
 		return nil, nil, err
 	}
@@ -121,7 +122,7 @@ func startLoop(ctx context.Context, brokers []string, commands, events, group st
 
 // waitForBoundaries reads the events topic until it holds at least n
 // boundaries, and returns them.
-func waitForBoundaries(t *testing.T, brokers []string, events string, n int, within time.Duration) []sim.TickCompleted {
+func waitForBoundaries(t *testing.T, brokers kafkaclient.Config, events string, n int, within time.Duration) []sim.TickCompleted {
 	t.Helper()
 	var bs []sim.TickCompleted
 	eventually.Observed(t, within, fmt.Sprintf("at least %d boundaries on %s", n, events), func() (bool, string) {
@@ -197,7 +198,7 @@ func TestKafka_ApplyThenReplay(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if err := r.Replay(bs, KafkaRecords{Brokers: bk, Topic: commands}); err != nil {
+	if err := r.Replay(bs, KafkaRecords{Kafka: bk, Topic: commands}); err != nil {
 		t.Fatal(err)
 	}
 	if r.StateHash() != final {
@@ -205,7 +206,7 @@ func TestKafka_ApplyThenReplay(t *testing.T) {
 	}
 
 	// The drain committed the final offsets under the group.
-	cl, _ := kgo.NewClient(kgo.SeedBrokers(bk...))
+	cl, _ := kafkaclient.New(bk.For("andara-it"))
 	defer cl.Close()
 	committed, err := kadm.NewClient(cl).FetchOffsetsForTopics(context.Background(), group, commands)
 	if err != nil {
@@ -226,7 +227,7 @@ func TestKafkaChild(t *testing.T) {
 		t.Skip("child mode only")
 	}
 	parts := strings.Split(spec, "|")
-	bk := strings.Split(parts[0], ",")
+	bk := kafkatest.Config(strings.Split(parts[0], ","))
 	loop, _, err := startLoop(context.Background(), bk, parts[1], parts[2], parts[3], 9, 5)
 	if err != nil {
 		fmt.Fprintln(os.Stderr, "child:", err)
@@ -252,7 +253,7 @@ func TestKafka_CrashAndRecover(t *testing.T) {
 
 	spawn := func() *exec.Cmd {
 		cmd := exec.Command(os.Args[0], "-test.run", "^TestKafkaChild$", "-test.v")
-		cmd.Env = append(os.Environ(), "ANDARA_TICKLOOP_CHILD="+strings.Join(bk, ",")+"|"+commands+"|"+events+"|"+group)
+		cmd.Env = append(os.Environ(), "ANDARA_TICKLOOP_CHILD="+strings.Join(bk.Brokers, ",")+"|"+commands+"|"+events+"|"+group)
 		cmd.Stderr = os.Stderr
 		if err := cmd.Start(); err != nil {
 			t.Fatal(err)
@@ -293,7 +294,7 @@ func TestKafka_CrashAndRecover(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if err := r.Replay(after, KafkaRecords{Brokers: bk, Topic: commands}); err != nil {
+	if err := r.Replay(after, KafkaRecords{Kafka: bk, Topic: commands}); err != nil {
 		t.Fatal(err)
 	}
 	if r.StateHash() != after[len(after)-1].StateHash {

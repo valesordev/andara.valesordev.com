@@ -31,6 +31,8 @@ import (
 
 	statev1 "github.com/valesordev/andara/gen/go/andara/state/v1"
 	"github.com/valesordev/andara/internal/eventually"
+	"github.com/valesordev/andara/server/kafkaclient"
+	"github.com/valesordev/andara/server/kafkaclient/kafkatest"
 	"github.com/valesordev/andara/server/projector"
 	"github.com/valesordev/andara/server/sim"
 	"github.com/valesordev/andara/server/simtest"
@@ -38,20 +40,20 @@ import (
 	"github.com/valesordev/andara/server/tickloop"
 )
 
-func brokers(t *testing.T) []string {
+func brokers(t *testing.T) kafkaclient.Config {
 	t.Helper()
 	v := os.Getenv("ANDARA_KAFKA_BROKERS")
 	if v == "" {
 		t.Skip("ANDARA_KAFKA_BROKERS not set; run `make up` and `make test-integration`")
 	}
-	return strings.Split(v, ",")
+	return kafkatest.Config(strings.Split(v, ","))
 }
 
 // broker is one test's throwaway topics and group, and the live World that
 // writes to them.
 type broker struct {
 	t                       *testing.T
-	brokers                 []string
+	brokers                 kafkaclient.Config
 	cl                      *kgo.Client
 	adm                     *kadm.Client
 	commands, events, state string
@@ -76,7 +78,7 @@ func newBroker(t *testing.T) *broker {
 func newBrokerNamed(t *testing.T, commands, events, state, group string) *broker {
 	t.Helper()
 	bs := brokers(t)
-	cl, err := kgo.NewClient(kgo.SeedBrokers(bs...), kgo.RecordPartitioner(kgo.ManualPartitioner()))
+	cl, err := kafkaclient.New(bs.For("andara-it"), kgo.RecordPartitioner(kgo.ManualPartitioner()))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -144,7 +146,7 @@ func (b *broker) mirror(w *world, corrupt sim.Tick) {
 // options is a RunOptions over this broker for a World built like w's.
 func (b *broker) options(w *world) projector.RunOptions {
 	return projector.RunOptions{
-		Brokers: b.brokers, Group: b.group,
+		Kafka: b.brokers, Group: b.group,
 		CommandsTopic: b.commands, EventsTopic: b.events, StateTopic: b.state,
 		World: w.live.World(), Content: crossing(b.t), Seed: seed,
 		BatchTicks:     3,
@@ -227,7 +229,7 @@ func (b *broker) topic(t *testing.T) view {
 	if len(assign) == 0 {
 		return v
 	}
-	cl, err := kgo.NewClient(kgo.SeedBrokers(b.brokers...), kgo.ConsumePartitions(map[string]map[int32]kgo.Offset{b.state: assign}))
+	cl, err := kafkaclient.New(b.brokers.For("andara-it"), kgo.ConsumePartitions(map[string]map[int32]kgo.Offset{b.state: assign}))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -329,7 +331,7 @@ func (b *broker) raw(t *testing.T, p int32) []*kgo.Record {
 	if end == 0 {
 		return nil
 	}
-	cl, err := kgo.NewClient(kgo.SeedBrokers(b.brokers...), kgo.ConsumePartitions(map[string]map[int32]kgo.Offset{b.state: {p: kgo.NewOffset().AtStart()}}))
+	cl, err := kafkaclient.New(b.brokers.For("andara-it"), kgo.ConsumePartitions(map[string]map[int32]kgo.Offset{b.state: {p: kgo.NewOffset().AtStart()}}))
 	if err != nil {
 		t.Fatal(err)
 	}

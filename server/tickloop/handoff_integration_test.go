@@ -17,6 +17,8 @@ import (
 	"time"
 
 	logv1 "github.com/valesordev/andara/gen/go/andara/log/v1"
+	"github.com/valesordev/andara/server/kafkaclient"
+	"github.com/valesordev/andara/server/kafkaclient/kafkatest"
 	"github.com/valesordev/andara/server/sim"
 	"github.com/valesordev/andara/server/simtest"
 )
@@ -62,7 +64,7 @@ func handoffEngine(seed uint64) (*sim.Engine, error) {
 	return e, nil
 }
 
-func startHandoffLoop(ctx context.Context, brokers []string, commands, events, group string, lossy bool) (*Loop, error) {
+func startHandoffLoop(ctx context.Context, brokers kafkaclient.Config, commands, events, group string, lossy bool) (*Loop, error) {
 	e, err := handoffEngine(9)
 	if err != nil {
 		return nil, err
@@ -70,7 +72,7 @@ func startHandoffLoop(ctx context.Context, brokers []string, commands, events, g
 	if _, err := Recover(ctx, brokers, commands, events, e, nil); err != nil {
 		return nil, err
 	}
-	src, err := NewKafkaSource(ctx, KafkaSourceOptions{Brokers: brokers, Group: group, Start: e.State().Offsets, Topic: commands, LagEvery: 200 * time.Millisecond})
+	src, err := NewKafkaSource(ctx, KafkaSourceOptions{Kafka: brokers, Group: group, Start: e.State().Offsets, Topic: commands, LagEvery: 200 * time.Millisecond})
 	if err != nil {
 		return nil, err
 	}
@@ -97,7 +99,7 @@ func TestKafkaHandoffChild(t *testing.T) {
 		t.Skip("child mode only")
 	}
 	parts := strings.Split(spec, "|")
-	loop, err := startHandoffLoop(context.Background(), strings.Split(parts[0], ","), parts[1], parts[2], parts[3], parts[4] == "lossy")
+	loop, err := startHandoffLoop(context.Background(), kafkatest.Config(strings.Split(parts[0], ",")), parts[1], parts[2], parts[3], parts[4] == "lossy")
 	if err != nil {
 		fmt.Fprintln(os.Stderr, "child:", err)
 		os.Exit(3)
@@ -126,7 +128,7 @@ func TestKafka_AHandoffSurvivesASIGKILLWithTheArriveLost(t *testing.T) {
 
 	spawn := func(mode string) *exec.Cmd {
 		cmd := exec.Command(os.Args[0], "-test.run", "^TestKafkaHandoffChild$", "-test.v")
-		cmd.Env = append(os.Environ(), "ANDARA_TICKLOOP_HANDOFF_CHILD="+strings.Join(bk, ",")+"|"+commands+"|"+events+"|"+group+"|"+mode)
+		cmd.Env = append(os.Environ(), "ANDARA_TICKLOOP_HANDOFF_CHILD="+strings.Join(bk.Brokers, ",")+"|"+commands+"|"+events+"|"+group+"|"+mode)
 		cmd.Stderr = os.Stderr
 		if err := cmd.Start(); err != nil {
 			t.Fatal(err)

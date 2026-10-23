@@ -31,6 +31,25 @@ const DefaultClientID = "andara-server-content"
 // broker that is down does not turn the watch into a busy loop.
 const watchBackoff = 2 * time.Second
 
+// watchAuthBackoff is the pause after the broker refuses the watch's
+// principal the pointer topic: an ACL changes on an operator's time, not a
+// broker restart's.
+const watchAuthBackoff = time.Minute
+
+// watchBackoffFor is how long the watch pauses after a fetch error, and
+// whether it writes its own warn. A refusal of the pointer topic (AW-SRV-044
+// AC-8) holds until an ACL changes: the server keeps serving the content it
+// has, so unlike the tick loop the watch doesn't stop; it asks again once a
+// minute, which an ACL fix heals, and the kafkaclient error line (one a
+// minute) says why. Any other error, a lost password file among them
+// (AC-6a), is retried on the ordinary backoff with a warn.
+func watchBackoffFor(err error) (time.Duration, bool) {
+	if kafkaclient.Refused(err) {
+		return watchAuthBackoff, false
+	}
+	return watchBackoff, true
+}
+
 // PointerMove is one Active Pointer write observed on the Active Pointer topic.
 type PointerMove struct {
 	Pack    string
@@ -54,7 +73,7 @@ type PointerMove struct {
 // per version. It would not be for blobs, which is exactly what the on-disk
 // cache is for: a warm cache resolves without touching the blob topic at all.
 type KafkaResolver struct {
-	brokers  []string
+	kc       kafkaclient.Config
 	clientID string
 	cache    BlobCache
 	maxBlob  int64
@@ -72,7 +91,7 @@ type KafkaResolver struct {
 
 // KafkaOptions configures a KafkaResolver.
 type KafkaOptions struct {
-	Brokers  []string
+	Kafka    kafkaclient.Config
 	ClientID string
 	Cache    BlobCache
 	// MaxBlobBytes refuses a blob larger than this (content.max_blob_bytes).
@@ -117,7 +136,7 @@ func (t Topics) Require(option string) error {
 // does, and a content store that is unreachable should be a load failure with
 // the previous version retained, not a constructor that panics a boot.
 func NewKafkaResolver(o KafkaOptions) (*KafkaResolver, error) {
-	if len(o.Brokers) == 0 {
+	if len(o.Kafka.Brokers) == 0 {
 		return nil, errors.New("content: no brokers configured")
 	}
 	if err := o.Topics.Require("KafkaOptions.Topics"); err != nil {
@@ -135,7 +154,7 @@ func NewKafkaResolver(o KafkaOptions) (*KafkaResolver, error) {
 		lg = slog.New(slog.DiscardHandler)
 	}
 	return &KafkaResolver{
-		brokers:  o.Brokers,
+		kc:       o.Kafka,
 		clientID: o.ClientID,
 		cache:    o.Cache,
 		maxBlob:  o.MaxBlobBytes,
@@ -291,17 +310,18 @@ func (r *KafkaResolver) checkBlobSize(path string, n int) error {
 // Calling Pin before the initial scan closes the window from the other side:
 // anything written from that instant on is at or after the pinned offset.
 func (r *KafkaResolver) Pin(ctx context.Context) error {
-	client, err := kgo.NewClient(adminOpts(r.brokers, r.clientID, "-pin")...)
+	pc, popts := adminOpts(r.kc, r.clientID, "-pin")
+	client, err := kafkaclient.New(pc, popts...)
 	if err != nil {
 		return &ErrStoreUnavailable{Op: "connect " + r.topics.Active, Err: err}
 	}
 	defer client.Close()
 	ends, err := kadm.NewClient(client).ListEndOffsets(ctx, r.topics.Active)
 	if err != nil {
-		return &ErrStoreUnavailable{Op: "end offsets of " + r.topics.Active, Err: err}
+		return &ErrStoreUnavailable{Op: "end offsets of " + r.topics.Active, Err: pc.Check(r.topics.Active, err)}
 	}
 	if err := ends.Error(); err != nil {
-		return &ErrStoreUnavailable{Op: "end offsets of " + r.topics.Active, Err: err}
+		return &ErrStoreUnavailable{Op: "end offsets of " + r.topics.Active, Err: pc.Check(r.topics.Active, err)}
 	}
 	at := map[int32]kgo.Offset{}
 	for _, e := range ends[r.topics.Active] {
@@ -315,16 +335,14 @@ func (r *KafkaResolver) Pin(ctx context.Context) error {
 
 // adminOpts are the options of a client that asks the log for offsets and
 // neither produces nor consumes; purpose is the client.id suffix.
-func adminOpts(brokers []string, clientID, purpose string) []kgo.Opt {
-	return []kgo.Opt{kgo.SeedBrokers(brokers...), kgo.ClientID(clientID + purpose)}
+func adminOpts(kc kafkaclient.Config, clientID, purpose string) (kafkaclient.Config, []kgo.Opt) {
+	return kc.For(clientID + purpose), nil
 }
 
 // scanOpts are the options of the one-shot scan of a compacted topic, read
 // from the start to find the latest value per key.
-func scanOpts(brokers []string, clientID, topic string) []kgo.Opt {
-	return []kgo.Opt{
-		kgo.SeedBrokers(brokers...),
-		kgo.ClientID(clientID + "-scan"),
+func scanOpts(kc kafkaclient.Config, clientID, topic string) (kafkaclient.Config, []kgo.Opt) {
+	return kc.For(clientID + "-scan"), []kgo.Opt{
 		kgo.ConsumeTopics(topic),
 		kgo.ConsumeResetOffset(kgo.NewOffset().AtStart()),
 		kgo.FetchIsolationLevel(kgo.ReadCommitted()),
@@ -333,16 +351,15 @@ func scanOpts(brokers []string, clientID, topic string) []kgo.Opt {
 
 // watchOpts are the options of the Active Pointer watch: from the pinned
 // offsets when Pin ran, else from wherever the topic ends.
-func watchOpts(brokers []string, clientID, active string, from map[int32]kgo.Offset) []kgo.Opt {
+func watchOpts(kc kafkaclient.Config, clientID, active string, from map[int32]kgo.Offset) (kafkaclient.Config, []kgo.Opt) {
+	kc = kc.For(clientID + "-watch")
 	opts := []kgo.Opt{
-		kgo.SeedBrokers(brokers...),
-		kgo.ClientID(clientID + "-watch"),
 		kgo.FetchIsolationLevel(kgo.ReadCommitted()),
 	}
 	if len(from) > 0 {
-		return append(opts, kgo.ConsumePartitions(map[string]map[int32]kgo.Offset{active: from}))
+		return kc, append(opts, kgo.ConsumePartitions(map[string]map[int32]kgo.Offset{active: from}))
 	}
-	return append(opts,
+	return kc, append(opts,
 		kgo.ConsumeTopics(active),
 		kgo.ConsumeResetOffset(kgo.NewOffset().AtEnd()),
 	)
@@ -350,16 +367,16 @@ func watchOpts(brokers []string, clientID, active string, from map[int32]kgo.Off
 
 // Sites describes every Kafka client this package builds, for a resolver
 // with the given client.id base and topics.
-func Sites(brokers []string, clientID string, t Topics) []kafkaclient.Site {
+func Sites(kc kafkaclient.Config, clientID string, t Topics) []kafkaclient.Site {
 	pinned := map[int32]kgo.Offset{0: kgo.NewOffset().At(0)}
 	return []kafkaclient.Site{
-		{Name: "content pin", Role: kafkaclient.Admin, Opts: adminOpts(brokers, clientID, "-pin")},
-		{Name: "content scan offsets", Role: kafkaclient.Admin, Opts: adminOpts(brokers, clientID, "-admin")},
-		{Name: "content blobs scan", Role: kafkaclient.Consumer, Opts: scanOpts(brokers, clientID, t.Blobs), OneShot: kafkaclient.ContentBlobsScan},
-		{Name: "content versions scan", Role: kafkaclient.Consumer, Opts: scanOpts(brokers, clientID, t.Versions), OneShot: kafkaclient.ContentVersionsScan},
-		{Name: "content active pointer scan", Role: kafkaclient.Consumer, Opts: scanOpts(brokers, clientID, t.Active), OneShot: kafkaclient.ContentActiveWatch},
-		{Name: "content active pointer watch", Role: kafkaclient.Consumer, Opts: watchOpts(brokers, clientID, t.Active, nil), OneShot: kafkaclient.ContentActiveWatch},
-		{Name: "content active pointer watch (pinned)", Role: kafkaclient.Consumer, Opts: watchOpts(brokers, clientID, t.Active, pinned),
+		{Name: "content pin", Role: kafkaclient.Admin, Opts: kafkaclient.SiteOpts(adminOpts(kc, clientID, "-pin"))},
+		{Name: "content scan offsets", Role: kafkaclient.Admin, Opts: kafkaclient.SiteOpts(adminOpts(kc, clientID, "-admin"))},
+		{Name: "content blobs scan", Role: kafkaclient.Consumer, Opts: kafkaclient.SiteOpts(scanOpts(kc, clientID, t.Blobs)), OneShot: kafkaclient.ContentBlobsScan},
+		{Name: "content versions scan", Role: kafkaclient.Consumer, Opts: kafkaclient.SiteOpts(scanOpts(kc, clientID, t.Versions)), OneShot: kafkaclient.ContentVersionsScan},
+		{Name: "content active pointer scan", Role: kafkaclient.Consumer, Opts: kafkaclient.SiteOpts(scanOpts(kc, clientID, t.Active)), OneShot: kafkaclient.ContentActiveWatch},
+		{Name: "content active pointer watch", Role: kafkaclient.Consumer, Opts: kafkaclient.SiteOpts(watchOpts(kc, clientID, t.Active, nil)), OneShot: kafkaclient.ContentActiveWatch},
+		{Name: "content active pointer watch (pinned)", Role: kafkaclient.Consumer, Opts: kafkaclient.SiteOpts(watchOpts(kc, clientID, t.Active, pinned)),
 			// The Active topic is compacted, so its log start never moves
 			// past a pinned offset; a cursor reset to the start re-reads
 			// pointers the watch applies idempotently. The watch has no exit
@@ -378,8 +395,8 @@ func (r *KafkaResolver) Watch(ctx context.Context) (<-chan PointerMove, error) {
 	from := r.watchFrom
 	r.mu.Unlock()
 
-	opts := watchOpts(r.brokers, r.clientID, r.topics.Active, from)
-	client, err := kgo.NewClient(opts...)
+	wc, opts := watchOpts(r.kc, r.clientID, r.topics.Active, from)
+	client, err := kafkaclient.New(wc, opts...)
 	if err != nil {
 		return nil, fmt.Errorf("content: watch %s: %w", r.topics.Active, err)
 	}
@@ -402,11 +419,14 @@ func (r *KafkaResolver) Watch(ctx context.Context) (<-chan PointerMove, error) {
 			// ignored. The watch never gives up: giving up would mean the
 			// server stops noticing content changes with nothing saying so.
 			if errs := fetches.Errors(); len(errs) > 0 {
-				r.log.Warn("content pointer watch: fetch failed, retrying",
-					"topic", errs[0].Topic, "partition", errs[0].Partition,
-					"error", errs[0].Err.Error())
+				err := wc.Check(errs[0].Topic, errs[0].Err)
+				backoff, warn := watchBackoffFor(err)
+				if warn {
+					r.log.Warn("content pointer watch: fetch failed, retrying",
+						"topic", errs[0].Topic, "partition", errs[0].Partition, "error", err.Error())
+				}
 				select {
-				case <-time.After(watchBackoff):
+				case <-time.After(backoff):
 				case <-ctx.Done():
 					return
 				}
@@ -460,7 +480,8 @@ func ManifestKey(pack string, version uint64) string {
 // reason: compaction leaves gaps, so "we have read enough" is the last fetched
 // offset reaching the captured end, never a count of records.
 func (r *KafkaResolver) scan(ctx context.Context, topic string, fn func(key, value []byte) error) error {
-	admClient, err := kgo.NewClient(adminOpts(r.brokers, r.clientID, "-admin")...)
+	ac, aopts := adminOpts(r.kc, r.clientID, "-admin")
+	admClient, err := kafkaclient.New(ac, aopts...)
 	if err != nil {
 		return &ErrStoreUnavailable{Op: "connect " + topic, Err: err}
 	}
@@ -469,16 +490,16 @@ func (r *KafkaResolver) scan(ctx context.Context, topic string, fn func(key, val
 	ends, eerr := adm.ListEndOffsets(ctx, topic)
 	admClient.Close()
 	if serr != nil {
-		return &ErrStoreUnavailable{Op: "start offsets of " + topic, Err: serr}
+		return &ErrStoreUnavailable{Op: "start offsets of " + topic, Err: ac.Check(topic, serr)}
 	}
 	if eerr != nil {
-		return &ErrStoreUnavailable{Op: "end offsets of " + topic, Err: eerr}
+		return &ErrStoreUnavailable{Op: "end offsets of " + topic, Err: ac.Check(topic, eerr)}
 	}
 	if err := starts.Error(); err != nil {
-		return &ErrStoreUnavailable{Op: "start offsets of " + topic, Err: err}
+		return &ErrStoreUnavailable{Op: "start offsets of " + topic, Err: ac.Check(topic, err)}
 	}
 	if err := ends.Error(); err != nil {
-		return &ErrStoreUnavailable{Op: "end offsets of " + topic, Err: err}
+		return &ErrStoreUnavailable{Op: "end offsets of " + topic, Err: ac.Check(topic, err)}
 	}
 
 	end := map[int32]int64{}
@@ -492,7 +513,8 @@ func (r *KafkaResolver) scan(ctx context.Context, topic string, fn func(key, val
 		return nil // every partition is empty
 	}
 
-	consumer, err := kgo.NewClient(scanOpts(r.brokers, r.clientID, topic)...)
+	sc, sopts := scanOpts(r.kc, r.clientID, topic)
+	consumer, err := kafkaclient.New(sc, sopts...)
 	if err != nil {
 		return &ErrStoreUnavailable{Op: "scan consumer for " + topic, Err: err}
 	}
@@ -501,7 +523,7 @@ func (r *KafkaResolver) scan(ctx context.Context, topic string, fn func(key, val
 	for len(end) > 0 {
 		fetches := consumer.PollFetches(ctx)
 		if err := fetches.Err0(); err != nil {
-			return &ErrStoreUnavailable{Op: "scan " + topic, Err: err}
+			return &ErrStoreUnavailable{Op: "scan " + topic, Err: sc.Check(topic, err)}
 		}
 		var ferr error
 		fetches.EachPartition(func(p kgo.FetchTopicPartition) {

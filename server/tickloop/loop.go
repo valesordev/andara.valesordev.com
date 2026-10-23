@@ -22,6 +22,7 @@ import (
 
 	logv1 "github.com/valesordev/andara/gen/go/andara/log/v1"
 	"github.com/valesordev/andara/server/command"
+	"github.com/valesordev/andara/server/kafkaclient"
 	"github.com/valesordev/andara/server/sim"
 )
 
@@ -331,6 +332,11 @@ func (l *Loop) tick(ctx context.Context, tick sim.Tick, lag time.Duration) error
 	case errors.Is(err, sim.ErrOffsetGap):
 		span.SetStatus(codes.Error, err.Error())
 		return err
+	case kafkaclient.Refused(err):
+		// The broker refuses this process's principal the log: nothing can
+		// tick until an ACL changes, so the loop stops as on a gap.
+		kafkaclient.SpanError(span, err)
+		return fmt.Errorf("tickloop: poll: %w", err)
 	case err != nil:
 		return fmt.Errorf("tickloop: poll: %w", err)
 	}

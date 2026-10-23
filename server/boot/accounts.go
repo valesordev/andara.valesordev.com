@@ -39,11 +39,11 @@ func (rt *Runtime) OpenAccounts(ctx context.Context) (*auth.Store, error) {
 		accounts, audit = recordlog.NewMemory(), recordlog.NewMemory()
 	case "kafka":
 		accountsTopic = rt.Topics.Accounts()
-		accounts, err = recordlog.NewKafka(ctx, recordlog.KafkaOptions{Brokers: cfg.KafkaBrokers, Topic: accountsTopic, ClientID: cfg.ServiceName})
+		accounts, err = recordlog.NewKafka(ctx, recordlog.KafkaOptions{Kafka: rt.Kafka, Topic: accountsTopic, ClientID: cfg.ServiceName})
 		if err != nil {
 			return nil, err
 		}
-		audit, err = recordlog.NewKafka(ctx, recordlog.KafkaOptions{Brokers: cfg.KafkaBrokers, Topic: rt.AuditTopicName, ClientID: cfg.ServiceName})
+		audit, err = recordlog.NewKafka(ctx, recordlog.KafkaOptions{Kafka: rt.Kafka, Topic: rt.AuditTopicName, ClientID: cfg.ServiceName})
 		if err != nil {
 			_ = accounts.Close()
 			return nil, err

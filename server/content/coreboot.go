@@ -17,6 +17,7 @@ import (
 
 	contentv1 "github.com/valesordev/andara/gen/go/andara/content/v1"
 	"github.com/valesordev/andara/server/auth"
+	"github.com/valesordev/andara/server/kafkaclient"
 )
 
 // ServerPrincipal is the reserved principal the boot publishes and activates
@@ -116,6 +117,9 @@ func BootCore(ctx context.Context, o CoreBootOptions) (CoreBoot, error) {
 		for _, ref := range refs {
 			wctx, wspan := o.Tracer.Start(ctx, "content.write_blob")
 			_, err := o.Registry.PutBlob(wctx, ref.GetHash(), "application/json", o.Blobs[ref.GetPath()])
+			if err != nil {
+				kafkaclient.SpanError(wspan, err)
+			}
 			wspan.End()
 			if err != nil {
 				return out, err
@@ -123,6 +127,9 @@ func BootCore(ctx context.Context, o CoreBootOptions) (CoreBoot, error) {
 		}
 		mctx, mspan := o.Tracer.Start(ctx, "content.write_manifest")
 		_, err := o.Registry.PublishExact(mctx, &contentv1.ContentVersion{PackId: o.Pack, Blobs: refs, Author: ServerPrincipal, Publisher: ServerPrincipal}, o.Version)
+		if err != nil {
+			kafkaclient.SpanError(mspan, err)
+		}
 		mspan.End()
 		if err != nil {
 			return out, err

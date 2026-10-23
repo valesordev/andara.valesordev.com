@@ -46,14 +46,14 @@ type CommandSource = tickloop.CommandSource
 
 // NewBoundaryReader starts reading the boundary Partition from its start, under
 // the projector's client ID.
-func NewBoundaryReader(ctx context.Context, brokers []string, eventsTopic string) (*BoundaryReader, error) {
-	return tickloop.NewBoundaryReader(ctx, brokers, eventsTopic, ClientID)
+func NewBoundaryReader(ctx context.Context, kc kafkaclient.Config, eventsTopic string) (*BoundaryReader, error) {
+	return tickloop.NewBoundaryReader(ctx, kc, eventsTopic, ClientID)
 }
 
 // NewCommandSource consumes every Partition in start from its offset, under the
 // projector's client ID.
-func NewCommandSource(ctx context.Context, brokers []string, topic string, start map[int32]int64) (*CommandSource, error) {
-	return tickloop.NewCommandSource(ctx, brokers, topic, ClientID, start)
+func NewCommandSource(ctx context.Context, kc kafkaclient.Config, topic string, start map[int32]int64) (*CommandSource, error) {
+	return tickloop.NewCommandSource(ctx, kc, topic, ClientID, start)
 }
 
 // Producer writes records to andara.state.v1 on the Partition each names —
@@ -61,14 +61,13 @@ func NewCommandSource(ctx context.Context, brokers []string, topic string, start
 // producer, franz-go's defaults, which keep a key's records in order.
 type Producer struct {
 	client *kgo.Client
+	kc     kafkaclient.Config // the producer's, for Check
 	topic  string
 }
 
 // producerOpts are the options the state producer is built with.
-func producerOpts(brokers []string) []kgo.Opt {
-	return []kgo.Opt{
-		kgo.SeedBrokers(brokers...),
-		kgo.ClientID(ClientID),
+func producerOpts(kc kafkaclient.Config) (kafkaclient.Config, []kgo.Opt) {
+	return kc.For(ClientID), []kgo.Opt{
 		kgo.RequiredAcks(kgo.AllISRAcks()),
 		kgo.RecordPartitioner(kgo.ManualPartitioner()),
 		kgo.ProducerBatchCompression(kgo.ZstdCompression()),
@@ -78,35 +77,36 @@ func producerOpts(brokers []string) []kgo.Opt {
 
 // adminOpts are the options of the projector's metadata and offset clients,
 // which neither produce nor consume; purpose is the client.id suffix.
-func adminOpts(brokers []string, purpose string) []kgo.Opt {
-	return []kgo.Opt{kgo.SeedBrokers(brokers...), kgo.ClientID(ClientID + purpose)}
+func adminOpts(kc kafkaclient.Config, purpose string) (kafkaclient.Config, []kgo.Opt) {
+	return kc.For(ClientID + purpose), nil
 }
 
 // keysOpts are the options of the state topic key scan, which reads the
 // compacted topic from explicit offsets.
-func keysOpts(brokers []string) []kgo.Opt {
-	return append(adminOpts(brokers, "-keys"), kgo.FetchIsolationLevel(kgo.ReadCommitted()), kgo.ConsumeResetOffset(kgo.NoResetOffset()))
+func keysOpts(kc kafkaclient.Config) (kafkaclient.Config, []kgo.Opt) {
+	return kc.For(ClientID + "-keys"), []kgo.Opt{kgo.FetchIsolationLevel(kgo.ReadCommitted()), kgo.ConsumeResetOffset(kgo.NoResetOffset())}
 }
 
 // MetaOpts are the options of the cmd's topic-size client.
-func MetaOpts(brokers []string) []kgo.Opt { return adminOpts(brokers, "-meta") }
+func MetaOpts(kc kafkaclient.Config) (kafkaclient.Config, []kgo.Opt) { return adminOpts(kc, "-meta") }
 
 // Sites describes every Kafka client this package builds.
-func Sites(brokers []string) []kafkaclient.Site {
+func Sites(kc kafkaclient.Config) []kafkaclient.Site {
 	return []kafkaclient.Site{
-		{Name: "projector state producer", Role: kafkaclient.Producer, Opts: producerOpts(brokers), Partitioning: kafkaclient.Manual},
-		{Name: "projector committer", Role: kafkaclient.Admin, Opts: adminOpts(brokers, "-commit")},
-		{Name: "projector state key scan", Role: kafkaclient.Consumer, Opts: keysOpts(brokers), AssignedLater: true},
-		{Name: "projector topic size", Role: kafkaclient.Admin, Opts: MetaOpts(brokers)},
+		{Name: "projector state producer", Role: kafkaclient.Producer, Opts: kafkaclient.SiteOpts(producerOpts(kc)), Partitioning: kafkaclient.Manual},
+		{Name: "projector committer", Role: kafkaclient.Admin, Opts: kafkaclient.SiteOpts(adminOpts(kc, "-commit"))},
+		{Name: "projector state key scan", Role: kafkaclient.Consumer, Opts: kafkaclient.SiteOpts(keysOpts(kc)), AssignedLater: true},
+		{Name: "projector topic size", Role: kafkaclient.Admin, Opts: kafkaclient.SiteOpts(MetaOpts(kc))},
 	}
 }
 
 // NewProducer connects the producer.
-func NewProducer(ctx context.Context, brokers []string, topic string) (*Producer, error) {
+func NewProducer(ctx context.Context, kc kafkaclient.Config, topic string) (*Producer, error) {
 	if topic == "" {
 		return nil, errors.New("projector: NewProducer topic is required")
 	}
-	client, err := kgo.NewClient(producerOpts(brokers)...)
+	pc, popts := producerOpts(kc)
+	client, err := kafkaclient.New(pc, popts...)
 	if err != nil {
 		return nil, err
 	}
@@ -114,7 +114,7 @@ func NewProducer(ctx context.Context, brokers []string, topic string) (*Producer
 		client.Close()
 		return nil, err
 	}
-	return &Producer{client: client, topic: topic}, nil
+	return &Producer{client: client, kc: pc, topic: topic}, nil
 }
 
 // Produce writes recs and waits until every one is acknowledged; the first
@@ -127,7 +127,7 @@ func (p *Producer) Produce(ctx context.Context, recs []Out) error {
 	for i, r := range recs {
 		krecs[i] = &kgo.Record{Topic: p.topic, Partition: r.Partition, Key: []byte(r.Key), Value: r.Value}
 	}
-	return p.client.ProduceSync(ctx, krecs...).FirstErr()
+	return p.kc.Check(p.topic, p.client.ProduceSync(ctx, krecs...).FirstErr())
 }
 
 // Close closes the producer.
@@ -160,11 +160,11 @@ type Committer struct {
 }
 
 // NewCommitter connects an admin client for group.
-func NewCommitter(brokers []string, group, commandsTopic string) (*Committer, error) {
+func NewCommitter(kc kafkaclient.Config, group, commandsTopic string) (*Committer, error) {
 	if commandsTopic == "" {
 		return nil, errors.New("projector: NewCommitter commandsTopic is required")
 	}
-	cl, err := kgo.NewClient(adminOpts(brokers, "-commit")...)
+	cl, err := kafkaclient.Build(adminOpts(kc, "-commit"))
 	if err != nil {
 		return nil, err
 	}
@@ -289,11 +289,12 @@ func (c *Committer) Close() { c.cl.Close() }
 // key with its Partition — the input Reconcile needs. A key whose latest
 // record is a tombstone is not live. Reading a compacted topic costs time
 // proportional to live state, which is the point of the topic.
-func TopicKeys(ctx context.Context, brokers []string, topic string) (map[string]int32, error) {
+func TopicKeys(ctx context.Context, kc kafkaclient.Config, topic string) (map[string]int32, error) {
 	if topic == "" {
 		return nil, errors.New("projector: TopicKeys topic is required")
 	}
-	cl, err := kgo.NewClient(keysOpts(brokers)...)
+	kcc, kopts := keysOpts(kc)
+	cl, err := kafkaclient.New(kcc, kopts...)
 	if err != nil {
 		return nil, err
 	}
@@ -301,11 +302,11 @@ func TopicKeys(ctx context.Context, brokers []string, topic string) (map[string]
 	adm := kadm.NewClient(cl)
 	starts, err := adm.ListStartOffsets(ctx, topic)
 	if err != nil {
-		return nil, err
+		return nil, kcc.Check(topic, err)
 	}
 	ends, err := adm.ListEndOffsets(ctx, topic)
 	if err != nil {
-		return nil, err
+		return nil, kcc.Check(topic, err)
 	}
 	assign := map[int32]kgo.Offset{}
 	remaining := map[int32]int64{}
@@ -327,7 +328,7 @@ func TopicKeys(ctx context.Context, brokers []string, topic string) (map[string]
 			return nil, ctx.Err()
 		}
 		if err := fetches.Err0(); err != nil {
-			return nil, tickloop.OffsetGap(err)
+			return nil, tickloop.OffsetGap(kcc.Check(topic, err))
 		}
 		fetches.EachRecord(func(r *kgo.Record) {
 			end, ok := remaining[r.Partition]

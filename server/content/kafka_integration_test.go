@@ -29,15 +29,18 @@ import (
 	"google.golang.org/protobuf/proto"
 
 	contentv1 "github.com/valesordev/andara/gen/go/andara/content/v1"
+
+	"github.com/valesordev/andara/server/kafkaclient"
+	"github.com/valesordev/andara/server/kafkaclient/kafkatest"
 )
 
-func brokers(t *testing.T) []string {
+func brokers(t *testing.T) kafkaclient.Config {
 	t.Helper()
 	v := os.Getenv("ANDARA_KAFKA_BROKERS")
 	if v == "" {
 		t.Skip("ANDARA_KAFKA_BROKERS not set; run `make up` and `make test-integration`")
 	}
-	return strings.Split(v, ",")
+	return kafkatest.Config(strings.Split(v, ","))
 }
 
 // throwawayTopics creates the three content topics under a test-local name,
@@ -46,7 +49,7 @@ func throwawayTopics(t *testing.T) (Topics, *kgo.Client) {
 	t.Helper()
 	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
 	defer cancel()
-	cl, err := kgo.NewClient(kgo.SeedBrokers(brokers(t)...))
+	cl, err := kafkaclient.New(brokers(t).For("andara-it"))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -161,7 +164,7 @@ func TestKafkaResolver_ResolvesFromActivePointers(t *testing.T) {
 	p.activate("town", 7)
 
 	r, err := NewKafkaResolver(KafkaOptions{
-		Brokers: brokers(t), Cache: BlobCache{Dir: t.TempDir()}, Topics: topics,
+		Kafka: brokers(t), Cache: BlobCache{Dir: t.TempDir()}, Topics: topics,
 	})
 	if err != nil {
 		t.Fatal(err)
@@ -207,7 +210,7 @@ func TestKafkaResolver_NewestPointerWinsBeforeCompaction(t *testing.T) {
 	// A rollback is one more write of the pointer, to an older version.
 	p.activate("andara.core", 2)
 
-	r, err := NewKafkaResolver(KafkaOptions{Brokers: brokers(t), Topics: topics})
+	r, err := NewKafkaResolver(KafkaOptions{Kafka: brokers(t), Topics: topics})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -240,7 +243,7 @@ func TestKafkaResolver_MissingBlobIsRefusedNamingIt(t *testing.T) {
 	p.produce(topics.Versions, ManifestKey("ghost", 1), b) // manifest, but no blob
 	p.activate("ghost", 1)
 
-	r, err := NewKafkaResolver(KafkaOptions{Brokers: brokers(t), Topics: topics})
+	r, err := NewKafkaResolver(KafkaOptions{Kafka: brokers(t), Topics: topics})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -269,7 +272,7 @@ func TestKafkaResolver_WarmCacheDoesNotReadTheBlobTopic(t *testing.T) {
 
 	cache := BlobCache{Dir: t.TempDir()}
 	m := NewMetrics(nil)
-	r, err := NewKafkaResolver(KafkaOptions{Brokers: brokers(t), Cache: cache, Topics: topics, Metrics: m})
+	r, err := NewKafkaResolver(KafkaOptions{Kafka: brokers(t), Cache: cache, Topics: topics, Metrics: m})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -313,7 +316,7 @@ func TestKafkaResolver_WatchSeesAPointerMove(t *testing.T) {
 	p.publish("town", 1, 0, map[string]string{"town.json": intZone("town", "square")})
 	p.activate("town", 1)
 
-	r, err := NewKafkaResolver(KafkaOptions{Brokers: brokers(t), Topics: topics})
+	r, err := NewKafkaResolver(KafkaOptions{Kafka: brokers(t), Topics: topics})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -360,7 +363,7 @@ func TestKafkaResolver_WatchCarriesTheTraceParent(t *testing.T) {
 	p.publish("town", 1, 0, map[string]string{"town.json": intZone("town", "square")})
 	p.activate("town", 1)
 
-	r, err := NewKafkaResolver(KafkaOptions{Brokers: brokers(t), Topics: topics})
+	r, err := NewKafkaResolver(KafkaOptions{Kafka: brokers(t), Topics: topics})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -442,7 +445,7 @@ func TestKafkaResolver_BlobThatDoesNotHashToItsKeyIsRefused(t *testing.T) {
 	p.activate("town", 1)
 
 	r, err := NewKafkaResolver(KafkaOptions{
-		Brokers: brokers(t), Cache: BlobCache{Dir: t.TempDir()}, Topics: topics,
+		Kafka: brokers(t), Cache: BlobCache{Dir: t.TempDir()}, Topics: topics,
 	})
 	if err != nil {
 		t.Fatal(err)
@@ -484,7 +487,7 @@ func TestKafkaResolver_PinnedWatchSeesAMoveMadeBeforeItStarted(t *testing.T) {
 	p.publish("town", 1, 0, map[string]string{"town.json": intZone("town", "square")})
 	p.activate("town", 1)
 
-	r, err := NewKafkaResolver(KafkaOptions{Brokers: brokers(t), Topics: topics})
+	r, err := NewKafkaResolver(KafkaOptions{Kafka: brokers(t), Topics: topics})
 	if err != nil {
 		t.Fatal(err)
 	}

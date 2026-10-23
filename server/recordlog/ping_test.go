@@ -15,6 +15,8 @@ import (
 
 	"github.com/twmb/franz-go/pkg/kgo"
 	"github.com/twmb/franz-go/pkg/kmsg"
+
+	"github.com/valesordev/andara/server/kafkaclient"
 )
 
 // #129: one broker of three goes dark — its pod deleted, its address no
@@ -28,8 +30,7 @@ func TestPing_OneDarkBrokerOfThree(t *testing.T) {
 	dark := c.addrs[0]
 	stop := make(chan struct{})
 	t.Cleanup(func() { close(stop) })
-	cl, err := kgo.NewClient(
-		kgo.SeedBrokers(c.addrs[1]),
+	cl, err := kafkaclient.New(kafkaclient.Config{Brokers: []string{c.addrs[1]}, ClientID: "andara-server"},
 		kgo.Dialer(func(ctx context.Context, network, host string) (net.Conn, error) {
 			if host == dark {
 				select {
@@ -76,7 +77,7 @@ func TestPing_OneDarkBrokerOfThree(t *testing.T) {
 // With every broker dark, Ping fails at its deadline.
 func TestPing_AllDark(t *testing.T) {
 	c := newFakeCluster(t, 1)
-	cl, err := kgo.NewClient(kgo.SeedBrokers(c.addrs[0]))
+	cl, err := kafkaclient.New(kafkaclient.Config{Brokers: []string{c.addrs[0]}, ClientID: "andara-server"})
 	if err != nil {
 		t.Fatal(err)
 	}

@@ -16,8 +16,9 @@ import (
 
 	"github.com/prometheus/client_golang/prometheus"
 	"github.com/twmb/franz-go/pkg/kadm"
-	"github.com/twmb/franz-go/pkg/kgo"
 
+	"github.com/valesordev/andara/server/kafkaclient"
+	"github.com/valesordev/andara/server/kafkaclient/kafkatest"
 	"github.com/valesordev/andara/server/sim"
 	"github.com/valesordev/andara/server/simtest"
 )
@@ -26,7 +27,7 @@ import (
 // publisher reaches the broker through pubBrokers, wired by WireBoundaries as
 // the server is: acknowledgements release checkpoints, and a lost
 // boundary stops the loop.
-func startLossyLoop(ctx context.Context, t *testing.T, brokers, pubBrokers []string, commands, events, group string, deliveryTimeout time.Duration) (*Loop, *sim.Engine) {
+func startLossyLoop(ctx context.Context, t *testing.T, brokers, pubBrokers kafkaclient.Config, commands, events, group string, deliveryTimeout time.Duration) (*Loop, *sim.Engine) {
 	t.Helper()
 	e, err := simtest.NewEngine(26)
 	if err != nil {
@@ -35,7 +36,7 @@ func startLossyLoop(ctx context.Context, t *testing.T, brokers, pubBrokers []str
 	if _, err := Recover(ctx, brokers, commands, events, e, nil); err != nil {
 		t.Fatal(err)
 	}
-	src, err := NewKafkaSource(ctx, KafkaSourceOptions{Brokers: brokers, Group: group, Start: e.State().Offsets, Topic: commands, LagEvery: 200 * time.Millisecond})
+	src, err := NewKafkaSource(ctx, KafkaSourceOptions{Kafka: brokers, Group: group, Start: e.State().Offsets, Topic: commands, LagEvery: 200 * time.Millisecond})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -74,11 +75,11 @@ func TestKafka_BoundaryLostExitsIntoRecovery(t *testing.T) {
 	commands, events := topics(t, bk)
 	group := "it-sim-lost-" + commands[len(commands)-8:]
 	total := produce(t, bk, commands, 200)
-	px := newLeaderProxy(t, bk[0], BoundaryPartition)
+	px := newLeaderProxy(t, bk.Brokers[0], BoundaryPartition)
 
 	// The first process: its publisher reaches the broker only through the
 	// proxy, with a three-second delivery timeout.
-	first, _ := startLossyLoop(context.Background(), t, bk, []string{px.Addr()}, commands, events, group, 3*time.Second)
+	first, _ := startLossyLoop(context.Background(), t, bk, kafkatest.Config([]string{px.Addr()}), commands, events, group, 3*time.Second)
 	done := make(chan error, 1)
 	go func() { done <- first.Run(context.Background()) }()
 	waitForBoundaries(t, bk, events, 20, 30*time.Second)
@@ -117,7 +118,7 @@ func TestKafka_BoundaryLostExitsIntoRecovery(t *testing.T) {
 
 	// AC-3: the committed offsets are a delivered boundary's, none past the
 	// last delivered one.
-	cl, err := kgo.NewClient(kgo.SeedBrokers(bk...))
+	cl, err := kafkaclient.New(bk.For("andara-it"))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -181,7 +182,7 @@ func TestKafka_BoundaryLostExitsIntoRecovery(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if err := r.Replay(after, KafkaRecords{Brokers: bk, Topic: commands}); err != nil {
+	if err := r.Replay(after, KafkaRecords{Kafka: bk, Topic: commands}); err != nil {
 		t.Fatal(fmt.Errorf("replay of %d records across the restart: %w", total, err))
 	}
 }

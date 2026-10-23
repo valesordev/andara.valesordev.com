@@ -14,16 +14,17 @@ import (
 	"time"
 
 	"github.com/twmb/franz-go/pkg/kadm"
-	"github.com/twmb/franz-go/pkg/kgo"
 
 	"github.com/valesordev/andara/server/content"
+	"github.com/valesordev/andara/server/kafkaclient"
+	"github.com/valesordev/andara/server/kafkaclient/kafkatest"
 	"github.com/valesordev/andara/server/recordlog"
 )
 
 // redpanda is a throwaway set of content topics on the local broker: the
 // three content topics and an audit topic, deleted when the test ends.
 type redpanda struct {
-	brokers []string
+	brokers kafkaclient.Config
 	topics  map[string]string
 	logs    map[string]recordlog.Log
 }
@@ -34,10 +35,10 @@ func throwawayRedpanda(t *testing.T) *redpanda {
 	if v == "" {
 		t.Skip("ANDARA_KAFKA_BROKERS not set; run `make up` and `make test-integration`")
 	}
-	r := &redpanda{brokers: strings.Split(v, ","), topics: map[string]string{}, logs: map[string]recordlog.Log{}}
+	r := &redpanda{brokers: kafkatest.Config(strings.Split(v, ",")), topics: map[string]string{}, logs: map[string]recordlog.Log{}}
 	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
 	defer cancel()
-	cl, err := kgo.NewClient(kgo.SeedBrokers(r.brokers...))
+	cl, err := kafkaclient.New(r.brokers.For("andara-it"))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -67,7 +68,7 @@ func (r *redpanda) open(t *testing.T) func(name string) recordlog.Log {
 		if l, ok := r.logs[name]; ok {
 			return l
 		}
-		l, err := recordlog.NewKafka(context.Background(), recordlog.KafkaOptions{Brokers: r.brokers, Topic: r.topics[name]})
+		l, err := recordlog.NewKafka(context.Background(), recordlog.KafkaOptions{Kafka: r.brokers, Topic: r.topics[name]})
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -83,7 +84,7 @@ func (r *redpanda) open(t *testing.T) func(name string) recordlog.Log {
 func (r *redpanda) resolver(t *testing.T) *content.KafkaResolver {
 	t.Helper()
 	res, err := content.NewKafkaResolver(content.KafkaOptions{
-		Brokers: r.brokers, Cache: content.BlobCache{Dir: t.TempDir()},
+		Kafka: r.brokers, Cache: content.BlobCache{Dir: t.TempDir()},
 		Topics: content.Topics{Blobs: r.topics["blobs"], Versions: r.topics["versions"], Active: r.topics["active"]},
 	})
 	if err != nil {

@@ -12,6 +12,7 @@ require (
 	github.com/spf13/cobra v1.9.1
 	github.com/twmb/franz-go v1.20.0
 	github.com/twmb/franz-go/pkg/kadm v1.16.0
+	github.com/twmb/franz-go/pkg/kfake v0.0.0-20251016234146-dcf69e6e9d5d
 	github.com/twmb/franz-go/pkg/kmsg v1.12.0
 	go.opentelemetry.io/contrib/bridges/otelslog v0.20.1
 	go.opentelemetry.io/otel v1.46.0

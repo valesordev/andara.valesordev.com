@@ -35,7 +35,11 @@ var canonical = proto.MarshalOptions{Deterministic: true}
 
 // ProducerOptions configures a KafkaProducer.
 type ProducerOptions struct {
-	Brokers []string
+	// Kafka is the process's client configuration. Its Dialer, when set,
+	// replaces the clients' dialer (a test injects a fault with it) and must
+	// return a conn that is not encrypted by the dialer's caller (see tap.go;
+	// a tls.Dialer's DialContext is fine): the produce tap wraps it.
+	Kafka kafkaclient.Config
 	// Topic is where Commands go, the topic tickloop consumes
 	// (kafkaclient.Topics.Commands); required.
 	Topic string
@@ -58,10 +62,6 @@ type ProducerOptions struct {
 	// is refused (the floor config load enforces).
 	DegradedHold time.Duration
 
-	// Dialer replaces the client's dialer; a test injects a fault with it.
-	// It must return a conn that is not encrypted by the dialer's caller
-	// (see tap.go); a tls.Dialer's DialContext is fine.
-	Dialer func(ctx context.Context, network, host string) (net.Conn, error)
 	// ClientLogger receives the Kafka client's own log; nil for none.
 	ClientLogger kgo.Logger
 
@@ -118,6 +118,7 @@ const minISRRefresh = 60 * time.Second
 // moment may be in the log; every Submit after detection is ErrUnavailable,
 // nothing written.
 type KafkaProducer struct {
+	kc       kafkaclient.Config // the per-Partition clients', tap included
 	opts     []kgo.Opt
 	topic    string
 	deadline time.Duration
@@ -129,15 +130,19 @@ type KafkaProducer struct {
 	health   *partitionHealth
 	source   logSource
 
-	clients   [sim.PartitionCount]atomic.Pointer[kgo.Client]
-	lastErr   [sim.PartitionCount]atomic.Pointer[brokerError]
-	buffered  atomic.Int64
-	maxBuf    int64
-	retries   atomic.Uint64
-	tapLoss   atomic.Uint64 // connections the produce tap stopped following
-	written   atomic.Uint64 // produce requests that left this process
-	warnAt    atomic.Int64  // unix nanos of the last sampled warning
-	tapWarnAt atomic.Int64  // unix nanos of the last tap-lost warning
+	clients  [sim.PartitionCount]atomic.Pointer[kgo.Client]
+	lastErr  [sim.PartitionCount]atomic.Pointer[brokerError]
+	buffered atomic.Int64
+	maxBuf   int64
+	retries  atomic.Uint64
+	tapLoss  atomic.Uint64 // connections the produce tap stopped following
+	written  atomic.Uint64 // produce requests that left this process
+	// partWritten is written per Partition: each Partition's client counts
+	// its own, so one Submit's attempts are told apart from another
+	// Partition's traffic.
+	partWritten [sim.PartitionCount]atomic.Uint64
+	warnAt      atomic.Int64 // unix nanos of the last sampled warning
+	tapWarnAt   atomic.Int64 // unix nanos of the last tap-lost warning
 
 	minISR       atomic.Int64
 	minISRKnown  atomic.Bool
@@ -159,10 +164,8 @@ type brokerError struct {
 
 // producerOpts are the options every Partition's client is built with, short
 // of the hook and the tapped dialer that bind it to one producer.
-func producerOpts(o ProducerOptions) []kgo.Opt {
-	return []kgo.Opt{
-		kgo.SeedBrokers(o.Brokers...),
-		kgo.ClientID(o.ClientID + "-ingress"),
+func producerOpts(o ProducerOptions) (kafkaclient.Config, []kgo.Opt) {
+	return o.Kafka.For(o.ClientID + "-ingress"), []kgo.Opt{
 		kgo.RequiredAcks(kgo.AllISRAcks()),
 		kgo.RecordPartitioner(kgo.ManualPartitioner()),
 		kgo.ProducerBatchCompression(kgo.ZstdCompression()),
@@ -181,10 +184,8 @@ func producerOpts(o ProducerOptions) []kgo.Opt {
 }
 
 // probeClientOpts are the options of the probe's metadata client.
-func probeClientOpts(o ProducerOptions) []kgo.Opt {
-	return []kgo.Opt{
-		kgo.SeedBrokers(o.Brokers...),
-		kgo.ClientID(o.ClientID + "-ingress-probe"),
+func probeClientOpts(o ProducerOptions) (kafkaclient.Config, []kgo.Opt) {
+	return o.Kafka.For(o.ClientID + "-ingress-probe"), []kgo.Opt{
 		kgo.MetadataMinAge(o.ProbeInterval / 2),
 	}
 }
@@ -203,8 +204,8 @@ func Sites(o ProducerOptions) []kafkaclient.Site {
 		o.ProbeInterval = time.Second
 	}
 	return []kafkaclient.Site{
-		{Name: "ingress producer", Role: kafkaclient.Producer, Opts: producerOpts(o), Partitioning: kafkaclient.Manual, DeliveryTimeout: o.Deadline},
-		{Name: "ingress probe", Role: kafkaclient.Admin, Opts: probeClientOpts(o)},
+		{Name: "ingress producer", Role: kafkaclient.Producer, Opts: kafkaclient.SiteOpts(producerOpts(o)), Partitioning: kafkaclient.Manual, DeliveryTimeout: o.Deadline},
+		{Name: "ingress probe", Role: kafkaclient.Admin, Opts: kafkaclient.SiteOpts(probeClientOpts(o))},
 	}
 }
 
@@ -212,7 +213,7 @@ func Sites(o ProducerOptions) []kafkaclient.Site {
 // the tick loop already fails the boot when they are unreachable, and an
 // outage after boot is the degraded state, not an error here.
 func NewKafkaProducer(o ProducerOptions) (*KafkaProducer, error) {
-	if len(o.Brokers) == 0 {
+	if len(o.Kafka.Brokers) == 0 {
 		return nil, errors.New("ingress: no brokers configured")
 	}
 	if o.Topic == "" {
@@ -250,26 +251,24 @@ func NewKafkaProducer(o ProducerOptions) (*KafkaProducer, error) {
 	k.minISR.Store(1)
 	k.health = newPartitionHealth(o.now, o.DegradedHold, k.onHealthChange)
 
-	opts := append(producerOpts(o),
-		kgo.WithHooks(retryHook{k}),
-		kgo.Dialer(tapDialer(o.Dialer, k.noteProduceResponse, k.tapLost)),
-	)
+	kc, opts := producerOpts(o)
+	// The tap wraps every connection, the SASL handshake's included, so it
+	// composes as the client's Dialer (client-contract.md).
+	kc.Dialer = tapDialer(o.Kafka.Dialer, k.noteProduceResponse, k.tapLost)
+	opts = append(opts, kgo.WithHooks(retryHook{k}))
 	if o.ClientLogger != nil {
 		opts = append(opts, kgo.WithLogger(o.ClientLogger))
 	}
-	k.opts = opts
+	k.kc, k.opts = kc, opts
 
 	if o.source != nil {
 		k.source = o.source
 	} else {
-		probeOpts := probeClientOpts(o)
-		if o.Dialer != nil {
-			probeOpts = append(probeOpts, kgo.Dialer(o.Dialer))
-		}
+		pc, probeOpts := probeClientOpts(o)
 		if o.ClientLogger != nil {
 			probeOpts = append(probeOpts, kgo.WithLogger(o.ClientLogger))
 		}
-		cl, err := kgo.NewClient(probeOpts...)
+		cl, err := kafkaclient.New(pc, probeOpts...)
 		if err != nil {
 			return nil, fmt.Errorf("ingress: producer: %w", err)
 		}
@@ -333,7 +332,8 @@ func (k *KafkaProducer) clientFor(partition int32) (*kgo.Client, error) {
 	if c := k.clients[partition].Load(); c != nil {
 		return c, nil
 	}
-	c, err := kgo.NewClient(k.opts...)
+	opts := append(append([]kgo.Opt(nil), k.opts...), kgo.WithHooks(partitionWrites{k, partition}))
+	c, err := kafkaclient.New(k.kc, opts...)
 	if err != nil {
 		return nil, fmt.Errorf("ingress: producer client: %w", err)
 	}
@@ -429,6 +429,7 @@ func (k *KafkaProducer) Produce(ctx context.Context, cmd *logv1.LoggedCommand) (
 	// on; the client's delivery timeout bounds the record.
 	done := make(chan error, 1)
 	retriesBefore, writtenBefore := k.retries.Load(), k.written.Load()
+	partBefore := k.partWritten[partition].Load()
 	enqueued := time.Now()
 	client.TryProduce(context.WithoutCancel(ctx), rec, func(_ *kgo.Record, err error) { k.buffered.Add(-1); done <- err })
 
@@ -443,6 +444,26 @@ func (k *KafkaProducer) Produce(ctx context.Context, cmd *logv1.LoggedCommand) (
 	wait := time.Since(enqueued)
 	retries := k.retries.Load() - retriesBefore
 	span.SetAttributes(attribute.Int64("retries", int64(retries)), attribute.Float64("acks_wait_ms", float64(wait.Microseconds())/1000))
+	if err != nil && fired {
+		// A broker that refuses the principal the topic wrote nothing on the
+		// attempt it refused, the Partition is healthy, and a retry would be
+		// refused again (AW-SRV-044 AC-8).
+		if ae := k.kc.Check(k.topic, err); kafkaclient.Refused(ae) {
+			kafkaclient.SpanError(span, ae)
+			k.logRefusal(ctx, partition, ae)
+			// Only that attempt left the process, so the record is not in
+			// the log. If an earlier one left too, its acknowledgement may
+			// have been lost after it landed: the refusal doesn't rule it
+			// out, so the Submit keeps the outcome-unknown settlement below
+			// (Codex on PR #620). The count is the Partition's client's: the
+			// hook counts each write before its response can reach the
+			// promise, and another Partition's traffic doesn't touch it.
+			if k.partWritten[partition].Load()-partBefore <= 1 {
+				return command.Accepted{}, ae
+			}
+			err = ae
+		}
+	}
 	if err != nil {
 		promised := err
 		err = k.classify(ctx, err)
@@ -482,6 +503,24 @@ func (k *KafkaProducer) Produce(ctx context.Context, cmd *logv1.LoggedCommand) (
 	}
 	span.SetAttributes(attribute.Int64("offset", rec.Offset))
 	return command.Accepted{Partition: rec.Partition, Offset: rec.Offset}, nil
+}
+
+// logRefusal is the Submit's error line for a refused produce, with its
+// trace; one a minute, the kafkaclient line's limit, so a revoked ACL under
+// steady Submits doesn't write one per Submit.
+func (k *KafkaProducer) logRefusal(ctx context.Context, partition int32, ae error) {
+	suppressed, ok := k.kc.LineAllowed(kafkaclient.ErrorName(ae) + "/submit")
+	if !ok {
+		return
+	}
+	attrs := []slog.Attr{slog.Int("partition", int(partition)), slog.String("reason", kafkaclient.ErrorName(ae)), slog.String("error", ae.Error())}
+	if sc := trace.SpanContextFromContext(ctx); sc.HasTraceID() {
+		attrs = append(attrs, slog.String("trace_id", sc.TraceID().String()))
+	}
+	if suppressed > 0 {
+		attrs = append(attrs, slog.Int("suppressed", suppressed))
+	}
+	k.log.LogAttrs(ctx, slog.LevelError, "command produce refused: the principal may not write the commands topic", attrs...)
 }
 
 // classify names a failed produce. A full buffer is pending_full. For
@@ -631,6 +670,18 @@ func (k *KafkaProducer) Close() error {
 // sent again by the client, under the idempotent producer's sequence, so a
 // count here is a retry that did not duplicate — and warns, sampled to one
 // line a second.
+// partitionWrites counts the produce requests one Partition's client wrote.
+type partitionWrites struct {
+	k *KafkaProducer
+	p int32
+}
+
+func (h partitionWrites) OnBrokerWrite(_ kgo.BrokerMetadata, key int16, _ int, _, _ time.Duration, err error) {
+	if key == produceKey && err == nil {
+		h.k.partWritten[h.p].Add(1)
+	}
+}
+
 type retryHook struct{ k *KafkaProducer }
 
 const produceKey = 0

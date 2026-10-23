@@ -17,6 +17,7 @@ import (
 	"google.golang.org/protobuf/proto"
 
 	logv1 "github.com/valesordev/andara/gen/go/andara/log/v1"
+	"github.com/valesordev/andara/server/kafkaclient"
 	"github.com/valesordev/andara/server/recordlog"
 	"github.com/valesordev/andara/server/sim"
 )
@@ -36,7 +37,7 @@ const (
 
 // KafkaSourceOptions configures a KafkaSource.
 type KafkaSourceOptions struct {
-	Brokers  []string
+	Kafka    kafkaclient.Config
 	Group    string // andara-sim-<env>: the reserved group the checkpoints are committed under
 	ClientID string
 	// Partitions and their starting offsets — the engine's next-to-read.
@@ -59,6 +60,7 @@ type KafkaSourceOptions struct {
 // takes from the buffers and never blocks.
 type KafkaSource struct {
 	opts   KafkaSourceOptions
+	kc     kafkaclient.Config // the consumer's, for Check
 	client *kgo.Client
 	adm    *kadm.Client
 	cancel context.CancelFunc
@@ -71,13 +73,16 @@ type KafkaSource struct {
 	paused   map[int32]bool
 	gap      error
 	fetchErr error
-	closed   bool
+	// denied is the broker's refusal of the principal on the topic: the
+	// fetch stopped on it, and Poll returns it once the buffers are drained.
+	denied error
+	closed bool
 }
 
 // NewKafkaSource connects, assigns the Partitions at their starting
 // offsets, and starts fetching.
 func NewKafkaSource(ctx context.Context, o KafkaSourceOptions) (*KafkaSource, error) {
-	if len(o.Brokers) == 0 || o.Group == "" || len(o.Start) == 0 {
+	if len(o.Kafka.Brokers) == 0 || o.Group == "" || len(o.Start) == 0 {
 		return nil, errors.New("tickloop: brokers, group, and partitions are required")
 	}
 	if o.Topic == "" {
@@ -96,7 +101,8 @@ func NewKafkaSource(ctx context.Context, o KafkaSourceOptions) (*KafkaSource, er
 	for p, off := range o.Start {
 		assign[p] = kgo.NewOffset().At(off)
 	}
-	client, err := kgo.NewClient(simConsumerOpts(o.Brokers, o.ClientID, o.Topic, assign)...)
+	cc, copts := simConsumerOpts(o.Kafka, o.ClientID, o.Topic, assign)
+	client, err := kafkaclient.New(cc, copts...)
 	if err != nil {
 		return nil, fmt.Errorf("tickloop: consumer: %w", err)
 	}
@@ -105,7 +111,7 @@ func NewKafkaSource(ctx context.Context, o KafkaSourceOptions) (*KafkaSource, er
 		return nil, fmt.Errorf("tickloop: ping brokers: %w", err)
 	}
 	s := &KafkaSource{
-		opts: o, client: client, adm: kadm.NewClient(client), done: make(chan struct{}),
+		opts: o, kc: cc, client: client, adm: kadm.NewClient(client), done: make(chan struct{}),
 		buffers: map[int32][]sim.Record{}, expected: map[int32]int64{}, end: map[int32]int64{}, paused: map[int32]bool{},
 	}
 	for p, off := range o.Start {
@@ -117,7 +123,7 @@ func NewKafkaSource(ctx context.Context, o KafkaSourceOptions) (*KafkaSource, er
 	starts, err := s.adm.ListStartOffsets(ctx, o.Topic)
 	if err != nil {
 		client.Close()
-		return nil, fmt.Errorf("tickloop: start offsets: %w", err)
+		return nil, fmt.Errorf("tickloop: start offsets: %w", cc.Check(o.Topic, err))
 	}
 	for p, off := range o.Start {
 		if so, ok := starts.Lookup(o.Topic, p); ok && so.Offset > off {
@@ -167,7 +173,7 @@ func (s *KafkaSource) fetch(ctx context.Context) {
 				continue
 			}
 			if !errors.Is(fe.Err, context.DeadlineExceeded) && !errors.Is(fe.Err, context.Canceled) {
-				fetchErr = fe.Err
+				fetchErr = s.kc.Check(fe.Topic, fe.Err)
 				break
 			}
 		}
@@ -179,6 +185,9 @@ func (s *KafkaSource) fetch(ctx context.Context) {
 			// broker whose pod is gone spends the budget (#129).
 			pingErr = recordlog.Ping(pctx, s.client)
 			pcancel()
+		}
+		if s.refuse(fetchErr) {
+			return
 		}
 		s.mu.Lock()
 		if outOfRange != nil && s.gap == nil {
@@ -254,6 +263,22 @@ func (s *KafkaSource) listEnds(ctx context.Context) {
 	}
 }
 
+// refuse records err and reports whether the fetch stops on it. Only the
+// broker's refusal of the principal on the topic stops it: every fetch would
+// be refused again until an ACL changes, so it is counted once (AW-SRV-044
+// AC-8), Poll returns it, and the loop exits on it as on a gap; a restart,
+// once the ACL is fixed, is what heals it. A connection's failure, a lost
+// password file among them, is retried and only starves (AC-6a).
+func (s *KafkaSource) refuse(err error) bool {
+	if !kafkaclient.Refused(err) {
+		return false
+	}
+	s.mu.Lock()
+	s.denied = err
+	s.mu.Unlock()
+	return true
+}
+
 // Poll implements Source.
 func (s *KafkaSource) Poll(frozen []int32, max int) ([]sim.Record, error) {
 	s.mu.Lock()
@@ -262,8 +287,11 @@ func (s *KafkaSource) Poll(frozen []int32, max int) ([]sim.Record, error) {
 		return nil, s.gap
 	}
 	out := selectRoundRobin(s.buffers, frozen, max)
+	if len(out) == 0 && s.denied != nil {
+		return nil, s.denied
+	}
 	if len(out) == 0 && s.fetchErr != nil {
-		return nil, fmt.Errorf("%w: %v", ErrStarved, s.fetchErr)
+		return nil, fmt.Errorf("%w: %w", ErrStarved, s.fetchErr)
 	}
 	return out, nil
 }
@@ -351,6 +379,7 @@ func (s *KafkaSource) Close() error {
 // buffer refused rather than block on. The drain flushes.
 type KafkaPublisher struct {
 	client *kgo.Client
+	kc     kafkaclient.Config // the producer's, for Check
 	// Commands and Events are the topics written to, as the constructor was
 	// given them.
 	Commands, Events string
@@ -399,18 +428,16 @@ const maxBuffered = 1 << 16
 // NewKafkaPublisher connects a producer with acks=all and the idempotent
 // producer on, writing Commands to commandsTopic and Events and boundaries to
 // eventsTopic. Both are required.
-func NewKafkaPublisher(ctx context.Context, brokers []string, clientID, commandsTopic, eventsTopic string) (*KafkaPublisher, error) {
-	return newKafkaPublisher(ctx, brokers, clientID, commandsTopic, eventsTopic, DeliveryTimeout)
+func NewKafkaPublisher(ctx context.Context, kc kafkaclient.Config, clientID, commandsTopic, eventsTopic string) (*KafkaPublisher, error) {
+	return newKafkaPublisher(ctx, kc, clientID, commandsTopic, eventsTopic, DeliveryTimeout)
 }
 
 // publisherOpts are the options of the Tick Boundary publisher.
-func publisherOpts(brokers []string, clientID string, deliveryTimeout time.Duration) []kgo.Opt {
+func publisherOpts(kc kafkaclient.Config, clientID string, deliveryTimeout time.Duration) (kafkaclient.Config, []kgo.Opt) {
 	if clientID == "" {
 		clientID = "andara-server"
 	}
-	return []kgo.Opt{
-		kgo.SeedBrokers(brokers...),
-		kgo.ClientID(clientID + "-tick"),
+	return kc.For(clientID + "-tick"), []kgo.Opt{
 		kgo.RequiredAcks(kgo.AllISRAcks()),
 		kgo.RecordPartitioner(kgo.ManualPartitioner()),
 		kgo.ProducerBatchCompression(kgo.ZstdCompression()),
@@ -436,7 +463,7 @@ func publisherOpts(brokers []string, clientID string, deliveryTimeout time.Durat
 
 // newKafkaPublisher is NewKafkaPublisher with the delivery timeout a test
 // shortens, so a lost boundary costs it seconds rather than a minute.
-func newKafkaPublisher(ctx context.Context, brokers []string, clientID, commandsTopic, eventsTopic string, deliveryTimeout time.Duration) (*KafkaPublisher, error) {
+func newKafkaPublisher(ctx context.Context, kc kafkaclient.Config, clientID, commandsTopic, eventsTopic string, deliveryTimeout time.Duration) (*KafkaPublisher, error) {
 	if commandsTopic == "" {
 		return nil, errors.New("tickloop: publisher commandsTopic is required")
 	}
@@ -446,7 +473,8 @@ func newKafkaPublisher(ctx context.Context, brokers []string, clientID, commands
 	if clientID == "" {
 		clientID = "andara-server"
 	}
-	client, err := kgo.NewClient(publisherOpts(brokers, clientID, deliveryTimeout)...)
+	pc, popts := publisherOpts(kc, clientID, deliveryTimeout)
+	client, err := kafkaclient.New(pc, popts...)
 	if err != nil {
 		return nil, fmt.Errorf("tickloop: producer: %w", err)
 	}
@@ -454,14 +482,14 @@ func newKafkaPublisher(ctx context.Context, brokers []string, clientID, commands
 		client.Close()
 		return nil, fmt.Errorf("tickloop: ping brokers: %w", err)
 	}
-	k := &KafkaPublisher{client: client, Commands: commandsTopic, Events: eventsTopic}
+	k := &KafkaPublisher{client: client, kc: pc, Commands: commandsTopic, Events: eventsTopic}
 	k.boundaries = &boundarySeq{
 		// The record's own context is never canceled: franz-go fails a
 		// record whose context ends before delivery.
 		produce: func(b pendingBoundary) {
 			rec := &kgo.Record{Topic: k.Events, Partition: BoundaryPartition, Key: []byte(BoundaryKey), Value: b.body}
 			k.client.TryProduce(context.Background(), rec, func(_ *kgo.Record, err error) {
-				k.boundaries.resolve(b.tick, err)
+				k.boundaries.resolve(b.tick, k.kc.Check(k.Events, err))
 			})
 		},
 		onAcked: func(b pendingBoundary) {
@@ -490,7 +518,7 @@ func (k *KafkaPublisher) send(ctx context.Context, recs []*kgo.Record) error {
 	for _, r := range recs {
 		k.client.TryProduce(ctx, r, func(r *kgo.Record, err error) {
 			if err != nil && k.OnFailure != nil {
-				k.OnFailure(r.Topic, err)
+				k.OnFailure(r.Topic, k.kc.Check(r.Topic, err))
 			}
 		})
 	}
@@ -593,11 +621,12 @@ func (k *KafkaPublisher) Close() error {
 // ReadBoundaries reads every TickCompleted on the events topic from the
 // start, in order, for replay (ADR-0002 §4). The RecordSource for replay
 // is KafkaRecords.
-func ReadBoundaries(ctx context.Context, brokers []string, eventsTopic string) ([]sim.TickCompleted, error) {
+func ReadBoundaries(ctx context.Context, kc kafkaclient.Config, eventsTopic string) ([]sim.TickCompleted, error) {
 	if eventsTopic == "" {
 		return nil, errors.New("tickloop: ReadBoundaries eventsTopic is required")
 	}
-	client, err := kgo.NewClient(boundaryScanOpts(brokers, eventsTopic)...)
+	sc, sopts := boundaryScanOpts(kc, eventsTopic)
+	client, err := kafkaclient.New(sc, sopts...)
 	if err != nil {
 		return nil, err
 	}
@@ -605,7 +634,7 @@ func ReadBoundaries(ctx context.Context, brokers []string, eventsTopic string) (
 	adm := kadm.NewClient(client)
 	ends, err := adm.ListEndOffsets(ctx, eventsTopic)
 	if err != nil {
-		return nil, err
+		return nil, sc.Check(eventsTopic, err)
 	}
 	end, _ := ends.Lookup(eventsTopic, BoundaryPartition)
 	var out []sim.TickCompleted
@@ -613,7 +642,7 @@ func ReadBoundaries(ctx context.Context, brokers []string, eventsTopic string) (
 	for next < end.Offset {
 		fetches := client.PollFetches(ctx)
 		if err := fetches.Err0(); err != nil {
-			return nil, err
+			return nil, sc.Check(eventsTopic, err)
 		}
 		fetches.EachRecord(func(r *kgo.Record) {
 			next = r.Offset + 1
@@ -632,8 +661,8 @@ func ReadBoundaries(ctx context.Context, brokers []string, eventsTopic string) (
 
 // KafkaRecords is a sim.RecordSource over the commands topic.
 type KafkaRecords struct {
-	Brokers []string
-	Topic   string // the commands topic; required
+	Kafka kafkaclient.Config
+	Topic string // the commands topic; required
 }
 
 // Fetch implements sim.RecordSource.
@@ -644,7 +673,8 @@ func (k KafkaRecords) Fetch(partition int32, from, to int64) ([]sim.Record, erro
 	}
 	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
 	defer cancel()
-	client, err := kgo.NewClient(fetchOpts(k.Brokers, topic, partition, from)...)
+	fc, fopts := fetchOpts(k.Kafka, topic, partition, from)
+	client, err := kafkaclient.New(fc, fopts...)
 	if err != nil {
 		return nil, err
 	}
@@ -654,7 +684,7 @@ func (k KafkaRecords) Fetch(partition int32, from, to int64) ([]sim.Record, erro
 	for next < to {
 		fetches := client.PollFetches(ctx)
 		if err := fetches.Err0(); err != nil {
-			return nil, OffsetGap(err)
+			return nil, OffsetGap(fc.Check(topic, err))
 		}
 		var ferr error
 		fetches.EachRecord(func(r *kgo.Record) {
@@ -691,12 +721,12 @@ func (k KafkaRecords) Fetch(partition int32, from, to int64) ([]sim.Record, erro
 // verified, as sim.Engine.ReplayEach calls it: how the content source learns
 // the swaps recovery applied (AW-SRV-012), and where a log that predates the
 // content-in-effect rule is refused.
-func Recover(ctx context.Context, brokers []string, commandsTopic, eventsTopic string, e *sim.Engine, after func(sim.StepResult) error) (int, error) {
-	boundaries, err := ReadBoundaries(ctx, brokers, eventsTopic)
+func Recover(ctx context.Context, kc kafkaclient.Config, commandsTopic, eventsTopic string, e *sim.Engine, after func(sim.StepResult) error) (int, error) {
+	boundaries, err := ReadBoundaries(ctx, kc, eventsTopic)
 	if err != nil {
 		return 0, fmt.Errorf("tickloop: read boundaries: %w", err)
 	}
-	return RecoverFrom(boundaries, KafkaRecords{Brokers: brokers, Topic: commandsTopic}, e, after)
+	return RecoverFrom(boundaries, KafkaRecords{Kafka: kc, Topic: commandsTopic}, e, after)
 }
 
 // RecoverFrom is Recover over boundaries already read and a record source.
@@ -720,18 +750,19 @@ func RecoverFrom(boundaries []sim.TickCompleted, src sim.RecordSource, e *sim.En
 
 // EndOffset is one past the last record on topic's partition: where a
 // consumer that has read everything written so far stands.
-func EndOffset(ctx context.Context, brokers []string, topic string, partition int32) (int64, error) {
+func EndOffset(ctx context.Context, kc kafkaclient.Config, topic string, partition int32) (int64, error) {
 	if topic == "" {
 		return 0, errors.New("tickloop: EndOffset topic is required")
 	}
-	cl, err := kgo.NewClient(offsetsOpts(brokers)...)
+	oc, oopts := offsetsOpts(kc)
+	cl, err := kafkaclient.New(oc, oopts...)
 	if err != nil {
 		return 0, err
 	}
 	defer cl.Close()
 	ends, err := kadm.NewClient(cl).ListEndOffsets(ctx, topic)
 	if err != nil {
-		return 0, fmt.Errorf("tickloop: end offset of %s: %w", topic, err)
+		return 0, fmt.Errorf("tickloop: end offset of %s: %w", topic, oc.Check(topic, err))
 	}
 	o, ok := ends.Lookup(topic, partition)
 	if !ok {

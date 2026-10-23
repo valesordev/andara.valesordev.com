@@ -16,25 +16,26 @@ import (
 	"time"
 
 	"github.com/twmb/franz-go/pkg/kadm"
-	"github.com/twmb/franz-go/pkg/kgo"
 
 	"github.com/valesordev/andara/content/core"
 	contentv1 "github.com/valesordev/andara/gen/go/andara/content/v1"
 	"github.com/valesordev/andara/internal/eventually"
 	"github.com/valesordev/andara/server/content"
+	"github.com/valesordev/andara/server/kafkaclient"
+	"github.com/valesordev/andara/server/kafkaclient/kafkatest"
 )
 
 // storeTopics creates the content store's three topics and an audit topic
 // under throwaway names, so neither the code under test nor a regression of
 // it writes into the store the dev stack serves from.
-func storeTopics(t *testing.T) (content.Topics, string, *kadm.Client, []string) {
+func storeTopics(t *testing.T) (content.Topics, string, *kadm.Client, kafkaclient.Config) {
 	t.Helper()
 	v := os.Getenv("ANDARA_KAFKA_BROKERS")
 	if v == "" {
 		t.Skip("ANDARA_KAFKA_BROKERS not set; run `make up` and `make test-integration`")
 	}
-	brokers := strings.Split(v, ",")
-	cl, err := kgo.NewClient(kgo.SeedBrokers(brokers...))
+	brokers := kafkatest.Config(strings.Split(v, ","))
+	cl, err := kafkaclient.New(brokers.For("andara-it"))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -68,13 +69,14 @@ func storeTopics(t *testing.T) (content.Topics, string, *kadm.Client, []string) 
 }
 
 // storeRuntime is a content.source=kafka boot over the throwaway topics.
-func storeRuntime(t *testing.T, tp content.Topics, audit string, brokers []string) (*Runtime, *syncBuffer) {
+func storeRuntime(t *testing.T, tp content.Topics, audit string, brokers kafkaclient.Config) (*Runtime, *syncBuffer) {
 	t.Helper()
 	rt, _ := runtime(t, "", false)
 	logs := liveLogs(rt)
 	rt.Cfg.ContentSource = content.SourceKafka
 	rt.Cfg.ContentPath = ""
-	rt.Cfg.KafkaBrokers = brokers
+	rt.Cfg.KafkaBrokers = brokers.Brokers
+	rt.Kafka = brokers
 	rt.Cfg.ContentPacks = []string{content.AllPacks}
 	rt.Cfg.ContentCorePack = core.Pack
 	rt.Cfg.ContentCacheDir = t.TempDir()

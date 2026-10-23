@@ -24,6 +24,7 @@ import (
 	contentv1 "github.com/valesordev/andara/gen/go/andara/content/v1"
 	"github.com/valesordev/andara/internal/eventually"
 	"github.com/valesordev/andara/server/auth"
+	"github.com/valesordev/andara/server/kafkaclient"
 	"github.com/valesordev/andara/server/recordlog"
 )
 
@@ -36,7 +37,7 @@ func publishTopics(t *testing.T) (Topics, string, *kgo.Client) {
 	t.Helper()
 	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
 	defer cancel()
-	cl, err := kgo.NewClient(kgo.SeedBrokers(brokers(t)...), kgo.RecordPartitioner(kgo.ManualPartitioner()))
+	cl, err := kafkaclient.New(brokers(t).For("andara-it"), kgo.RecordPartitioner(kgo.ManualPartitioner()))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -95,7 +96,7 @@ type brokerPublish struct {
 
 func (b *brokerPublish) open(topic string, maxRecord int32) recordlog.Log {
 	b.t.Helper()
-	l, err := recordlog.NewKafka(context.Background(), recordlog.KafkaOptions{Brokers: brokers(b.t), Topic: topic, MaxRecordBytes: maxRecord})
+	l, err := recordlog.NewKafka(context.Background(), recordlog.KafkaOptions{Kafka: brokers(b.t), Topic: topic, MaxRecordBytes: maxRecord})
 	if err != nil {
 		b.t.Fatal(err)
 	}
@@ -114,7 +115,7 @@ func (b *brokerPublish) start() {
 	if err != nil {
 		b.t.Fatal(err)
 	}
-	b.resolver, err = NewKafkaResolver(KafkaOptions{Brokers: brokers(b.t), Topics: b.tp, Cache: BlobCache{Dir: b.t.TempDir()}, MaxBlobBytes: 8 << 20})
+	b.resolver, err = NewKafkaResolver(KafkaOptions{Kafka: brokers(b.t), Topics: b.tp, Cache: BlobCache{Dir: b.t.TempDir()}, MaxBlobBytes: 8 << 20})
 	if err != nil {
 		b.t.Fatal(err)
 	}
@@ -207,7 +208,7 @@ func TestPublishPath_AgainstABroker(t *testing.T) {
 	big := bytes.Repeat([]byte("andara "), (5<<20)/7)
 	files["README"] = big
 	v2 := b.publish(files)
-	cold, err := NewKafkaResolver(KafkaOptions{Brokers: brokers(t), Topics: tp, Cache: BlobCache{Dir: t.TempDir()}, MaxBlobBytes: 8 << 20})
+	cold, err := NewKafkaResolver(KafkaOptions{Kafka: brokers(t), Topics: tp, Cache: BlobCache{Dir: t.TempDir()}, MaxBlobBytes: 8 << 20})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -284,7 +285,7 @@ func countKey(t *testing.T, topic string, key []byte) int {
 	t.Helper()
 	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
 	defer cancel()
-	adm, err := kgo.NewClient(kgo.SeedBrokers(brokers(t)...))
+	adm, err := kafkaclient.New(brokers(t).For("andara-it"))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -299,7 +300,7 @@ func countKey(t *testing.T, topic string, key []byte) int {
 			want[o.Partition] = o.Offset
 		}
 	})
-	cl, err := kgo.NewClient(kgo.SeedBrokers(brokers(t)...), kgo.ConsumeTopics(topic), kgo.ConsumeResetOffset(kgo.NewOffset().AtStart()))
+	cl, err := kafkaclient.New(brokers(t).For("andara-it"), kgo.ConsumeTopics(topic), kgo.ConsumeResetOffset(kgo.NewOffset().AtStart()))
 	if err != nil {
 		t.Fatal(err)
 	}

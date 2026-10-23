@@ -19,7 +19,7 @@ import (
 
 // dark is the broker address the check builds clients with: nothing listens
 // on it, so the check reaches no broker.
-var dark = []string{"127.0.0.1:1"}
+var dark = kafkaclient.Config{Brokers: []string{"127.0.0.1:1"}}
 
 // KafkaSites describes every Kafka client the server and the projector build,
 // from the options their constructors build them with (AW-SRV-053), on the
@@ -31,7 +31,7 @@ func KafkaSites(cfg config.Config) ([]kafkaclient.Site, error) {
 	}
 	name := cfg.ServiceName
 	var sites []kafkaclient.Site
-	sites = append(sites, ingress.Sites(ingress.ProducerOptions{Brokers: dark, Topic: t.Commands(), ClientID: name, Deadline: cfg.IngressProduceDeadline})...)
+	sites = append(sites, ingress.Sites(ingress.ProducerOptions{Kafka: dark, Topic: t.Commands(), ClientID: name, Deadline: cfg.IngressProduceDeadline})...)
 	sites = append(sites, tickloop.Sites(dark, name, tickloop.DeliveryTimeout, t)...)
 	sites = append(sites, tickloop.ReaderSites(dark, recoveryClientID, t)...)
 	sites = append(sites, tickloop.ReaderSites(dark, projector.ClientID, t)...)
@@ -51,7 +51,7 @@ func KafkaSites(cfg config.Config) ([]kafkaclient.Site, error) {
 	}
 	for _, l := range logs {
 		sites = append(sites,
-			recordlog.ProducerSite(l.name+" producer", recordlog.KafkaOptions{Brokers: dark, Topic: l.topic, ClientID: l.client, MaxRecordBytes: l.maxRecord}),
+			recordlog.ProducerSite(l.name+" producer", recordlog.KafkaOptions{Kafka: dark, Topic: l.topic, ClientID: l.client, MaxRecordBytes: l.maxRecord}),
 			recordlog.ReplaySite(l.name+" replay", dark, l.topic, l.oneShot),
 		)
 	}

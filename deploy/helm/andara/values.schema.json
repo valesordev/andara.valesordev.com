@@ -492,6 +492,14 @@
             "topic_prefix": {
               "type": "string",
               "description": "ANDARA_KAFKA_TOPIC_PREFIX (AW-SRV-058). Default when unset: ''."
+            },
+            "sasl_username": {
+              "type": "string",
+              "description": "ANDARA_KAFKA_SASL_USERNAME (AW-SRV-044). Default when unset: ''."
+            },
+            "sasl_password_file": {
+              "type": "string",
+              "description": "ANDARA_KAFKA_SASL_PASSWORD_FILE (AW-SRV-044). Default when unset: '/etc/andara/secrets/kafka/password'."
             }
           }
         },

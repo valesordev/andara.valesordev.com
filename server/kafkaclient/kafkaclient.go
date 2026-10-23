@@ -71,9 +71,10 @@ var oneShots = map[OneShot]bool{
 }
 
 // Principals are the Kafka principals of ADR-0011 §3; a client.id starts with
-// one of them.
+// one of them. andara-it is the integration suite's (ADR-0013's amendments,
+// AW-SRV-044).
 var Principals = []string{
-	"andara-server", "andara-projector-state", "andara-projection-redis", "andara-projection-pg", "andara-operator",
+	"andara-server", "andara-projector-state", "andara-projection-redis", "andara-projection-pg", "andara-operator", "andara-it",
 }
 
 var clientID = regexp.MustCompile(`^(` + strings.Join(Principals, "|") + `)(-[a-z]+)*$`)

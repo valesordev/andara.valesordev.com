@@ -26,7 +26,7 @@ func (rt *Runtime) openRegistry(ctx context.Context) (recordlog.Log, error) {
 	var opened []recordlog.Log
 	open := func(topic string, maxRecord int64) (recordlog.Log, error) {
 		l, err := recordlog.NewKafka(ctx, recordlog.KafkaOptions{
-			Brokers: cfg.KafkaBrokers, Topic: topic, ClientID: cfg.ServiceName + "-content",
+			Kafka: rt.Kafka, Topic: topic, ClientID: cfg.ServiceName + "-content",
 			MaxRecordBytes: int32(maxRecord),
 		})
 		if err == nil {

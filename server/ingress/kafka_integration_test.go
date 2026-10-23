@@ -41,23 +41,25 @@ import (
 	logv1 "github.com/valesordev/andara/gen/go/andara/log/v1"
 	"github.com/valesordev/andara/server/auth"
 	"github.com/valesordev/andara/server/command"
+	"github.com/valesordev/andara/server/kafkaclient"
+	"github.com/valesordev/andara/server/kafkaclient/kafkatest"
 	"github.com/valesordev/andara/server/recordlog"
 	"github.com/valesordev/andara/server/sim"
 	"github.com/valesordev/andara/server/telemetry"
 )
 
-func brokers(t *testing.T) []string {
+func brokers(t *testing.T) kafkaclient.Config {
 	t.Helper()
 	v := os.Getenv("ANDARA_KAFKA_BROKERS")
 	if v == "" {
 		t.Skip("ANDARA_KAFKA_BROKERS not set; run `make up` and `make test-integration`")
 	}
-	return strings.Split(v, ",")
+	return kafkatest.Config(strings.Split(v, ","))
 }
 
 func admin(t *testing.T) *kadm.Client {
 	t.Helper()
-	cl, err := kgo.NewClient(kgo.SeedBrokers(brokers(t)...))
+	cl, err := kafkaclient.New(brokers(t).For("andara-it"))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -114,7 +116,7 @@ func readRecord(t *testing.T, topic string, partition int32, offset int64) *kgo.
 	t.Helper()
 	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
 	defer cancel()
-	cl, err := kgo.NewClient(kgo.SeedBrokers(brokers(t)...),
+	cl, err := kafkaclient.New(brokers(t).For("andara-it"),
 		kgo.ConsumePartitions(map[string]map[int32]kgo.Offset{topic: {partition: kgo.NewOffset().At(offset)}}))
 	if err != nil {
 		t.Fatal(err)
@@ -185,7 +187,7 @@ func newKafkaFixture(t *testing.T, mutate func(*ProducerOptions)) *kafkaFixture 
 	auditTopic := throwawayTopic(t, 1)
 	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
 	defer cancel()
-	auditLog, err := recordlog.NewKafka(ctx, recordlog.KafkaOptions{Brokers: brokers(t), Topic: auditTopic, ClientID: "ingress-test-audit"})
+	auditLog, err := recordlog.NewKafka(ctx, recordlog.KafkaOptions{Kafka: brokers(t), Topic: auditTopic, ClientID: "ingress-test-audit"})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -194,7 +196,7 @@ func newKafkaFixture(t *testing.T, mutate func(*ProducerOptions)) *kafkaFixture 
 	reg := prometheus.NewRegistry()
 	metrics := NewMetrics(reg)
 	spans, tracer := tracerFor(t)
-	po := ProducerOptions{Brokers: brokers(t), Topic: topic, ClientID: "ingress-test", Deadline: 2 * time.Second, ProbeInterval: 100 * time.Millisecond, Metrics: metrics, Tracer: tracer}
+	po := ProducerOptions{Kafka: brokers(t), Topic: topic, ClientID: "ingress-test", Deadline: 2 * time.Second, ProbeInterval: 100 * time.Millisecond, Metrics: metrics, Tracer: tracer}
 	if os.Getenv("ANDARA_TEST_KGO_DEBUG") != "" {
 		po.ClientLogger = kgo.BasicLogger(os.Stderr, kgo.LogLevelDebug, func() string { return t.Name() + " " })
 	}
@@ -301,7 +303,7 @@ func TestKafka_ProduceLandsWhereItSays(t *testing.T) {
 // that Zone lands where PartitionFor says.
 func TestKafka_ExplicitPartitioner(t *testing.T) {
 	f := newKafkaFixture(t, nil)
-	probe, err := kgo.NewClient(kgo.SeedBrokers(brokers(t)...), kgo.DefaultProduceTopic(f.topic))
+	probe, err := kafkaclient.New(brokers(t).For("andara-it"), kgo.DefaultProduceTopic(f.topic))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -489,7 +491,7 @@ func (c *faultConn) Read(p []byte) (int, error) {
 // probe clears it without a restart, and the next Submit is produced.
 func TestKafka_UnreachableIsReadOnlyThenRecovers(t *testing.T) {
 	d := &faultDialer{}
-	f := newKafkaFixture(t, func(o *ProducerOptions) { o.Dialer = d.dial })
+	f := newKafkaFixture(t, func(o *ProducerOptions) { o.Kafka.Dialer = d.dial })
 	if _, err := f.submit(context.Background(), "s-alice", "look"); err != nil {
 		t.Fatal(err)
 	}
@@ -549,7 +551,7 @@ func TestKafka_UnreachableIsReadOnlyThenRecovers(t *testing.T) {
 // nobody is playing, and the first Submit after detection fails at once.
 func TestKafka_ProbeDetectsOutageWithoutTraffic(t *testing.T) {
 	d := &faultDialer{}
-	f := newKafkaFixture(t, func(o *ProducerOptions) { o.Dialer = d.dial })
+	f := newKafkaFixture(t, func(o *ProducerOptions) { o.Kafka.Dialer = d.dial })
 	if _, err := f.submit(context.Background(), "s-alice", "look"); err != nil {
 		t.Fatal(err)
 	}
@@ -574,7 +576,7 @@ func TestKafka_ProbeDetectsOutageWithoutTraffic(t *testing.T) {
 // retried by the idempotent producer and lands once.
 func TestKafka_AmbiguousTimeoutNoDuplicate(t *testing.T) {
 	d := &faultDialer{}
-	f := newKafkaFixture(t, func(o *ProducerOptions) { o.Dialer = d.dial })
+	f := newKafkaFixture(t, func(o *ProducerOptions) { o.Kafka.Dialer = d.dial })
 	if _, err := f.submit(context.Background(), "s-alice", "look"); err != nil {
 		t.Fatal(err)
 	}
@@ -619,7 +621,7 @@ func TestKafka_AmbiguousTimeoutNoDuplicate(t *testing.T) {
 // offset advanced by exactly one across both calls.
 func TestKafka_RetryAfterAmbiguousTimeoutIsTheSameCommand(t *testing.T) {
 	d := &faultDialer{}
-	f := newKafkaFixture(t, func(o *ProducerOptions) { o.Dialer = d.dial })
+	f := newKafkaFixture(t, func(o *ProducerOptions) { o.Kafka.Dialer = d.dial })
 	if _, err := f.submit(context.Background(), "s-alice", "look"); err != nil {
 		t.Fatal(err)
 	}
@@ -666,7 +668,7 @@ func TestKafka_RetryAfterAmbiguousTimeoutIsTheSameCommand(t *testing.T) {
 // produce, and exactly one record lands.
 func TestKafka_RetryAfterDroppedRecordIsANewCommand(t *testing.T) {
 	d := &faultDialer{}
-	f := newKafkaFixture(t, func(o *ProducerOptions) { o.Dialer = d.dial })
+	f := newKafkaFixture(t, func(o *ProducerOptions) { o.Kafka.Dialer = d.dial })
 	if _, err := f.submit(context.Background(), "s-alice", "look"); err != nil {
 		t.Fatal(err)
 	}
@@ -711,7 +713,7 @@ func TestKafka_RetryAfterDroppedRecordIsANewCommand(t *testing.T) {
 // wire.
 func TestKafka_TheTapFollowsARealBrokersProduceResponses(t *testing.T) {
 	topic := throwawayTopic(t, sim.PartitionCount)
-	k, err := NewKafkaProducer(ProducerOptions{Brokers: brokers(t), Topic: topic, ClientID: "ingress-test-tap",
+	k, err := NewKafkaProducer(ProducerOptions{Kafka: brokers(t), Topic: topic, ClientID: "ingress-test-tap",
 		Deadline: 3 * time.Second, ProbeInterval: 100 * time.Millisecond, Metrics: NewMetrics(prometheus.NewRegistry())})
 	if err != nil {
 		t.Fatal(err)

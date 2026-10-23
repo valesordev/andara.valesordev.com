@@ -17,6 +17,7 @@ import (
 	"go.opentelemetry.io/otel/trace"
 	"go.opentelemetry.io/otel/trace/noop"
 
+	"github.com/valesordev/andara/server/kafkaclient"
 	"github.com/valesordev/andara/server/sim"
 	"github.com/valesordev/andara/server/store"
 )
@@ -55,7 +56,7 @@ func ExitCode(err error) int {
 
 // RunOptions configures Run.
 type RunOptions struct {
-	Brokers []string
+	Kafka kafkaclient.Config
 	// Group is andara-projector-state-<env>.
 	Group string
 	// Topics, from kafkaclient.Topics; each is required.
@@ -109,7 +110,7 @@ func Run(ctx context.Context, o RunOptions) error {
 	o = o.withDefaults()
 	log := o.Log
 
-	cm, err := NewCommitter(o.Brokers, o.Group, o.CommandsTopic)
+	cm, err := NewCommitter(o.Kafka, o.Group, o.CommandsTopic)
 	if err != nil {
 		return err
 	}
@@ -148,7 +149,7 @@ func Run(ctx context.Context, o RunOptions) error {
 		cp, committed = Checkpoint{}, false
 	}
 
-	boundaries, err := NewBoundaryReader(ctx, o.Brokers, o.EventsTopic)
+	boundaries, err := NewBoundaryReader(ctx, o.Kafka, o.EventsTopic)
 	if err != nil {
 		return fmt.Errorf("boundaries: %w", err)
 	}
@@ -161,7 +162,7 @@ func Run(ctx context.Context, o RunOptions) error {
 	endBootstrap := func(round sim.Tick, outcome string, err error) {
 		bspan.SetAttributes(attribute.Int64("round_tick", int64(round)), attribute.String("outcome", outcome))
 		if err != nil {
-			bspan.SetStatus(codes.Error, err.Error())
+			kafkaclient.SpanError(bspan, err)
 		}
 		bspan.End()
 	}
@@ -180,7 +181,7 @@ func Run(ctx context.Context, o RunOptions) error {
 	}
 	p := New(eng, Options{ContentVersion: o.ContentVersion, OnSwaps: o.OnSwaps})
 
-	prod, err := NewProducer(ctx, o.Brokers, o.StateTopic)
+	prod, err := NewProducer(ctx, o.Kafka, o.StateTopic)
 	if err != nil {
 		err = fmt.Errorf("producer: %w", err)
 		endBootstrap(round, "error", err)
@@ -207,7 +208,7 @@ func Run(ctx context.Context, o RunOptions) error {
 		"committed", committed, "committed_tick", uint64(cp.Tick), "silent_through", uint64(silentThrough),
 		"rebuild", o.Rebuild, "from_zero", o.FromZero)
 
-	src, err := NewCommandSource(ctx, o.Brokers, o.CommandsTopic, copyOffsets(eng.State().Offsets))
+	src, err := NewCommandSource(ctx, o.Kafka, o.CommandsTopic, copyOffsets(eng.State().Offsets))
 	if err != nil {
 		return err
 	}
@@ -306,7 +307,7 @@ func (o RunOptions) step(ctx context.Context, p *Projector, src *CommandSource, 
 				attribute.String("replayed_hash", fmt.Sprintf("%x", d.Replayed)))
 			vspan.SetStatus(codes.Error, "state hash mismatch")
 		case replayErr != nil:
-			vspan.SetStatus(codes.Error, replayErr.Error())
+			kafkaclient.SpanError(vspan, replayErr)
 		}
 		vspan.End()
 		if replayErr != nil {
@@ -399,7 +400,7 @@ func (o RunOptions) restore(ctx context.Context, topo sim.Topology, cfg sim.Conf
 		o.Log.ErrorContext(ctx, "state projector restore mismatch", "round_tick", sm.RoundTick, "reason", "seed",
 			"recorded_seed", strconv.FormatUint(sm.Recorded, 10), "configured_seed", strconv.FormatUint(sm.Configured, 10), "trace_id", traceID)
 	}
-	span.SetStatus(codes.Error, err.Error())
+	kafkaclient.SpanError(span, err)
 	return nil, err
 }
 
@@ -503,7 +504,7 @@ func (o RunOptions) dump(ctx context.Context, p *Projector, prod *Producer, cm *
 	if err != nil {
 		return err
 	}
-	keys, err := TopicKeys(ctx, o.Brokers, o.StateTopic)
+	keys, err := TopicKeys(ctx, o.Kafka, o.StateTopic)
 	if err != nil {
 		return fmt.Errorf("read %s keys: %w", o.StateTopic, err)
 	}

@@ -23,12 +23,12 @@ func TestNewKafkaResolver_RequiresEveryTopic(t *testing.T) {
 		{"KafkaOptions.Topics.Versions", Topics{Blobs: full.Blobs, Active: full.Active}},
 		{"KafkaOptions.Topics.Active", Topics{Blobs: full.Blobs, Versions: full.Versions}},
 	} {
-		_, err := NewKafkaResolver(KafkaOptions{Brokers: []string{"127.0.0.1:1"}, Topics: c.topics})
+		_, err := NewKafkaResolver(KafkaOptions{Kafka: kafkaclient.Config{Brokers: []string{"127.0.0.1:1"}}, Topics: c.topics})
 		if err == nil || !strings.Contains(err.Error(), c.option) {
 			t.Errorf("%s: err = %v, want one naming it", c.option, err)
 		}
 	}
-	if _, err := NewKafkaResolver(KafkaOptions{Brokers: []string{"127.0.0.1:1"}, Topics: full}); err != nil {
+	if _, err := NewKafkaResolver(KafkaOptions{Kafka: kafkaclient.Config{Brokers: []string{"127.0.0.1:1"}}, Topics: full}); err != nil {
 		t.Errorf("all three topics: %v", err)
 	}
 }
