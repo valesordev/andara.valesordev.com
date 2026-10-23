@@ -450,6 +450,43 @@ func TestSweepIgnoresAFileThatIsNotATag(t *testing.T) {
 	}
 }
 
+// lockProbe checks, each time the sweep re-reads a round's tags, that the
+// sweep holds the lock a tag takes.
+type lockProbe struct {
+	*store.FS
+	sw       *store.Sweeper
+	reads    atomic.Int32
+	unlocked atomic.Int32
+}
+
+func (p *lockProbe) ListTags(ctx context.Context, key string) ([]string, error) {
+	p.reads.Add(1)
+	// A free lock is taken at once; a held one waits out the deadline.
+	wait, cancel := context.WithTimeout(ctx, 50*time.Millisecond)
+	defer cancel()
+	if p.sw.Lock(wait) == nil {
+		p.unlocked.Add(1)
+		p.sw.Unlock()
+	}
+	return p.FS.ListTags(ctx, key)
+}
+
+// A sweep re-reads and deletes a round holding the lock, so a tag can't land
+// between the two.
+func TestSweepDeletesHoldingTheLock(t *testing.T) {
+	t.Parallel()
+	f := retentionFixture(t, 3, minutes)
+	sw := store.NewSweeper()
+	p := &lockProbe{FS: f.fs, sw: sw}
+	res, err := sw.Sweep(context.Background(), p, f.owned, nil, store.Retention{KeepRounds: 1}, sweepNow)
+	if err != nil || res.Deleted != 2 {
+		t.Fatalf("sweep %+v %v", res, err)
+	}
+	if n := p.unlocked.Load(); n != 0 || p.reads.Load() == 0 {
+		t.Fatalf("%d of %d tag re-reads ran without the lock", n, p.reads.Load())
+	}
+}
+
 // The lock a tag waits on gives up with the tag's context.
 func TestSweeperLockHonoursTheContext(t *testing.T) {
 	t.Parallel()

@@ -53,8 +53,10 @@ type SweepResult struct {
 // round by round, reads the round's tags again under it, and keeps a round
 // that gained one. So a tag waits for one round's deletes at most, never for a
 // whole sweep. AW-SRV-054's pre-stop tags without the lock: it tags the
-// newest round, which the sweep keeps (the newest complete round, or the
-// first of keep_rounds, which is at least 1).
+// newest round, which the sweep keeps as the newest complete one, or under
+// keep_rounds (at least 1) or keep_deploy_rounds. Not covered: a periodic
+// round that lands before pre-stop's tag does, with keep_rounds 1, or a
+// pre-stop round the sweep caught mid-write, with keep_deploy_rounds 0.
 //
 // One Sweep runs at a time: the retention loop is its only caller.
 type Sweeper struct {
