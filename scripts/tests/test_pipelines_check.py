@@ -196,7 +196,7 @@ class Check(unittest.TestCase):
     def test_a_source_whose_name_is_not_an_alloy_identifier_is_refused(self):
         """Fleet refuses a pipeline name that is not an Alloy identifier (`shared-kafka` failed to apply
         on main), and the name is the source's, so the source's file name must be one."""
-        for name in ("shared-kafka", "1kafka", "Kafka"):
+        for name in ("shared-kafka", "1kafka", "Kafka", "true", "false", "null"):
             with self.subTest(name):
                 for old in [n for n in os.listdir(self.dir) if n.endswith(".alloy")]:
                     os.remove(os.path.join(self.dir, old))
@@ -295,6 +295,8 @@ class Resources(unittest.TestCase):
         breaks = [
             ("an inline heredoc", {HERE: good.replace(RESOURCE_LINE, 'contents = <<-EOT\n    loki.write "c" {}\n  EOT')}, exact),
             ("a source outside pipelines/", {HERE: good.replace("../../pipelines/shared_kafka.alloy", "evil.alloy")}, exact),
+            ("a source whose name is not an identifier",
+             {HERE: good.replace("pipelines/shared_kafka.alloy", "pipelines/shared-kafka.alloy")}, exact),
             ("a pipelines path that climbs out again",
              {HERE: good.replace("pipelines/shared_kafka.alloy", "pipelines/shared_kafka.alloy/../env-allow.txt")}, exact),
             ("a source written with %{", {HERE: good.replace("${path.module}", "%{if true}x%{endif}")}, exact),
