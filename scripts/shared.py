@@ -5,6 +5,7 @@
 """The shared services in andara-shared (ADR-0013 decisions 3–5, AW-INF-055).
 
     scripts/shared.py check            make shared-check
+    scripts/shared.py netcheck         make shared-netcheck
     scripts/shared.py down <confirm>   make shared-down CONFIRM=andara-shared
 
 `check` is the residual control for what sharing costs: one environment can fill the brokers'
@@ -22,13 +23,21 @@ claim's. A PVC that no running pod mounts is printed as unmeasured, and doesn't 
 mounted one that can't be measured (a crash-looping broker, which is what a full disk looks like)
 is printed with the reason, the rest are still reported, and the check fails naming it.
 
+`netcheck` proves the listener's NetworkPolicy (AC-5) with four throwaway pods running the toolbox's
+image: an `app.kubernetes.io/name: andara` pod in andara-local and one in andara-dev must reach the
+bootstrap, and one in a fresh unlabelled namespace, and a pod without that label in andara-dev,
+must not. The pods carry no `app: andara`, so no Service or controller of the chart selects them.
+Everything it creates is deleted on the way out, pass or fail. Exit 1 names each case that
+didn't hold.
+
 `down` removes the Kafka `andara-log`, its toolbox and its PVCs, which are the environments'
 Command history, with no way back. It refuses with exit 2, removing nothing, unless CONFIRM
 is the namespace. The namespace itself stays: `make platform-up` creates it for Strimzi.
 Resetting or destroying andara-local or andara-dev never reaches it.
 
 Every line is `shared: …`. Exit codes: 0 ok; 1 a PVC over the threshold, a stray topic, or a
-failed step; 2 usage or refusal; 3 the cluster context or kubectl missing.
+failed step, or a netcheck case that didn't hold; 2 usage or refusal; 3 the cluster context or
+kubectl missing.
 """
 
 import json
@@ -84,7 +93,8 @@ def human(n):
 
 
 def kubectl(ns, *args, run=subprocess.run):
-    p = run(kube.kubectl("-n", ns, *args), capture_output=True, text=True)
+    """kubectl in namespace ns; an empty ns is a cluster-scoped call."""
+    p = run(kube.kubectl(*(("-n", ns) if ns else ()), *args), capture_output=True, text=True)
     if p.returncode != 0:
         raise Failed("kubectl %s: %s" % (" ".join(args[:3]), (p.stderr or p.stdout).strip()))
     return p.stdout
@@ -236,6 +246,121 @@ def check(ns=None, run=subprocess.run, decl=topics.DECL):
     say("ok: every PVC in %s is at or under %d%%" % (ns, THRESHOLD))
 
 
+# --- NetworkPolicy probe ------------------------------------------------------------------------
+
+NET_ENV_LABEL = "andara.valesor/env"
+NET_PROBE = "andara-netcheck"
+NET_TOOLS = os.path.join(KAFKA_MANIFESTS, "tools.yaml")
+BOOTSTRAP = "%s-kafka-bootstrap.%s.svc"
+# What runs in each probe pod: a marker first, so a probe that never ran can't read as refused.
+NET_SCRIPT = ('echo probe-ran; if timeout 3 bash -c "exec 3<>/dev/tcp/$0/9092"; '
+              'then echo connected; else echo blocked; fi')
+
+
+def tools_image(path=NET_TOOLS):
+    """The rpk toolbox's image, so the probe adds no pin of its own (deploy/platform/versions.yaml)."""
+    with open(path) as f:
+        for line in f:
+            m = re.match(r"\s*image:\s*(\S+)", line)
+            if m:
+                return m.group(1)
+    raise Failed("no image in %s" % os.path.relpath(path, REPO))
+
+
+def probe_manifest(ns, name, app, image):
+    """A pod that idles until exec'd. `app` is its app.kubernetes.io/name; without `app: andara`
+    it matches the chart's listener peer but none of its Services or controllers."""
+    labels = {"andara.valesor/netcheck": "true"}
+    if app:
+        labels["app.kubernetes.io/name"] = app
+    return {"apiVersion": "v1", "kind": "Pod",
+            "metadata": {"name": name, "namespace": ns, "labels": labels},
+            "spec": {"restartPolicy": "Never", "terminationGracePeriodSeconds": 0,
+                     "containers": [{"name": "probe", "image": image, "command": ["sleep", "600"]}]}}
+
+
+def probe_once(ns, name, host, run=subprocess.run):
+    """"connected" or "blocked"; Failed when the probe itself didn't run."""
+    out = kubectl(ns, "exec", name, "-c", "probe", "--", "bash", "-c", NET_SCRIPT, host, run=run)
+    words = out.split()
+    if "probe-ran" not in words or not ({"connected", "blocked"} & set(words)):
+        raise Failed("probe %s/%s gave no verdict: %r" % (ns, name, out[:200]))
+    return "connected" if "connected" in words else "blocked"
+
+
+def netcheck(ns=None, run=subprocess.run, sleep=None, clock=None, suffix=None, image=None,
+             deadline=60, refusals=3):
+    """AW-INF-055 AC-5: an andara pod in andara-local and in andara-dev reaches the bootstrap; an
+    andara pod in an unlabelled namespace, and an unlabelled pod in andara-dev, do not."""
+    import time
+    sleep, clock = sleep or time.sleep, clock or time.monotonic
+    ns = ns or topics.kafka_namespace()
+    host = BOOTSTRAP % (KAFKA, ns)
+    suffix = suffix or os.urandom(3).hex()
+    image = image or tools_image()
+    for env in ("local", "dev"):
+        try:
+            got = ((kubectl_json("", "get", "namespace", "andara-" + env, run=run).get("metadata") or {})
+                   .get("labels") or {}).get(NET_ENV_LABEL)
+        except Failed:
+            got = None
+        if got != env:
+            raise Failed("namespace andara-%s is missing or isn't labelled %s=%s; run `make shared-up` first"
+                         % (env, NET_ENV_LABEL, env))
+    scratch = "%s-%s" % (NET_PROBE, suffix)
+    name = "%s-%s" % (NET_PROBE, suffix)
+    # (namespace, pod, app label, expected, what it proves)
+    cases = [("andara-local", name, "andara", "connected", "an andara pod in andara-local"),
+             ("andara-dev", name, "andara", "connected", "an andara pod in andara-dev"),
+             (scratch, name, "andara", "blocked", "an andara pod in an unlabelled namespace"),
+             ("andara-dev", name + "-other", None, "blocked", "a pod not labelled andara in andara-dev")]
+    made_ns = False
+    try:
+        kubectl("", "create", "namespace", scratch, run=run)
+        made_ns = True
+        for pns, pod, app, _, _ in cases:
+            p = run(kube.kubectl("apply", "-f", "-"), input=json.dumps(probe_manifest(pns, pod, app, image)),
+                    capture_output=True, text=True)
+            if p.returncode != 0:
+                raise Failed("creating probe %s/%s: %s" % (pns, pod, (p.stderr or p.stdout).strip()))
+        for pns, pod, _, _, _ in cases:
+            kubectl(pns, "wait", "--for=condition=Ready", "pod/" + pod, "--timeout=120s", run=run)
+        say("netcheck: probes Ready; bootstrap %s:9092" % host)
+        failed = []
+        # Rule 1 of docs/specs/testing/live-assertions.md: the admitted probes are polled to a
+        # deadline (a new pod's policy can lag its readiness); the refused ones are tried
+        # `refusals` times after, and a single connection is a failure.
+        for pns, pod, _, want, what in cases:
+            if want == "connected":
+                end = clock() + deadline
+                verdict = probe_once(pns, pod, host, run)
+                while verdict != "connected" and clock() < end:
+                    sleep(2)
+                    verdict = probe_once(pns, pod, host, run)
+            else:
+                verdicts = []
+                for i in range(refusals):
+                    if i:
+                        sleep(2)
+                    verdicts.append(probe_once(pns, pod, host, run))
+                verdict = "connected" if "connected" in verdicts else "blocked"
+            ok = verdict == want
+            say("netcheck: %s %s: %s (want %s)" % ("ok" if ok else "FAIL", what, verdict, want))
+            if not ok:
+                failed.append(what)
+        if failed:
+            raise Failed("the listener's NetworkPolicy is not as kafka.yaml declares: %s" % "; ".join(failed))
+        say("netcheck: ok — admitted andara pods in andara-local and andara-dev only")
+    finally:
+        for pns, pod, _, _, _ in cases:
+            if pns != scratch:
+                run(kube.kubectl("-n", pns, "delete", "pod", pod, "--ignore-not-found", "--wait=false"),
+                    capture_output=True, text=True)
+        if made_ns:
+            run(kube.kubectl("delete", "namespace", scratch, "--ignore-not-found", "--wait=false"),
+                capture_output=True, text=True)
+
+
 def down(confirm, ns=None, run=subprocess.run):
     ns = ns or topics.kafka_namespace()
     if confirm != ns:
@@ -257,10 +382,15 @@ def main(argv):
                 raise Missing("kubectl not found")
             kube.require()
             check()
+        elif cmd == "netcheck" and not args:
+            if shutil.which("kubectl") is None:
+                raise Missing("kubectl not found")
+            kube.require()
+            netcheck()
         elif cmd == "down" and len(args) <= 1:
             down(args[0] if args else "")
         else:
-            raise Usage("usage: scripts/shared.py check | down CONFIRM")
+            raise Usage("usage: scripts/shared.py check | netcheck | down CONFIRM")
     except (Failed, Usage, Missing) as e:
         print("shared: %s" % e, file=sys.stderr)
         return e.code

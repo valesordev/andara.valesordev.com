@@ -37,6 +37,7 @@ chart, and one `Deployment` per projector. Story: [AW-INF-003](https://github.co
 | `make shared-up` | the shared services in `andara-shared` (see *Shared services* below): the Kafka `andara-log` (`deploy/k8s/kafka/`), waits for Ready, labels `andara-local` and `andara-dev`, and applies both environments' prefixed topics; refuses with exit 3 unless `platform-up`'s Strimzi watches `andara-shared`; idempotent |
 | `make shared-down CONFIRM=andara-shared` | delete the shared Kafka and its PVCs, which hold every environment's Command history; without the CONFIRM it exits 2 and removes nothing. The namespace stays (`platform-up`'s) |
 | `make shared-check` | each `andara-shared` PVC's use against its size (exit 1 over 80%), each broker's bytes per environment prefix, and every topic outside both prefixes on its own line; an unprefixed `andara.` topic other than `andara.test.` fails it |
+| `make shared-netcheck` | proves the listener's NetworkPolicy (*Who may connect*, below) with four throwaway pods on the toolbox's image: an `andara` pod in `andara-local` and in `andara-dev` reach the bootstrap, one in a fresh unlabelled namespace and a pod without the `andara` label in `andara-dev` don't; exit 1 names each case that didn't hold; everything it creates is deleted |
 | `make kafka-install ENV=<local\|dev>` | the shared Kafka, as `shared-up`, then only `ENV`'s prefixed topics |
 | `make kafka-broker-bounce ENV=dev` | delete one shared broker; after it rejoins with every partition in sync, assert once that `ENV`'s server never left Ready, never logged `command log unreachable`, and refused no Submit. Both environments lose the broker while it's gone |
 | `make kafka-users` / `kafka-users-check` | print the per-environment `KafkaUser`s rendered from `deploy/kafka/topics.yaml`'s `principals` / check that none grants a topic Create, Alter or AlterConfigs or a literal `*`, each stays inside its prefix, and each workload has one per environment; the check is in `make check`. AW-INF-056 applies them |
@@ -208,7 +209,7 @@ destroying `andara-local` or `andara-dev` never touches it.
   `deploy/k8s/kafka/kafka.yaml`, admits a pod labelled `app.kubernetes.io/name: andara` (the server and every
   projector) in a namespace labelled `andara.valesor/env` `local` or `dev`, and the `rpk` toolbox
   (`app.kubernetes.io/name: andara-kafka-tools`) in `andara-shared`, and the broker pool itself, for the tools run in a broker pod (`shared-check`'s `kafka-log-dirs`, `kafka-broker-bounce`'s `kafka-topics`). Nothing else connects, including an `andara` pod
-  in an unlabelled namespace. `make shared-up` sets the labels.
+  in an unlabelled namespace. `make shared-up` sets the labels, and `make shared-netcheck` proves the policy.
 - **Principals.** The per-environment `KafkaUser`s (`andara-server-dev`, `andara-projector-state-local`, …) are
   rendered from `topics.yaml` and checked by `make kafka-users-check`. AW-INF-056 applies them with SASL and the
   authorizer. Until then, `local`'s retention bound is the only bound on what it can take of the brokers.

@@ -222,5 +222,138 @@ class Down(unittest.TestCase):
         self.assertFalse([c for c in calls if "namespace" in c])
 
 
+class FakeNet:
+    """kubectl as shared.netcheck uses it. verdicts maps (namespace, pod) to a list of probe outputs,
+    one per exec, the last repeated; a namespace in scratch_like stands for the unlabelled one."""
+
+    def __init__(self, verdicts=None, labels=None):
+        self.labels = labels if labels is not None else {"andara-local": "local", "andara-dev": "dev"}
+        self.verdicts = verdicts or {}
+        self.calls, self.applied, self.execs = [], [], {}
+
+    def __call__(self, cmd, capture_output=True, text=True, input=None):
+        args = cmd[cmd.index("--context") + 2:]
+        ns = None
+        if args[:1] == ["-n"]:
+            ns, args = args[1], args[2:]
+        self.calls.append((ns, args))
+        ok = lambda out="": types.SimpleNamespace(returncode=0, stdout=out, stderr="")  # noqa: E731
+        if args[:2] == ["get", "namespace"]:
+            if args[2] not in self.labels:
+                return types.SimpleNamespace(returncode=1, stdout="", stderr="NotFound")
+            lab = {"andara.valesor/env": self.labels[args[2]]} if self.labels[args[2]] else {}
+            return ok(json.dumps({"metadata": {"name": args[2], "labels": lab}}))
+        if args[:2] == ["apply", "-f"]:
+            self.applied.append(json.loads(input))
+            return ok()
+        if args[0] in ("create", "wait", "delete"):
+            return ok()
+        if args[0] == "exec":
+            pod = args[1]
+            key = (ns, pod) if (ns, pod) in self.verdicts else ("scratch", pod) if ns.startswith("andara-netcheck-") else (ns, pod)
+            seq = self.verdicts.get(key, ["probe-ran\nconnected\n" if "-other" not in pod and not ns.startswith("andara-netcheck-")
+                                          else "probe-ran\nblocked\n"])
+            n = self.execs.get((ns, pod), 0)
+            self.execs[(ns, pod)] = n + 1
+            return ok(seq[min(n, len(seq) - 1)])
+        raise AssertionError("unexpected kubectl %r" % (args,))
+
+
+class NetCheck(unittest.TestCase):
+    """make shared-netcheck (AW-INF-055 AC-5), over a fake cluster."""
+
+    def run_net(self, net, **kw):
+        t = [0.0]
+
+        def sleep(s):
+            t[0] += s
+        out, err = io.StringIO(), io.StringIO()
+        code = 0
+        with contextlib.redirect_stdout(out), contextlib.redirect_stderr(err):
+            try:
+                shared.netcheck(ns="andara-shared", run=net, sleep=sleep, clock=lambda: t[0], suffix="abc123",
+                                image="probe:img", **kw)
+            except shared.Failed as e:
+                code, msg = 1, str(e)
+                err.write(msg)
+        return code, out.getvalue(), err.getvalue()
+
+    def cleanup(self, net):
+        return sorted((ns or "", a[1], a[2]) for ns, a in net.calls if a[0] == "delete")
+
+    def test_admitted_and_refused_as_declared_exits_0_and_cleans_up(self):
+        net = FakeNet()
+        code, out, err = self.run_net(net)
+        self.assertEqual(code, 0, err)
+        self.assertIn("netcheck: ok", out)
+        self.assertEqual(self.cleanup(net), [
+            ("", "namespace", "andara-netcheck-abc123"),
+            ("andara-dev", "pod", "andara-netcheck-abc123"),
+            ("andara-dev", "pod", "andara-netcheck-abc123-other"),
+            ("andara-local", "pod", "andara-netcheck-abc123")])
+        # every probe ran against the shared bootstrap's FQDN
+        hosts = {a[-1] for _, a in net.calls if a[0] == "exec"}
+        self.assertEqual(hosts, {"andara-log-kafka-bootstrap.andara-shared.svc"})
+
+    def test_the_probes_match_the_listener_peer_and_nothing_of_the_chart(self):
+        net = FakeNet()
+        self.run_net(net)
+        by = {(m["metadata"]["namespace"], m["metadata"]["name"]): m for m in net.applied}
+        self.assertEqual(len(by), 4)
+        for (ns, name), m in by.items():
+            labels = m["metadata"]["labels"]
+            self.assertNotIn("app", labels, name)  # the chart's selectors carry app: andara
+            self.assertEqual(m["spec"]["containers"][0]["image"], "probe:img")
+            want = None if name.endswith("-other") else "andara"
+            self.assertEqual(labels.get("app.kubernetes.io/name"), want, (ns, name))
+        self.assertIn(("andara-netcheck-abc123", "andara-netcheck-abc123"), by)
+
+    def test_a_connection_from_the_unlabelled_namespace_fails_naming_it_and_still_cleans_up(self):
+        net = FakeNet({("scratch", "andara-netcheck-abc123"): ["probe-ran\nconnected\n"]})
+        code, out, err = self.run_net(net)
+        self.assertEqual(code, 1)
+        self.assertIn("FAIL an andara pod in an unlabelled namespace: connected (want blocked)", out)
+        self.assertIn("an andara pod in an unlabelled namespace", err)
+        self.assertEqual(len(self.cleanup(net)), 4)
+
+    def test_one_connection_in_the_refusal_attempts_fails(self):
+        net = FakeNet({("andara-dev", "andara-netcheck-abc123-other"):
+                       ["probe-ran\nblocked\n", "probe-ran\nconnected\n", "probe-ran\nblocked\n"]})
+        code, out, _ = self.run_net(net)
+        self.assertEqual(code, 1)
+        self.assertIn("FAIL a pod not labelled andara in andara-dev", out)
+        self.assertEqual(net.execs[("andara-dev", "andara-netcheck-abc123-other")], 3)
+
+    def test_an_admitted_probe_is_polled_to_its_deadline(self):
+        # blocked twice, then connected: the policy lagged the pod's readiness
+        net = FakeNet({("andara-local", "andara-netcheck-abc123"):
+                       ["probe-ran\nblocked\n", "probe-ran\nblocked\n", "probe-ran\nconnected\n"]})
+        code, out, err = self.run_net(net)
+        self.assertEqual(code, 0, err)
+        net = FakeNet({("andara-dev", "andara-netcheck-abc123"): ["probe-ran\nblocked\n"]})
+        code, out, _ = self.run_net(net, deadline=10)
+        self.assertEqual(code, 1)
+        self.assertIn("FAIL an andara pod in andara-dev: blocked (want connected)", out)
+        self.assertGreater(net.execs[("andara-dev", "andara-netcheck-abc123")], 1)
+
+    def test_a_probe_that_never_ran_is_not_a_refusal(self):
+        net = FakeNet({("scratch", "andara-netcheck-abc123"): [""]})
+        code, _, err = self.run_net(net)
+        self.assertEqual(code, 1)
+        self.assertIn("gave no verdict", err)
+        self.assertEqual(len(self.cleanup(net)), 4)
+
+    def test_an_unlabelled_or_missing_environment_namespace_refuses_before_creating_anything(self):
+        for labels in ({"andara-local": "local", "andara-dev": ""}, {"andara-local": "local"}):
+            net = FakeNet(labels=labels)
+            code, _, err = self.run_net(net)
+            self.assertEqual(code, 1, labels)
+            self.assertIn("andara-dev is missing or isn't labelled andara.valesor/env=dev; run `make shared-up`", err)
+            self.assertFalse([a for _, a in net.calls if a[0] in ("create", "apply", "delete")])
+
+    def test_the_probe_image_is_the_toolbox_s(self):
+        self.assertRegex(shared.tools_image(), r"^docker\.redpanda\.com/redpandadata/redpanda:v\d")
+
+
 if __name__ == "__main__":
     unittest.main()
