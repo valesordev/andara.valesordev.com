@@ -112,6 +112,9 @@ jobs:
       # Alter or AlterConfigs, and no literal `*`.
       - name: kafka users
         run: make kafka-users-check
+      # AW-INF-051: every Fleet pipeline validates and writes only to the chart's receiver.
+      - name: fleet pipelines
+        run: make pipelines-check
       # AW-INF-029. On a pull request the merge base with origin/main comes from
       # fetch-depth: 0 above. On a push to main it compares with the commit main was at before
       # the push, so a multi-commit push is checked whole; main's runs are never cancelled (the
