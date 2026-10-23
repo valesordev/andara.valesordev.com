@@ -547,7 +547,7 @@ class PinCheck(unittest.TestCase):
                          [".github/workflows/b.yaml:1: certManager chart with a version: in its entry"])
 
     def test_a_neighbouring_entry_s_version_is_not_this_chart_s(self):
-        self.write("scripts/c.yaml", "- chart: argocd-image-updater\n  version: 1.3.1\n"
+        self.write("scripts/c.yaml", "- chart: redis\n  version: 20.1.0\n"
                                      "- chart: argo-cd\n  repo: https://argoproj.github.io/argo-helm\n")
         self.assertEqual(platform_up.pin_findings(self.d), [])
 

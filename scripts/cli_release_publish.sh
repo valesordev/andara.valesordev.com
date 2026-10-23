@@ -17,7 +17,7 @@
 # every publish without the release being recreated. The tag moves only when HEAD
 # is still origin/main's head: GitHub serializes runs in a concurrency group but doesn't
 # order them, so an older run admitted after a newer one would otherwise move cli-dev
-# backwards (AC-2). That is the guard image_publish.sh applies to :dev.
+# backwards (AC-2). image_publish.sh applied the same guard to :dev until AW-INF-059 retired it.
 #
 # A v* tag gets a normal release, created once and never replaced (AC-5). cli-dev isn't
 # touched.

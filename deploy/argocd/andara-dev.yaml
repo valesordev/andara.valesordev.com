@@ -1,18 +1,18 @@
 # SPDX-License-Identifier: Apache-2.0
 # Copyright 2026 Valesor Development
 #
-# dev follows main (AW-INF-019). `make argocd-install ENV=dev` applies this with
-# server-side apply, after seeding image.tag (below), so a re-run never clears what
-# Image Updater writes.
+# dev follows the Git tag `dev` (AW-INF-059, ADR-0013 decision 7). `make promote` moves it: one
+# signed commit on release/dev above a main commit, whose only change is image.tag in
+# values/dev.yaml, pinned by digest. So what runs is what the tag points at, and a merge to main
+# changes nothing until someone promotes it. `make argocd-install ENV=dev` applies this with
+# server-side apply, and refuses until the tag exists.
 #
 # - helm.releaseName: andara, so every name and label derived from .Release.Name renders
 #   as it does under `make helm-install`, and the move from the Helm release adopts the
 #   same objects rather than renaming them.
-# - No helm.parameters here. Image Updater owns image.tag on the live Application
-#   (andara-dev-image-updater.yaml); argocd-install seeds it with `dev@<digest>` before
-#   automated sync is on, so the first render is already pinned.
-# - Not managed, so a sync never prunes them: the shared Kafka in andara-shared and dev's
-#   topics on it (`make shared-up`, AW-INF-055), the two Secrets (`make argocd-install ENV=dev`), the snapshot
+# - No helm.parameters: everything the render takes is in the tagged commit.
+# - Not managed, so a sync never prunes them: the broker and its topics (the shared one in
+#   andara-shared, AW-INF-055), the two Secrets (`make argocd-install ENV=dev`), the snapshot
 #   PVC (a volumeClaimTemplate), and the cluster platform.
 # - The state projector's replica count is the operator's (AW-INF-025): `make projector-stop`
 #   holds it at 0 until `projector-start`, and selfHeal would otherwise undo that within
@@ -27,7 +27,7 @@ spec:
   project: default
   source:
     repoURL: https://github.com/valesordev/andara.valesordev.com
-    targetRevision: main
+    targetRevision: dev
     path: deploy/helm/andara
     helm:
       releaseName: andara

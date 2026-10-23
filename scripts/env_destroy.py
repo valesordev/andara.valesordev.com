@@ -87,7 +87,6 @@ def remove_application(ns):
     kubectl("-n", ARGO_NS, "patch", "application", ns, "--type", "merge", "-p",
             json.dumps({"metadata": {"finalizers": None}}))
     kubectl("-n", ARGO_NS, "delete", "application", ns, "--wait=true")
-    kubectl("-n", ARGO_NS, "delete", "imageupdater", ns, "--ignore-not-found", check=False)
     say("removed the Argo CD application %s without cascading" % ns)
 
 

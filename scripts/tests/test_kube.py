@@ -315,13 +315,13 @@ class Sweep(Workdir):
 
     def test_the_sweep_covers_every_script_that_calls_kubectl_or_helm(self):
         """AC-6: the grep's files, less the helpers, cluster.py (fixed to andara and tested in
-        test_cluster.py), the offline helm template callers and the scripts that need Grafana Cloud
-        or a running server before their first call (each one's kubectl goes through kube.py, which
-        kube_check.py enforces)."""
+        test_cluster.py), the offline helm template callers and the scripts that need Grafana Cloud,
+        a running server, or a signed push to origin (promote.py) before their first call (each
+        one's kubectl goes through kube.py, which kube_check.py enforces)."""
         offline = {"k8s_dry.sh", "helm_test.py", "values_schema.py", "helm_image_args.sh", "bootstrap.sh",
                    "measure_tick.sh"}
         elsewhere = {"cluster.py", "content_seed.sh", "env_recover.py", "observe_check.py",
-                     "observe_unavailable.py"}
+                     "observe_unavailable.py", "promote.py"}
         helpers = {"kube.py", "kube.sh", "kube_check.py"}
         swept = {name.split()[0] for name, _ in SWEEP}
         sdir = os.path.join(REPO, "scripts")

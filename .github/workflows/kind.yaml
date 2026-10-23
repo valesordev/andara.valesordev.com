@@ -270,9 +270,9 @@ jobs:
           kubectl --context "$ANDARA_KUBE_CONTEXT" delete ns andara-probe --wait=false
       - name: stream soak through the edge, renewal mid-stream (AC-1, AC-3)
         run: make stream-soak ENV=local SOAK=${{ github.event_name == 'schedule' && '60m' || '5m' }}
-      # AW-INF-019, the install and render half. The follow-main loop needs `publish` and
-      # is recorded on the box instead. AC-1: Argo CD and Image Updater at the pinned
-      # versions, and a second run that changes nothing.
+      # AW-INF-019, the install and render half. A promotion needs `publish` and a signing
+      # key, and is recorded on the box instead (AW-INF-059). AC-1: Argo CD at the pinned
+      # version, and a second run that changes nothing.
       - name: argocd-install twice, the second a no-op (AW-INF-019 AC-1)
         run: |
           set -euo pipefail
@@ -281,7 +281,7 @@ jobs:
           make argocd-install | tee /tmp/second.txt
           after="$(helm --kube-context "$ANDARA_KUBE_CONTEXT" list -n argocd -o json | python3 -c 'import json,sys; print(sorted((r["name"], r["revision"]) for r in json.load(sys.stdin)))')"
           [ "$before" = "$after" ] || { echo "::error::the second argocd-install changed a release: $before -> $after"; exit 1; }
-          [ "$(grep -c 'already installed' /tmp/second.txt)" = 2 ]
+          [ "$(grep -c 'already installed' /tmp/second.txt)" = 1 ]
       # The committed Application, pointed at this commit with local's values (no broker,
       # the kind-loaded image), adopting the andara release the steps above installed: the
       # same adoption dev's move makes. Synced/Healthy within the deadline, and the pod the
