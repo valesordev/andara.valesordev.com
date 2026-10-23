@@ -62,12 +62,15 @@ class Refusals(unittest.TestCase):
 class FailsClosed(unittest.TestCase):
     """Preconditions stop the reset before anything on the cluster changes (Codex on #165)."""
 
-    def fake(self, argo_err=None, store=""):
+    def fake(self, argo_err=None, store="", no_server=False):
         calls = []
 
         def kubectl(ns, *args, check=True):
             calls.append(args)
-            if args[:2] == ("get", "application"):
+            if no_server and args[:2] == ("get", world_reset.SERVER):
+                p = types.SimpleNamespace(returncode=1, stdout="",
+                                          stderr='Error from server (NotFound): statefulsets.apps "andara" not found')
+            elif args[:2] == ("get", "application"):
                 if argo_err:
                     p = types.SimpleNamespace(returncode=1, stdout="", stderr=argo_err)
                 else:
@@ -94,6 +97,14 @@ class FailsClosed(unittest.TestCase):
     def test_an_unreadable_application_stops_before_any_change(self):
         msg, changed = self.run_reset(argo_err='Error from server (Forbidden): applications is forbidden')
         self.assertIn("only NotFound counts as none", msg)
+        self.assertEqual(changed, [])
+
+    def test_a_namespace_with_no_release_names_helm_install_before_any_change(self):
+        # Brian on kind-andara, 2026-10-23: right after shared-up, andara-local has no release, and
+        # the reset failed on `kubectl get configmap andara-config` NotFound.
+        msg, changed = self.run_reset(no_server=True, store="fs")
+        self.assertIn("no statefulset/andara in andara-dev", msg)
+        self.assertIn("run `make helm-install ENV=dev` first; nothing was changed", msg)
         self.assertEqual(changed, [])
 
     def test_an_unknown_snapshot_store_stops_before_any_change(self):
