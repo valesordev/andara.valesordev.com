@@ -11,15 +11,15 @@ run "pipelines" {
   command = plan
 
   assert {
-    condition     = grafana_fleet_management_pipeline.shared_kafka.name == "shared-kafka"
-    error_message = "solo7dev: the pipeline is not named shared-kafka."
+    condition     = grafana_fleet_management_pipeline.shared_kafka.name == "shared_kafka"
+    error_message = "solo7dev: the pipeline is not named shared_kafka."
   }
   assert {
     condition     = grafana_fleet_management_pipeline.shared_kafka.matchers == tolist(["stack=\"solo7dev\""])
-    error_message = "solo7dev: shared-kafka must be matched on stack alone, stack=\"solo7dev\"."
+    error_message = "solo7dev: shared_kafka must be matched on stack alone, stack=\"solo7dev\"."
   }
   assert {
     condition     = grafana_fleet_management_pipeline.shared_kafka.enabled
-    error_message = "solo7dev: shared-kafka is not enabled."
+    error_message = "solo7dev: shared_kafka is not enabled."
   }
 }

@@ -4,8 +4,8 @@
 # same resources from the same sources in AW-INF-078.
 
 resource "grafana_fleet_management_pipeline" "shared_kafka" {
-  name                       = "shared-kafka"
-  contents                   = file("${path.module}/../../pipelines/shared-kafka.alloy")
+  name                       = "shared_kafka"
+  contents                   = file("${path.module}/../../pipelines/shared_kafka.alloy")
   matchers                   = ["stack=\"${var.stack}\""]
   enabled                    = true
   terraform_source_namespace = var.stack

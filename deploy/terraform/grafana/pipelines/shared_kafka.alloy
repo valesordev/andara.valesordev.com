@@ -1,4 +1,4 @@
-// shared-kafka (ADR-0014 §3 and §6, AW-INF-051): the andara-shared brokers' own metrics, from the
+// shared_kafka (ADR-0014 §3 and §6, AW-INF-051): the andara-shared brokers' own metrics, from the
 // Strimzi Metrics Reporter on :9404, forwarded into the k8s-monitoring chart's receiver. The chart's
 // destination stamps environment and applies keep-list.yaml (AW-INF-065), so this pipeline sets only
 // namespace and job, and names no endpoint but the receiver and no credential.

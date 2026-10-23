@@ -844,7 +844,7 @@ integration, one schedule (Brian alone) and one escalation chain, managed by Ter
 Fleet Management's pipelines. They ship `andara-local` and `andara-dev` to `solo7dev` (ADR-0014); compose is retired.
 
 **Fleet Management (Grafana Fleet Management)** — Grafana Cloud's service that delivers configuration to
-registered collectors. Here it carries only the collection of `andara-shared`'s services (today `shared-kafka`),
+registered collectors. Here it carries only the collection of `andara-shared`'s services (today `shared_kafka`),
 deployed through Terraform per stack, on the one `fleet` collector. Its pipelines forward to the chart's `receiver`,
 so the chart's destinations stamp `environment` (a series nothing stamped carries `environment="unknown"`) and apply
 the keep-list (ADR-0014).
