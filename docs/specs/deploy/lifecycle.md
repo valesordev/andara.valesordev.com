@@ -32,8 +32,10 @@ period's budget for it is spent. A `prestop` that times out or fails therefore l
 complete round as the recovery point: the replay is longer, never wrong. That is usually the round before
 pre-stop's. It is pre-stop's own when the round completed but its tag did not. A tag cut short leaves
 `deploy:<tag>` on some of the round's objects, so `ListSnapshotRounds` names no round by it (Round tags) and the next
-boot correlates no `deploy_id`, while retention counts that round as tagged. Nothing deletes the partial tag:
-`WorldStore` has no Delete, and the cost is one `snapshot.keep_deploy_rounds` slot. *(2026-10-23, `AW-SRV-054` §8.)*
+boot correlates no `deploy_id`, while retention counts that round as tagged. Pre-stop doesn't remove the partial
+tag (its store is a `sim.WorldStore`, which has no Delete). Retention deletes it with the round, and
+`make snapshot-tag` naming that round completes it. Until then it holds one `snapshot.keep_deploy_rounds` slot.
+*(2026-10-23, `AW-SRV-054` §8.)*
 
 A pre-stop that arrives while a periodic round is in flight waits for it (one round at a time), and the two
 rounds share pre-stop's one `snapshot.upload_timeout` budget, which the grace bound (Configuration) counts once.
