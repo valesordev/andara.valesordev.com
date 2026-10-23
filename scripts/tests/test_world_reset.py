@@ -56,13 +56,7 @@ class Refusals(unittest.TestCase):
     def test_local_on_the_cluster_passes_the_refusals(self):
         self.assertEqual(world_reset.check_args(["local", "andara-local", "--broker", "cluster"]),
                          ("local", "andara-local", "cluster"))
-        # dev passes once its values point at the shared Kafka (AW-INF-059); before, it's refused.
-        with mock.patch.object(world_reset.shared, "on_shared", lambda env: True):
-            self.assertEqual(world_reset.check_args(["dev", "andara-dev"]), ("dev", "andara-dev", "cluster"))
-        with mock.patch.object(world_reset.shared, "on_shared", lambda env: False), \
-                self.assertRaises(SystemExit) as e:
-            world_reset.check_args(["dev", "andara-dev"])
-        self.assertEqual(e.exception.code, 2)
+        self.assertEqual(world_reset.check_args(["dev", "andara-dev"]), ("dev", "andara-dev", "cluster"))
 
 
 class FailsClosed(unittest.TestCase):

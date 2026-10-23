@@ -30,8 +30,7 @@ the Deployment's pods. It keeps `app.kubernetes.io/name=andara`, which the broke
 NetworkPolicy admits.
 
 Progress goes to stderr as `projector-<cmd>: <step>`; the final line names the outcome and the
-elapsed time. Exit codes: 0 done; 1 a precondition, a step or a bound failed; 2 usage or refusal
-(ENV=dev before AW-INF-059); 3 deploy/helm/values/dev.yaml can't be read.
+elapsed time. Exit codes: 0 done; 1 a precondition, a step or a bound failed; 2 usage.
 """
 
 import json
@@ -43,7 +42,6 @@ import time
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 import kube  # noqa: E402
-import shared  # noqa: E402
 import topics  # noqa: E402
 
 DEPLOYMENT = "andara-projector-state"
@@ -224,18 +222,6 @@ def main(argv):
     if env not in ("dev", "prod"):
         return usage("ENV=%s: the projector runs on dev or prod only" % env)
     ns = "andara-" + env
-    # stop and rebuild read the projector's group on the shared Kafka, which dev's server doesn't
-    # use until AW-INF-059 points its values there. A group that isn't there reads as drained,
-    # so they refuse rather than misjudge it (AW-INF-055).
-    if cmd in ("stop", "rebuild") and env == "dev":
-        try:
-            ready = shared.on_shared(env)
-        except shared.Unreadable as e:
-            print("projector-%s: %s" % (cmd, e), file=sys.stderr)
-            return 3
-        if not ready:
-            return usage("values/dev.yaml doesn't point at the shared Kafka yet; projector-%s ENV=dev "
-                         "waits for AW-INF-059" % cmd)
     try:
         if cmd == "stop":
             out = stop(env, ns, topics.rpk_runner(env))

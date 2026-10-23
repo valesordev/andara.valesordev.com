@@ -256,7 +256,7 @@ scripts-test:
 	@kubeconfig="$$(mktemp)"
 	trap 'rm -f "$$kubeconfig"' EXIT
 	cp $(SCRIPTS)/tests/fixtures/kubeconfig "$$kubeconfig"
-	KUBECONFIG="$$kubeconfig" env -u ANDARA_KUBE_CONTEXT -u ANDARA_TEST_GATE_VALUES_DIR $(PY) -m unittest discover -s $(SCRIPTS)/tests
+	KUBECONFIG="$$kubeconfig" env -u ANDARA_KUBE_CONTEXT $(PY) -m unittest discover -s $(SCRIPTS)/tests
 
 ## builder-reference: regenerate the Builder's Guide reference tables from andara-cli content reference
 builder-reference:

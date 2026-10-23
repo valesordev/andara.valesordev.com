@@ -35,8 +35,7 @@ Steps, in order, each named on failure:
   6. Both scale back to what they were, and the server is waited on until Ready.
 Projector steps are skipped with a line saying so while the environment runs no projector.
 
-Exit codes: 0 reset; 1 a step failed; 2 usage or refusal (ENV=dev before AW-INF-059); 3
-deploy/helm/values/dev.yaml can't be read.
+Exit codes: 0 reset; 1 a step failed; 2 usage or refusal.
 """
 
 import json
@@ -49,7 +48,6 @@ sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 import kube  # noqa: E402
 import objectstore  # noqa: E402
 import projector  # noqa: E402
-import shared  # noqa: E402
 import topics  # noqa: E402
 
 # Named explicitly: a topic added to topics.yaml later is kept unless it's added here. Never
@@ -126,17 +124,6 @@ def check_args(argv):
         refuse("CONFIRM is missing; it must be the namespace, %s" % ns)
     if confirm != ns:
         refuse("CONFIRM=%s is not the namespace %s" % (confirm, ns))
-    if env == "dev":
-        # dev's topics on the shared Kafka are the ones this resets, and dev's server reads them
-        # only once AW-INF-059 points its values there: before that a reset would empty the
-        # snapshot store and leave the World the server reads untouched.
-        try:
-            ready = shared.on_shared(env)
-        except shared.Unreadable as e:
-            print("world-reset: %s" % e, file=sys.stderr)
-            sys.exit(3)
-        if not ready:
-            refuse("values/dev.yaml doesn't point at the shared Kafka yet; world-reset ENV=dev waits for AW-INF-059")
     return env, ns, broker or "cluster"
 
 

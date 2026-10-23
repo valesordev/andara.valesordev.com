@@ -6,7 +6,6 @@
 
     scripts/shared.py check            make shared-check
     scripts/shared.py down <confirm>   make shared-down CONFIRM=andara-shared
-    scripts/shared.py on-shared <env>  exit 0 when deploy/helm/values/<env>.yaml points at the shared Kafka
 
 `check` is the residual control for what sharing costs: one environment can fill the brokers'
 disks for both. It prints every PVC in andara-shared with its use against its size, and exits 1
@@ -29,8 +28,7 @@ is the namespace. The namespace itself stays: `make platform-up` creates it for 
 Resetting or destroying andara-local or andara-dev never reaches it.
 
 Every line is `shared: …`. Exit codes: 0 ok; 1 a PVC over the threshold, a stray topic, or a
-failed step; 2 usage or refusal; 3 the cluster context or kubectl missing. `on-shared`: 0 yes,
-1 no, 3 the values file can't be read.
+failed step; 2 usage or refusal; 3 the cluster context or kubectl missing.
 """
 
 import json
@@ -42,15 +40,11 @@ import sys
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 import kube  # noqa: E402
-import yaml  # noqa: E402
 import topics  # noqa: E402
 
 REPO = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 KAFKA = "andara-log"
 KAFKA_MANIFESTS = os.path.join(REPO, "deploy", "k8s", "kafka")
-VALUES_DIR = os.path.join(REPO, "deploy", "helm", "values")
-SHARED_BOOTSTRAP = "andara-log-kafka-bootstrap.andara-shared.svc:9092"
-TEST_VALUES_ENV = "ANDARA_TEST_GATE_VALUES_DIR"
 THRESHOLD = 80
 # The integration suite's own topics (ADR-0013 amendment 17): reported, never a stray.
 SUITE = re.compile(r"^(andara\.test\.|it[0-9]+\.)")
@@ -67,10 +61,6 @@ class Usage(Exception):
 
 
 class Missing(Exception):
-    code = 3
-
-
-class Unreadable(Exception):
     code = 3
 
 
@@ -259,46 +249,8 @@ def down(confirm, ns=None, run=subprocess.run):
     say("deleted kafka/%s's PVCs in %s; the namespace stays (platform-up's)" % (KAFKA, ns))
 
 
-def on_shared(env, values_dir=None):
-    """Whether `env`'s chart values point the server at the shared Kafka. dev's don't until
-    AW-INF-059 moves its broker and its prefix together, and until then every path that
-    deploys dev against the shared broker refuses rather than ship a server that can't reach
-    a broker (AW-INF-055).
-
-    It reads the working tree's values file. Argo CD syncs main's (deploy/argocd/andara-dev.yaml),
-    so on AW-INF-059's own branch, before it merges, argocd-install passes while Argo would still
-    sync the old values: deploy dev only once 059 has merged.
-
-    TEST_VALUES_ENV replaces deploy/helm/values as this gate's input and nothing else's. It is
-    how the tests present a dev from after AW-INF-059, and `make scripts-test` unsets it from the
-    caller's shell. Raises Unreadable for a values file that isn't a YAML mapping."""
-    values_dir = values_dir or os.environ.get(TEST_VALUES_ENV) or VALUES_DIR
-    path = os.path.join(values_dir, env + ".yaml")
-    try:
-        with open(path) as f:
-            values = yaml.safe_load(f) or {}
-    except OSError:
-        return False
-    except (yaml.YAMLError, ValueError) as e:
-        # ValueError covers a file that isn't UTF-8 (UnicodeDecodeError).
-        raise Unreadable("can't read %s: %s" % (path, e))
-    if not isinstance(values, dict):
-        raise Unreadable("can't read %s: not a YAML mapping" % path)
-    kafka = (values.get("server") or {}).get("kafka") if isinstance(values.get("server"), dict) else None
-    return isinstance(kafka, dict) and kafka.get("brokers") == SHARED_BOOTSTRAP
-
-
 def main(argv):
     cmd, args = (argv[0], argv[1:]) if argv else ("", [])
-    if cmd == "on-shared" and len(args) == 1:
-        # Offline: exit 0 when the values point at the shared Kafka, 1 when they don't, 3 when
-        # the values file can't be read.
-        # 1 must mean only "not on the shared Kafka": any other failure is 3.
-        try:
-            return 0 if on_shared(args[0]) else 1
-        except Exception as e:  # noqa: BLE001
-            print("shared: on-shared %s: %s" % (args[0], e), file=sys.stderr)
-            return 3
     try:
         if cmd == "check" and not args:
             if shutil.which("kubectl") is None:

@@ -17,7 +17,7 @@
 # (ADR-0013 decision 10), so the environments are local and dev.
 #
 # Exit: 0 ok · 1 a step failed, or the bounce degraded the server · 2 bad usage or env ·
-# 3 a tool or the cluster context is missing, or deploy/helm/values/<env>.yaml can't be read.
+# 3 a tool or the cluster context is missing.
 set -euo pipefail
 
 REPO="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
@@ -154,14 +154,6 @@ bounce() {
   # it does touches the brokers, and a bounce would prove nothing while passing.
   [[ "$env" != local ]] \
     || die kafka-broker-bounce "local's server doesn't use the broker yet (sim.source: memory, AW-INF-060); ENV=dev" 2
-  # Likewise dev, until AW-INF-059 points its values at the shared Kafka: a bounce of brokers
-  # its server doesn't use would pass proving nothing.
-  local gate=0
-  "$PY" scripts/shared.py on-shared "$env" || gate=$?
-  ((gate != 1)) \
-    || die kafka-broker-bounce "values/$env.yaml doesn't point at the shared Kafka yet (AW-INF-059); the bounce would prove nothing" 2
-  # 3: the values file can't be read, and on-shared has said why.
-  ((gate == 0)) || exit 3
   ns="andara-$env"
   need kubectl
   kube_require kafka-broker-bounce
