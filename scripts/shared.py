@@ -369,7 +369,9 @@ def netcheck(ns=None, run=subprocess.run, sleep=None, clock=None, suffix=None, i
             ok = verdict == want
             say("netcheck: %s %s: %s (want %s)" % ("ok" if ok else "FAIL", what, verdict, want))
             if not ok:
-                (unproven if verdict == "unanchored" else failed).append(what)
+                # Only an absence needs its anchor: an admitted pod that never connected fails AC-5
+                # whatever the reason, while a refusal without one proves nothing about the policy.
+                (unproven if want == "blocked" and verdict == "unanchored" else failed).append(what)
         msgs = []
         if failed:
             msgs.append("the listener's NetworkPolicy is not as kafka.yaml declares: %s" % "; ".join(failed))

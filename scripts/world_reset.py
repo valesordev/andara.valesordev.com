@@ -89,7 +89,15 @@ def kubectl(ns, *args, check=True):
 
 
 def exists(ns, ref):
-    return kubectl(ns, "get", ref, "-o", "name", check=False).returncode == 0
+    """Whether ref is there. Only a confirmed NotFound is "no"; any other error raises, so a
+    Forbidden or a timeout can't skip the steps that ref would need."""
+    p = kubectl(ns, "get", ref, "-o", "name", check=False)
+    if p.returncode == 0:
+        return True
+    err = (p.stderr or p.stdout).strip()
+    if "NotFound" in err:
+        return False
+    raise StepFailed("read %s in %s (only NotFound counts as none): %s" % (ref, ns, err))
 
 
 def replicas(ns, ref):
@@ -210,7 +218,8 @@ def reset(env, ns, broker="cluster"):
             raise StepFailed("read %s in %s (only NotFound counts as none): %s; nothing was changed"
                              % (SERVER, ns, err))
         install = ("`make helm-install ENV=local`" if env == "local"
-                   else "`make promote ENV=%s` and `make argocd-install ENV=%s`" % (env, env))
+                   else "`make argocd-install ENV=%s`, after `make promote ENV=%s SHA=<main sha>` if the "
+                        "`%s` tag doesn't exist yet" % (env, env, env))
         raise StepFailed("no server release in %s (%s not found), and world-reset needs one: it scales "
                          "the server and reads andara-config. Install it first (%s); nothing was changed"
                          % (ns, SERVER, install))

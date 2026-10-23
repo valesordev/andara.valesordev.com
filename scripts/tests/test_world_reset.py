@@ -64,13 +64,15 @@ class FailsClosed(unittest.TestCase):
 
     NOT_FOUND = 'Error from server (NotFound): statefulsets.apps "andara" not found'
 
-    def fake(self, argo_err=None, store="", server_err=None):
+    def fake(self, argo_err=None, store="", server_err=None, projector_err=None):
         calls = []
 
         def kubectl(ns, *args, check=True):
             calls.append(args)
             if server_err and args[:2] == ("get", world_reset.SERVER):
                 p = types.SimpleNamespace(returncode=1, stdout="", stderr=server_err)
+            elif projector_err and args[:2] == ("get", world_reset.PROJECTOR):
+                p = types.SimpleNamespace(returncode=1, stdout="", stderr=projector_err)
             elif args[:2] == ("get", "application"):
                 if argo_err:
                     p = types.SimpleNamespace(returncode=1, stdout="", stderr=argo_err)
@@ -109,9 +111,16 @@ class FailsClosed(unittest.TestCase):
         self.assertEqual(changed, [])
         # dev's release is Argo CD's, from the promoted tag; a bare helm-install refuses without TAG=.
         msg, changed = self.run_reset(server_err=self.NOT_FOUND, store="fs")
-        self.assertIn("`make promote ENV=dev` and `make argocd-install ENV=dev`", msg)
+        self.assertIn("`make argocd-install ENV=dev`, after `make promote ENV=dev SHA=<main sha>` if the `dev` tag", msg)
         self.assertNotIn("helm-install", msg)
         self.assertEqual(changed, [])
+
+    def test_an_unreadable_projector_stops_before_the_server_scales(self):
+        # Read as "no projector", a Forbidden would skip projector-stop and reset under a live projector.
+        msg, changed = self.run_reset(projector_err="Error from server (Forbidden): deployments.apps is forbidden",
+                                      store="fs")
+        self.assertIn("read %s in andara-dev (only NotFound counts as none)" % world_reset.PROJECTOR, msg)
+        self.assertFalse([c for c in changed if c[0] == "scale"])
 
     def test_an_unreadable_server_is_reported_as_it_is_not_as_no_release(self):
         msg, changed = self.run_reset(server_err="Error from server (Forbidden): statefulsets.apps is forbidden",

@@ -6,6 +6,7 @@ import contextlib
 import io
 import json
 import os
+import shutil
 import subprocess
 import sys
 import types
@@ -278,6 +279,8 @@ class FakeNet:
         raise AssertionError("unexpected kubectl %r" % (args,))
 
 
+@unittest.skipUnless(shutil.which("getent") and shutil.which("timeout") and shutil.which("bash"),
+                     "the probe script needs getent, timeout and bash, as the toolbox image has")
 class ProbeScript(unittest.TestCase):
     """NET_SCRIPT itself, run locally by bash in place of `kubectl exec`: the anchoring is the
     shell's, so a canned output can't test it (pre-review round 2)."""
@@ -302,13 +305,13 @@ class ProbeScript(unittest.TestCase):
         return shared.probe_once("ns", "pod", host, run=self.local, anchor="127.0.0.1/" + anchor_port, port=port)
 
     def test_connected(self):
-        self.assertEqual(self.probe("localhost", self.open, self.open), "connected")
+        self.assertEqual(self.probe("127.0.0.1", self.open, self.open), "connected")
 
     def test_blocked_when_it_resolved_and_reached_the_anchor(self):
-        self.assertEqual(self.probe("localhost", self.open, self.closed), "blocked")
+        self.assertEqual(self.probe("127.0.0.1", self.open, self.closed), "blocked")
 
     def test_unanchored_when_the_anchor_is_unreachable(self):
-        self.assertEqual(self.probe("localhost", self.closed, self.closed), "unanchored")
+        self.assertEqual(self.probe("127.0.0.1", self.closed, self.closed), "unanchored")
 
     def test_unanchored_when_the_host_doesnt_resolve(self):
         self.assertEqual(self.probe("no-such-host.invalid", self.open, self.closed), "unanchored")
@@ -369,16 +372,21 @@ class NetCheck(unittest.TestCase):
         code, out, err = self.run_net(net)
         self.assertEqual(code, 1)
         self.assertIn("FAIL an andara pod in an unlabelled namespace: connected (want blocked)", out)
-        self.assertIn("an andara pod in an unlabelled namespace", err)
+        self.assertIn("is not as kafka.yaml declares: an andara pod in an unlabelled namespace", err)
+        self.assertNotIn("not proven", err)
         self.assertEqual(len(self.cleanup(net)), 4)
 
     def test_one_connection_in_the_refusal_attempts_fails(self):
-        net = FakeNet({("andara-dev", "andara-netcheck-abc123-other"):
-                       ["probe-ran\nblocked\n", "probe-ran\nconnected\n", "probe-ran\nblocked\n"]})
-        code, out, _ = self.run_net(net)
-        self.assertEqual(code, 1)
-        self.assertIn("FAIL a pod not labelled andara in andara-dev", out)
-        self.assertEqual(net.execs[("andara-dev", "andara-netcheck-abc123-other")], 3)
+        # A connection outranks an unanchored attempt: one connection proves the policy failed.
+        for other in (FakeNet.BLOCKED, "probe-ran\nblocked\n"):
+            net = FakeNet({("andara-dev", "andara-netcheck-abc123-other"):
+                           [other, "probe-ran\nresolved\nanchored\nconnected\n", other]})
+            code, out, err = self.run_net(net)
+            self.assertEqual(code, 1)
+            self.assertIn("FAIL a pod not labelled andara in andara-dev: connected (want blocked)", out)
+            self.assertIn("is not as kafka.yaml declares: a pod not labelled andara in andara-dev", err)
+            self.assertNotIn("not proven", err)
+            self.assertEqual(net.execs[("andara-dev", "andara-netcheck-abc123-other")], 3)
 
     def test_an_admitted_probe_is_polled_to_its_deadline(self):
         # blocked twice, then connected: the policy lagged the pod's readiness
@@ -391,6 +399,15 @@ class NetCheck(unittest.TestCase):
         self.assertEqual(code, 1)
         self.assertIn("FAIL an andara pod in andara-dev: blocked (want connected)", out)
         self.assertGreater(net.execs[("andara-dev", "andara-netcheck-abc123")], 1)
+
+    def test_an_admitted_probe_that_never_connects_fails_ac5_even_unanchored(self):
+        # The anchor backs an absence, not a presence: an admitted pod that can't connect fails.
+        net = FakeNet({("andara-local", "andara-netcheck-abc123"): ["probe-ran\nblocked\n"]})
+        code, out, err = self.run_net(net, deadline=10)
+        self.assertEqual(code, 1)
+        self.assertIn("FAIL an andara pod in andara-local: unanchored (want connected)", out)
+        self.assertIn("is not as kafka.yaml declares: an andara pod in andara-local", err)
+        self.assertNotIn("not proven", err)
 
     def test_a_probe_that_never_ran_is_not_a_refusal(self):
         net = FakeNet({("scratch", "andara-netcheck-abc123"): [""]})
