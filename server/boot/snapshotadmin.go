@@ -116,7 +116,9 @@ func (a *SnapshotAdmin) TagSnapshotRound(ctx context.Context, req *adminv1.TagSn
 		return nil, &snapshotStatus{codeFailedPrecondition, "tags_unsupported", "the snapshot store holds no tags"}
 	}
 	sw := a.rt.snapshotSweeper()
-	sw.Lock()
+	if err := sw.Lock(ctx); err != nil {
+		return nil, err
+	}
 	res, err := store.TagRoundAt(ctx, ts, a.rt.listedZones(), a.rt.zonesAt(), req.GetName(), sim.Tick(req.GetTick()))
 	sw.Unlock()
 	if err != nil {
@@ -149,7 +151,17 @@ func tagStatus(err error, tick uint64) error {
 	case errors.Is(err, store.ErrRoundNotFound):
 		return &snapshotStatus{codeNotFound, "round_not_found", fmt.Sprintf("round %d not found", tick)}
 	case errors.As(err, &ri), errors.As(err, &rc), errors.As(err, &rz):
-		return &snapshotStatus{codeFailedPrecondition, "round_incomplete", fmt.Sprintf("round %d is not complete: %s", tick, err)}
+		// The round's own tick: a request for the newest (tick 0) names none.
+		at := tick
+		switch {
+		case ri != nil:
+			at = uint64(ri.Tick)
+		case rc != nil:
+			at = uint64(rc.Tick)
+		case rz != nil:
+			at = uint64(rz.Tick)
+		}
+		return &snapshotStatus{codeFailedPrecondition, "round_incomplete", fmt.Sprintf("round %d is not complete: %s", at, err)}
 	case errors.As(err, &sv):
 		return &snapshotStatus{codeFailedPrecondition, "state_version", err.Error()}
 	}

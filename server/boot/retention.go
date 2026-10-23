@@ -96,10 +96,7 @@ func (rt *Runtime) RunSnapshotRetention(ctx context.Context) {
 // sweepSnapshots runs one sweep and reports it: an info line with what it did,
 // or an error line for a store error, after which the next sweep tries again.
 func (rt *Runtime) sweepSnapshots(ctx context.Context, ts store.TagStore, m *RetentionMetrics, now time.Time) {
-	sw := rt.snapshotSweeper()
-	sw.Lock()
-	res, err := sw.Sweep(ctx, ts, rt.listedZones(), rt.zonesAt(), rt.retentionPolicy(), now)
-	sw.Unlock()
+	res, err := rt.snapshotSweeper().Sweep(ctx, ts, rt.listedZones(), rt.zonesAt(), rt.retentionPolicy(), now)
 	if err != nil {
 		if ctx.Err() != nil {
 			return

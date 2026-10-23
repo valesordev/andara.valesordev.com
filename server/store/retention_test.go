@@ -373,3 +373,124 @@ func TestSweeperRemembersRoundDates(t *testing.T) {
 		t.Fatalf("second sweep read %d objects, want %d (the newest complete round)", got, want)
 	}
 }
+
+// A round being written when one sweep runs is not remembered as incomplete:
+// once its last object lands, the next sweep keeps it as the newest complete.
+func TestSweeperRechecksANewestRoundCaughtMidWrite(t *testing.T) {
+	t.Parallel()
+	f := retentionFixture(t, 3, minutes)
+	sw := store.NewSweeper()
+	p := store.Retention{KeepRounds: 10, KeepTagged: 0}
+	if _, err := f.e.Step(simtest.Batch(f.remain, 2)); err != nil {
+		t.Fatal(err)
+	}
+	snaps := f.e.SnapshotAll(sweepNow.UnixNano())
+	writeRound(t, f.fs, snaps[1:])
+	res, err := sw.Sweep(context.Background(), f.fs, f.owned, nil, p, sweepNow)
+	if err != nil || res.NewestComplete != f.ticks[2] {
+		t.Fatalf("mid-write: newest complete %d, %v; want %d", res.NewestComplete, err, f.ticks[2])
+	}
+	writeRound(t, f.fs, snaps[:1])
+	res, err = sw.Sweep(context.Background(), f.fs, f.owned, nil, p, sweepNow)
+	if err != nil || res.NewestComplete != f.e.Tick() {
+		t.Fatalf("written: newest complete %d, %v; want %d", res.NewestComplete, err, f.e.Tick())
+	}
+}
+
+// staleTags lists a Zone's tags as they were before any tag was written: what a
+// sweep sees when a tag lands after it listed.
+type staleTags struct{ *store.FS }
+
+func (staleTags) ZoneTags(context.Context, sim.ZoneID) (map[string][]string, error) {
+	return map[string][]string{}, nil
+}
+
+// A round tagged after the sweep listed it untagged is kept, tag and all: the
+// sweep reads a round's tags again, under the lock, before it deletes it.
+func TestSweepKeepsARoundTaggedAfterItWasListed(t *testing.T) {
+	t.Parallel()
+	f := retentionFixture(t, 4, minutes)
+	f.tag(t, f.ticks[0], "deploy:late")
+	res, err := store.NewSweeper().Sweep(context.Background(), staleTags{f.fs}, f.owned, nil, store.Retention{KeepRounds: 1}, sweepNow)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if want := pick(f.ticks, 0, 3); !slices.Equal(f.left(t), want) {
+		t.Fatalf("left %v, want %v", f.left(t), want)
+	}
+	if res.Deleted != 2 || res.KeptTagged != 1 || res.KeptUntagged != 1 {
+		t.Fatalf("result %+v, want 2 deleted, 1 tagged and 1 untagged kept", res)
+	}
+	rounds, err := store.ListRounds(context.Background(), f.fs, f.owned, nil)
+	if err != nil || !slices.Equal(rounds[len(rounds)-1].Tags, []string{"deploy:late"}) {
+		t.Fatalf("the late tag: %+v %v", rounds, err)
+	}
+}
+
+// A file under a tag directory that isn't a tag name is no tag to either
+// reader, so it neither keeps a round nor stops the sweep deleting it.
+func TestSweepIgnoresAFileThatIsNotATag(t *testing.T) {
+	t.Parallel()
+	f := retentionFixture(t, 3, minutes)
+	rounds, err := store.ListRounds(context.Background(), f.fs, f.owned, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	oldest := rounds[len(rounds)-1]
+	stray := filepath.Join(f.fs.Root, filepath.FromSlash(oldest.Zones[0].Key)+".tag", "notes.txt")
+	if err := os.MkdirAll(filepath.Dir(stray), 0o750); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(stray, nil, 0o600); err != nil {
+		t.Fatal(err)
+	}
+	f.sweep(t, store.Retention{KeepRounds: 2})
+	if want := pick(f.ticks, 1, 2); !slices.Equal(f.left(t), want) {
+		t.Fatalf("left %v, want %v", f.left(t), want)
+	}
+}
+
+// The lock a tag waits on gives up with the tag's context.
+func TestSweeperLockHonoursTheContext(t *testing.T) {
+	t.Parallel()
+	sw := store.NewSweeper()
+	if err := sw.Lock(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), 20*time.Millisecond)
+	defer cancel()
+	if err := sw.Lock(ctx); !errors.Is(err, context.DeadlineExceeded) {
+		t.Fatalf("a held lock: %v, want the context's deadline", err)
+	}
+	sw.Unlock()
+	if err := sw.Lock(context.Background()); err != nil {
+		t.Fatalf("after Unlock: %v", err)
+	}
+}
+
+// Reading the store while a sweep deletes from it: a directory the sweep
+// prunes mid-walk is an empty one, not an unavailable store.
+func TestListRoundsWhileASweepDeletes(t *testing.T) {
+	t.Parallel()
+	for attempt := range 20 {
+		f := retentionFixture(t, 40, minutes)
+		done := make(chan error, 1)
+		go func() {
+			_, err := store.NewSweeper().Sweep(context.Background(), f.fs, f.owned, nil, store.Retention{KeepRounds: 1}, sweepNow)
+			done <- err
+		}()
+		for swept := false; !swept; {
+			select {
+			case err := <-done:
+				if err != nil {
+					t.Fatalf("attempt %d: sweep: %v", attempt, err)
+				}
+				swept = true
+			default:
+			}
+			if _, err := store.ListRounds(context.Background(), f.fs, f.owned, nil); err != nil {
+				t.Fatalf("attempt %d: listing during the sweep: %v", attempt, err)
+			}
+		}
+	}
+}

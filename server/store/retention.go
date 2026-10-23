@@ -7,7 +7,6 @@ import (
 	"context"
 	"errors"
 	"fmt"
-	"sync"
 	"time"
 
 	"google.golang.org/protobuf/proto"
@@ -49,11 +48,17 @@ type SweepResult struct {
 // once from one of its objects, because a round's objects never change and a
 // sweep after every snapshot round would otherwise reread the same envelopes.
 //
-// Tagging and sweeping must not interleave: a round tagged after a sweep
-// listed it untagged would be deleted with its new tag. Lock is the lock both
-// take; TagRound callers in the same process hold it too.
+// A round tagged after a sweep listed it untagged must not be deleted with its
+// new tag. Admin.TagSnapshotRound holds Lock while it tags; Sweep takes it
+// round by round, reads the round's tags again under it, and keeps a round
+// that gained one. So a tag waits for one round's deletes at most, never for a
+// whole sweep. AW-SRV-054's pre-stop tags without the lock: it tags the
+// newest round, which the sweep keeps (the newest complete round, or the
+// first of keep_rounds, which is at least 1).
+//
+// One Sweep runs at a time: the retention loop is its only caller.
 type Sweeper struct {
-	sync.Mutex
+	sem chan struct{}
 
 	takenAt    map[roundKey]int64
 	incomplete map[roundKey]bool
@@ -62,11 +67,26 @@ type Sweeper struct {
 
 // NewSweeper returns a Sweeper with nothing remembered.
 func NewSweeper() *Sweeper {
-	return &Sweeper{takenAt: map[roundKey]int64{}, incomplete: map[roundKey]bool{}}
+	return &Sweeper{sem: make(chan struct{}, 1), takenAt: map[roundKey]int64{}, incomplete: map[roundKey]bool{}}
 }
 
+// Lock takes the lock tagging and deleting share, or returns ctx's error if
+// ctx ends first.
+func (s *Sweeper) Lock(ctx context.Context) error {
+	select {
+	case s.sem <- struct{}{}:
+		return nil
+	case <-ctx.Done():
+		return ctx.Err()
+	}
+}
+
+// Unlock releases what Lock took.
+func (s *Sweeper) Unlock() { <-s.sem }
+
 // Sweep applies p to the rounds of the listed Zones at now, deleting what it
-// doesn't keep. The caller holds the Sweeper's lock.
+// doesn't keep. It takes the Sweeper's lock for each round it deletes; the
+// caller doesn't hold it.
 //
 // Newest first, each round is kept or deleted by the first rule that applies:
 // the newest complete round and the pinned round are kept; a round older than
@@ -111,19 +131,24 @@ func (s *Sweeper) Sweep(ctx context.Context, ws TagStore, listed []sim.ZoneID, z
 				keep = false
 			}
 		}
-		if keep {
-			if r.Tagged {
-				res.KeptTagged++
-			} else {
-				res.KeptUntagged++
+		if !keep {
+			deleted, err := s.deleteUntouched(ctx, ws, r, tags)
+			if err != nil {
+				return res, err
 			}
-			continue
+			if deleted {
+				res.Deleted++
+				delete(live, rk)
+				continue
+			}
+			// Tagged since the listing: kept, and decided afresh next sweep.
+			r.Tagged = true
 		}
-		if err := deleteRound(ctx, ws, r, tags); err != nil {
-			return res, err
+		if r.Tagged {
+			res.KeptTagged++
+		} else {
+			res.KeptUntagged++
 		}
-		res.Deleted++
-		delete(live, rk)
 	}
 	for rk := range s.takenAt {
 		if !live[rk] {
@@ -204,6 +229,26 @@ func takenAt(ctx context.Context, ws sim.WorldStore, r Round) int64 {
 		}
 	}
 	return 0
+}
+
+// deleteUntouched deletes r under the lock unless one of its objects gained a
+// tag since tags was listed, and reports whether it did. Tags are only added
+// outside a sweep, so a count that differs is a new tag.
+func (s *Sweeper) deleteUntouched(ctx context.Context, ws TagStore, r Round, tags map[string][]string) (bool, error) {
+	if err := s.Lock(ctx); err != nil {
+		return false, err
+	}
+	defer s.Unlock()
+	for _, ref := range r.Zones {
+		now, err := ws.ListTags(ctx, ref.Key)
+		if err != nil {
+			return false, fmt.Errorf("store: delete round %d: %w", r.Tick, err)
+		}
+		if len(now) != len(tags[ref.Key]) {
+			return false, nil
+		}
+	}
+	return true, deleteRound(ctx, ws, r, tags)
 }
 
 // deleteRound deletes r's tags, then its objects.

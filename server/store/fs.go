@@ -208,7 +208,7 @@ func (f *FS) List(ctx context.Context, zone sim.ZoneID) ([]string, error) {
 		if !tk.IsDir() {
 			continue
 		}
-		versions, err := os.ReadDir(filepath.Join(dir, tk.Name()))
+		versions, err := readDirSwept(filepath.Join(dir, tk.Name()))
 		if err != nil {
 			return nil, fmt.Errorf("%w: list: %w", sim.ErrStoreUnavailable, err)
 		}
@@ -216,7 +216,7 @@ func (f *FS) List(ctx context.Context, zone sim.ZoneID) ([]string, error) {
 			if !v.IsDir() {
 				continue
 			}
-			objects, err := os.ReadDir(filepath.Join(dir, tk.Name(), v.Name()))
+			objects, err := readDirSwept(filepath.Join(dir, tk.Name(), v.Name()))
 			if err != nil {
 				return nil, fmt.Errorf("%w: list: %w", sim.ErrStoreUnavailable, err)
 			}
@@ -260,7 +260,7 @@ func (f *FS) ZoneTags(ctx context.Context, zone sim.ZoneID) (map[string][]string
 		if !tk.IsDir() {
 			continue
 		}
-		versions, err := os.ReadDir(filepath.Join(dir, tk.Name()))
+		versions, err := readDirSwept(filepath.Join(dir, tk.Name()))
 		if err != nil {
 			return nil, fmt.Errorf("%w: list tags: %w", sim.ErrStoreUnavailable, err)
 		}
@@ -268,7 +268,7 @@ func (f *FS) ZoneTags(ctx context.Context, zone sim.ZoneID) (map[string][]string
 			if !v.IsDir() {
 				continue
 			}
-			objects, err := os.ReadDir(filepath.Join(dir, tk.Name(), v.Name()))
+			objects, err := readDirSwept(filepath.Join(dir, tk.Name(), v.Name()))
 			if err != nil {
 				return nil, fmt.Errorf("%w: list tags: %w", sim.ErrStoreUnavailable, err)
 			}
@@ -276,7 +276,7 @@ func (f *FS) ZoneTags(ctx context.Context, zone sim.ZoneID) (map[string][]string
 				if !o.IsDir() || !strings.HasSuffix(o.Name(), tagDir) {
 					continue
 				}
-				names, err := os.ReadDir(filepath.Join(dir, tk.Name(), v.Name(), o.Name()))
+				names, err := readDirSwept(filepath.Join(dir, tk.Name(), v.Name(), o.Name()))
 				if err != nil {
 					return nil, fmt.Errorf("%w: list tags: %w", sim.ErrStoreUnavailable, err)
 				}
@@ -289,6 +289,17 @@ func (f *FS) ZoneTags(ctx context.Context, zone sim.ZoneID) (map[string][]string
 		}
 	}
 	return sortTags(out), nil
+}
+
+// readDirSwept is os.ReadDir for a directory under a Zone, which Delete
+// removes once it empties: a directory gone between its parent's listing and
+// its own has nothing in it, not a store fault.
+func readDirSwept(dir string) ([]os.DirEntry, error) {
+	entries, err := os.ReadDir(dir)
+	if errors.Is(err, os.ErrNotExist) {
+		return nil, nil
+	}
+	return entries, err
 }
 
 // Delete removes the object at key, and then whichever of its directories

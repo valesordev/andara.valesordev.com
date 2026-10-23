@@ -116,7 +116,9 @@ func (f *FS) ListTags(ctx context.Context, objectKey string) ([]string, error) {
 	}
 	var out []string
 	for _, e := range entries {
-		if e.IsDir() || strings.HasSuffix(e.Name(), TempSuffix) {
+		// A leftover {name}.tmp~ is outside the grammar (TempSuffix), and so
+		// is anything else that isn't a tag; ZoneTags reads by the same rule.
+		if e.IsDir() || !ValidTagName(e.Name()) {
 			continue
 		}
 		out = append(out, e.Name())
@@ -133,7 +135,7 @@ func (s *S3) ListTags(ctx context.Context, objectKey string) ([]string, error) {
 		if obj.Err != nil {
 			return nil, fmt.Errorf("%w: list tags %s: %w", sim.ErrStoreUnavailable, objectKey, obj.Err)
 		}
-		if name := strings.TrimPrefix(obj.Key, prefix); name != "" && !strings.Contains(name, "/") {
+		if name := strings.TrimPrefix(obj.Key, prefix); ValidTagName(name) {
 			out = append(out, name)
 		}
 	}

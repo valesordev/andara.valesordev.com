@@ -386,7 +386,10 @@ The retention sweep runs at start and then every `snapshot.interval`. Newest fir
 complete round and the pinned round; deletes any other round past `snapshot.max_round_age`; keeps tagged
 rounds (a tag on *any* object, so a crash between two tag Puts fails safe) up to
 `snapshot.keep_deploy_rounds`, untagged ones up to `snapshot.keep_rounds`; and deletes the rest, tags
-first, then objects. A sweep and a tag never interleave in one process. Each sweep logs `snapshot retention
+first, then objects. Before it deletes a round it reads the round's tags again, holding the lock
+`snapshot tag` holds, and keeps a round that gained a tag since the sweep listed it; a tag waits for one
+round's deletes at most. Pre-stop's own tag doesn't take that lock: it tags the newest round, which the
+sweep always keeps. Each sweep logs `snapshot retention
 sweep` at `info` with `deleted`, `kept_tagged` and `kept_newest` (untagged rounds kept), or `error` on a
 store error; each tag logs `snapshot round tagged` with the `actor` and `tick`.
 
