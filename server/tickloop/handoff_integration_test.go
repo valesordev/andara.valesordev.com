@@ -272,6 +272,13 @@ func handoffWorld(e *sim.Engine, boundaries []sim.TickCompleted, movePart int32)
 		return out
 	}
 	last := boundaries[len(boundaries)-1]
-	return out + fmt.Sprintf(", the last at tick %d with state hash %x, offsets %v (the Move's partition %d at %d), %d commands applied",
-		last.Tick, last.StateHash, last.Offsets, movePart, last.Offsets[movePart], last.CommandsApplied)
+	// The Partitions past offset 0: 64 entries are mostly zeros.
+	moved := map[int32]int64{}
+	for p, off := range last.Offsets {
+		if off > 0 {
+			moved[p] = off
+		}
+	}
+	return out + fmt.Sprintf(", the last at tick %d with state hash %x, nonzero offsets %v (the Move's partition %d at %d), %d commands applied",
+		last.Tick, last.StateHash, moved, movePart, last.Offsets[movePart], last.CommandsApplied)
 }
