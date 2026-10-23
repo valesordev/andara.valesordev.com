@@ -11,12 +11,14 @@ import (
 	"log/slog"
 	"os"
 	"os/exec"
+	"slices"
 	"strings"
 	"syscall"
 	"testing"
 	"time"
 
 	logv1 "github.com/valesordev/andara/gen/go/andara/log/v1"
+	"github.com/valesordev/andara/internal/eventually"
 	"github.com/valesordev/andara/server/kafkaclient"
 	"github.com/valesordev/andara/server/kafkaclient/kafkatest"
 	"github.com/valesordev/andara/server/sim"
@@ -121,10 +123,25 @@ func TestKafka_AHandoffSurvivesASIGKILLWithTheArriveLost(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if err := pub.Produce(context.Background(), []*logv1.LoggedCommand{simtest.Move("town", "alice", "east")}); err != nil {
+	move := simtest.Move("town", "alice", "east")
+	if err := pub.Produce(context.Background(), []*logv1.LoggedCommand{move}); err != nil {
 		t.Fatal(err)
 	}
-	pub.Close()
+	if err := pub.Close(); err != nil {
+		t.Fatal(err)
+	}
+	// One past the Move on its Partition: a boundary whose Offsets reach it
+	// recorded a World that had applied the Move.
+	movePart := sim.CommandPartition(move)
+	moveEnd, err := EndOffset(context.Background(), bk, commands, movePart)
+	if err != nil {
+		t.Fatal(err)
+	}
+	// The setup publisher has no OnFailure: a Move it failed to deliver
+	// would leave the Partition empty, and every boundary "past" offset 0.
+	if moveEnd < 1 {
+		t.Fatalf("the Move is not on partition %d of %s: end offset %d", movePart, commands, moveEnd)
+	}
 
 	spawn := func(mode string) *exec.Cmd {
 		cmd := exec.Command(os.Args[0], "-test.run", "^TestKafkaHandoffChild$", "-test.v")
@@ -138,8 +155,12 @@ func TestKafka_AHandoffSurvivesASIGKILLWithTheArriveLost(t *testing.T) {
 
 	// The first life: alice's Move applies, every Arrive (the first and the
 	// retries) is dropped, and its boundaries are published. Then SIGKILL.
+	// The wait is on the Move having applied inside a recorded boundary, and
+	// on two retry intervals of boundaries after it, so a retry is dropped
+	// too. A count of boundaries alone is reached by an idle loop whose
+	// consumer has not yet fetched the Move (AW-SRV-061).
 	first := spawn("lossy")
-	waitForBoundaries(t, bk, events, 40, 30*time.Second) // well past the 10-tick retry interval
+	waitForMoveApplied(t, bk, events, movePart, moveEnd, 2*sim.DefaultHandoffRetryTicks, 30*time.Second)
 	if err := first.Process.Signal(syscall.SIGKILL); err != nil {
 		t.Fatal(err)
 	}
@@ -156,14 +177,14 @@ func TestKafka_AHandoffSurvivesASIGKILLWithTheArriveLost(t *testing.T) {
 		t.Fatal(err)
 	}
 	if _, err := Recover(context.Background(), bk, commands, events, r, nil); err != nil {
-		t.Fatalf("recovery after the SIGKILL: %v", err)
+		t.Fatalf("recovery after the SIGKILL: %v; %s", err, handoffWorld(r, before, movePart))
 	}
 	if r.StateHash() != before[len(before)-1].StateHash {
-		t.Fatal("the recovered World does not match the last recorded boundary")
+		t.Fatalf("the recovered World does not match the last recorded boundary: recovered %x; %s", r.StateHash(), handoffWorld(r, before, movePart))
 	}
 	st := r.State()
 	if len(st.Zones["town"].Transit) != 1 || st.Zones["town"].Entities["alice"] != nil || st.Zones["wilds"].Entities["alice"] != nil {
-		t.Fatalf("after the SIGKILL alice should be in town's Transit and nowhere else: transit %v", st.Zones["town"].Transit)
+		t.Fatalf("after the SIGKILL alice should be in town's Transit and nowhere else: %s", handoffWorld(r, before, movePart))
 	}
 
 	// The second life delivers: it retries from the recovered Transit.
@@ -197,4 +218,60 @@ func TestKafka_AHandoffSurvivesASIGKILLWithTheArriveLost(t *testing.T) {
 	if s.Zones["wilds"].Placed["alice"].Seq != 1 || s.Zones["wilds"].Entities["alice"].HandoffSeq != 1 {
 		t.Fatalf("alice should have been placed exactly once, at sequence 1: marks %v", s.Zones["wilds"].Placed)
 	}
+}
+
+// waitForMoveApplied reads the events topic until a boundary's Offsets on
+// movePart reach moveEnd, the Move applied inside a recorded boundary, and
+// the last boundary is at least past ticks after that one. On a timeout it
+// names the last boundary's tick, Offsets on movePart and CommandsApplied.
+func waitForMoveApplied(t *testing.T, bk kafkaclient.Config, events string, movePart int32, moveEnd int64, past sim.Tick, within time.Duration) {
+	t.Helper()
+	eventually.Observed(t, within, fmt.Sprintf("a boundary past the Move (partition %d offset %d), then %d more ticks", movePart, moveEnd, past), func() (bool, string) {
+		ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+		defer cancel()
+		bs, err := ReadBoundaries(ctx, bk, events)
+		if err != nil {
+			return false, err.Error()
+		}
+		if len(bs) == 0 {
+			return false, "no boundaries"
+		}
+		last := bs[len(bs)-1]
+		saw := fmt.Sprintf("%d boundaries, the last at tick %d with partition %d at offset %d and %d commands applied", len(bs), last.Tick, movePart, last.Offsets[movePart], last.CommandsApplied)
+		for _, b := range bs {
+			if b.Offsets[movePart] >= moveEnd {
+				return last.Tick >= b.Tick+past, saw + fmt.Sprintf("; the Move applied by tick %d", b.Tick)
+			}
+		}
+		return false, saw
+	})
+}
+
+// handoffWorld is what a post-SIGKILL failure prints, so one CI log tells the
+// outcomes apart (AW-SRV-061): the Move never applied (alice in town's
+// Entities), delivered early (alice in wilds'), or lost (in neither, with an
+// empty Transit).
+func handoffWorld(e *sim.Engine, boundaries []sim.TickCompleted, movePart int32) string {
+	st := e.State()
+	ids := func(m map[sim.EntityID]*sim.EntityState) []sim.EntityID {
+		out := make([]sim.EntityID, 0, len(m))
+		for id := range m {
+			out = append(out, id)
+		}
+		slices.Sort(out)
+		return out
+	}
+	transit := make([]sim.EntityID, 0, len(st.Zones["town"].Transit))
+	for id := range st.Zones["town"].Transit {
+		transit = append(transit, id)
+	}
+	slices.Sort(transit)
+	out := fmt.Sprintf("town entities %v, wilds entities %v, town transit %v, %d boundaries read",
+		ids(st.Zones["town"].Entities), ids(st.Zones["wilds"].Entities), transit, len(boundaries))
+	if len(boundaries) == 0 {
+		return out
+	}
+	last := boundaries[len(boundaries)-1]
+	return out + fmt.Sprintf(", the last at tick %d with state hash %x, offsets %v (the Move's partition %d at %d), %d commands applied",
+		last.Tick, last.StateHash, last.Offsets, movePart, last.Offsets[movePart], last.CommandsApplied)
 }
