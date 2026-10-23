@@ -1,9 +1,9 @@
 # SPDX-License-Identifier: Apache-2.0
 # Copyright 2026 Valesor Development
 
-"""`make pipelines-check` (AW-INF-051 AC-5) and shared-kafka's allow-list and output (AC-13).
+"""`make pipelines-check` (AW-INF-051 AC-5) and shared_kafka's allow-list and output (AC-13).
 
-Each break below changes the committed shared-kafka.alloy one way and must be refused, naming the file;
+Each break below changes the committed shared_kafka.alloy one way and must be refused, naming the file;
 each accept must still pass. They run the pinned bin/alloy, which `make bootstrap` installs.
 """
 import contextlib
@@ -19,11 +19,11 @@ REPO = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__)
 sys.path.insert(0, os.path.join(REPO, "scripts"))
 import pipelines_check  # noqa: E402
 
-SHARED_KAFKA = os.path.join(pipelines_check.PIPELINES, "shared-kafka.alloy")
+SHARED_KAFKA = os.path.join(pipelines_check.PIPELINES, "shared_kafka.alloy")
 HAVE_ALLOY = os.access(pipelines_check.ALLOY, os.X_OK)
 OTHER_URL = "https://prometheus-prod-67-prod-us-west-0.grafana.net/api/prom/push"
 
-# The names shared-kafka keeps: ADR-0014 §6's set as the Strimzi Metrics Reporter serves them (AC-12),
+# The names shared_kafka keeps: ADR-0014 §6's set as the Strimzi Metrics Reporter serves them (AC-12),
 # read at :9404 from quay.io/strimzi/kafka:1.2.0-kafka-4.3.1 on 2026-10-22, and its job's up. The ADR's
 # `isrshrinks_total` and `isrexpands_total` are served as `isrshrinkspersec_total` and `isrexpandspersec_total`.
 KEPT = {
@@ -44,7 +44,7 @@ def _append(block):
 
 def _replace(old, new):
     def f(s):
-        assert old in s, "fixture setup: %r not in shared-kafka.alloy" % old
+        assert old in s, "fixture setup: %r not in shared_kafka.alloy" % old
         return s.replace(old, new, 1)
     return f
 
@@ -142,7 +142,7 @@ class Check(unittest.TestCase):
             self.source = f.read()
 
     def run_on(self, text, allow=""):
-        with open(os.path.join(self.dir, "shared-kafka.alloy"), "w") as f:
+        with open(os.path.join(self.dir, "shared_kafka.alloy"), "w") as f:
             f.write(text)
         with open(os.path.join(self.dir, "env-allow.txt"), "w") as f:
             f.write(allow)
@@ -156,7 +156,7 @@ class Check(unittest.TestCase):
             with self.subTest(name):
                 rc, out = self.run_on(change(self.source), *allow)
                 self.assertEqual(rc, 1, out)
-                self.assertRegex(out, r"refused: .*shared-kafka\.alloy:\d+: %s: " % re.escape(rule))
+                self.assertRegex(out, r"refused: .*shared_kafka\.alloy:\d+: %s: " % re.escape(rule))
 
     def test_each_sys_env_form_is_refused_as_a_form(self):
         """A form break lists its variable in env-allow.txt, so only the form rule can refuse it."""
@@ -187,11 +187,28 @@ class Check(unittest.TestCase):
         out = io.StringIO()
         with contextlib.redirect_stdout(out):
             self.assertEqual(pipelines_check.main([]), 0)
-        self.assertIn("shared-kafka.alloy", out.getvalue())
+        self.assertIn("shared_kafka.alloy", out.getvalue())
 
     def test_env_allow_is_committed_empty(self):
         with open(os.path.join(pipelines_check.PIPELINES, "env-allow.txt")) as f:
             self.assertEqual(f.read(), "")
+
+    def test_a_source_whose_name_is_not_an_alloy_identifier_is_refused(self):
+        """Fleet refuses a pipeline name that is not an Alloy identifier (`shared-kafka` failed to apply
+        on main), and the name is the source's, so the source's file name must be one."""
+        for name in ("shared-kafka", "1kafka", "Kafka"):
+            with self.subTest(name):
+                for old in [n for n in os.listdir(self.dir) if n.endswith(".alloy")]:
+                    os.remove(os.path.join(self.dir, old))
+                with open(os.path.join(self.dir, name + ".alloy"), "w") as f:
+                    f.write(self.source)
+                open(os.path.join(self.dir, "env-allow.txt"), "w").close()
+                out = io.StringIO()
+                with contextlib.redirect_stdout(out), contextlib.redirect_stderr(io.StringIO()):
+                    rc = pipelines_check.main(["--dir", self.dir])
+                self.assertEqual(rc, 1, out.getvalue())
+                self.assertIn("refused: ", out.getvalue())
+                self.assertIn("%s.alloy:1: name: " % name, out.getvalue())
 
     def test_a_missing_env_allow_or_no_pipeline_fails(self):
         rc, out = self.run_on(self.source)
@@ -199,7 +216,7 @@ class Check(unittest.TestCase):
         with contextlib.redirect_stderr(io.StringIO()) as err:
             self.assertEqual(pipelines_check.main(["--dir", self.dir]), 1)
         self.assertIn("env-allow.txt", err.getvalue())
-        os.remove(os.path.join(self.dir, "shared-kafka.alloy"))
+        os.remove(os.path.join(self.dir, "shared_kafka.alloy"))
         open(os.path.join(self.dir, "env-allow.txt"), "w").close()
         with contextlib.redirect_stderr(io.StringIO()) as err:
             self.assertEqual(pipelines_check.main(["--dir", self.dir]), 1)
@@ -207,7 +224,8 @@ class Check(unittest.TestCase):
 
 
 PIPELINES_TF = os.path.join(pipelines_check.GRAFANA, "stacks", "solo7dev", "pipelines.tf")
-RESOURCE_LINE = 'contents                   = file("${path.module}/../../pipelines/shared-kafka.alloy")'
+RESOURCE_LINE = 'contents                   = file("${path.module}/../../pipelines/shared_kafka.alloy")'
+NAME_LINE = 'name                       = "shared_kafka"'
 INLINE = '"prometheus.scrape \\"x\\" {}"'
 HERE = "stacks/solo7dev/pipelines.tf"
 TYPE = pipelines_check.PIPELINE_TYPE
@@ -225,6 +243,7 @@ class Resources(unittest.TestCase):
         with open(PIPELINES_TF) as f:
             self.tf = f.read()
         self.assertIn(RESOURCE_LINE, self.tf)
+        self.assertIn(NAME_LINE, self.tf)
 
     def run_on(self, files):
         for rel, text in files.items():
@@ -275,14 +294,14 @@ class Resources(unittest.TestCase):
         module = "its source must be a relative path inside"
         breaks = [
             ("an inline heredoc", {HERE: good.replace(RESOURCE_LINE, 'contents = <<-EOT\n    loki.write "c" {}\n  EOT')}, exact),
-            ("a source outside pipelines/", {HERE: good.replace("../../pipelines/shared-kafka.alloy", "evil.alloy")}, exact),
+            ("a source outside pipelines/", {HERE: good.replace("../../pipelines/shared_kafka.alloy", "evil.alloy")}, exact),
             ("a pipelines path that climbs out again",
-             {HERE: good.replace("pipelines/shared-kafka.alloy", "pipelines/shared-kafka.alloy/../env-allow.txt")}, exact),
+             {HERE: good.replace("pipelines/shared_kafka.alloy", "pipelines/shared_kafka.alloy/../env-allow.txt")}, exact),
             ("a source written with %{", {HERE: good.replace("${path.module}", "%{if true}x%{endif}")}, exact),
             ("a source that does not exist",
-             {HERE: good.replace("pipelines/shared-kafka.alloy", "pipelines/nope.alloy").replace('"shared-kafka"', '"nope"')},
+             {HERE: good.replace("pipelines/shared_kafka.alloy", "pipelines/nope.alloy").replace(NAME_LINE, NAME_LINE.replace("shared_kafka", "nope"))},
              "pipelines/nope.alloy does not exist"),
-            ("a name that is not its source's", {HERE: good.replace('"shared-kafka"', '"other"', 1)}, "name must be"),
+            ("a name that is not its source's", {HERE: good.replace(NAME_LINE, NAME_LINE.replace("shared_kafka", "other"))}, "name must be"),
             ("a for_each", {HERE: good.replace("  enabled ", '  for_each = toset(["a"])\n  enabled ')}, one),
             ("a count", {HERE: good.replace("  enabled ", "  count = 2\n  enabled ")}, one),
             ("a dynamic block", {HERE: good.replace("  enabled ", '  dynamic "x" {\n    for_each = []\n    content {}\n  }\n  enabled ')},
@@ -317,7 +336,7 @@ class Resources(unittest.TestCase):
             ("the type named only as a reference, in another file",
              {HERE: good, "stacks/solo7dev/outputs.tf": 'output "p" {\n  value = %s.shared_kafka.id\n}\n' % TYPE}, declared),
             ("an import block naming the type",
-             {HERE: good + '\nimport {\n  to = %s.shared_kafka\n  id = "shared-kafka"\n}\n' % TYPE}, elsewhere),
+             {HERE: good + '\nimport {\n  to = %s.shared_kafka\n  id = "shared_kafka"\n}\n' % TYPE}, elsewhere),
             # Terraform decodes a label's escapes: this is a pipeline resource with inline contents.
             ("a type label written with a \\U escape",
              {HERE: good + "\n" + INLINE_RESOURCE.replace(TYPE, TYPE[:-1] + "\\U00000065")}, exact),

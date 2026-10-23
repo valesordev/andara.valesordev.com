@@ -66,8 +66,8 @@ the root receiver, `slack-dev` (`#andaras-world-dev`): never `blackhole`, and th
 (`AW-INF-046` AC-6). No rule reads the brokers' series yet, so nothing is routed by them today. A rule
 on a shared service lands in that row until it has an SLO of its own (CLAUDE.md §7).
 
-The brokers' series reach Grafana Cloud through a Fleet Management pipeline, `shared-kafka`
-(`deploy/terraform/grafana/pipelines/shared-kafka.alloy`, `AW-INF-051`). The `fleet` collector
+The brokers' series reach Grafana Cloud through a Fleet Management pipeline, `shared_kafka`
+(`deploy/terraform/grafana/pipelines/shared_kafka.alloy`, `AW-INF-051`). The `fleet` collector
 (`AW-INF-065`) pulls it and forwards to the chart's `receiver`, which ships it with the chart's stamp and
 keep-list. Where to look:
 

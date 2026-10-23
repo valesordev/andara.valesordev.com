@@ -22,6 +22,9 @@ the telemetry token. So every deploy/terraform/grafana/pipelines/*.alloy must:
   `env` (`[sys.env][0]("X")`, `sys["env"]`, the deprecated `env()`) is refused: an expression can carry
   a variable to any attribute, `api_server` included.
 
+Each source's file name is its pipeline's name, and Fleet refuses a name that is not an Alloy
+identifier, so every source is named `<identifier>.alloy`, lower case: `[a-z_][a-z0-9_]*`.
+
 And under deploy/terraform/grafana, a `grafana_fleet_management_pipeline` may be declared only in a
 stacks/<root>/pipelines.tf, each reading its contents with exactly
 `file("${path.module}/../../pipelines/<name>.alloy")`, an existing source, named `<name>`, with no
@@ -80,7 +83,9 @@ PIPELINE_TYPE = "grafana_fleet_management_pipeline"
 CONTENTS_FILE = [("ident", "file"), ("punct", "("), ("qopen", '"'), ("iopen", "${"), ("ident", "path"),
                  ("punct", "."), ("ident", "module"), ("iclose", "}"), ("str", None), ("qclose", '"'),
                  ("punct", ")")]
-CONTENTS_PATH = re.compile(r"/\.\./\.\./pipelines/([a-z0-9-]+)\.alloy")
+# A pipeline's name, which Fleet requires to be an Alloy identifier; lower case here.
+PIPELINE_NAME = re.compile(r"[a-z_][a-z0-9_]*")
+CONTENTS_PATH = re.compile(r"/\.\./\.\./pipelines/(%s)\.alloy" % PIPELINE_NAME.pattern)
 
 
 class Exit(Exception):
@@ -357,6 +362,9 @@ def check(directory, tf_dir, alloy):
         with open(path) as f:
             text = f.read()
         found = sorted(refusals(text, allowed) + alloy_errors(alloy, path, text))
+        if not PIPELINE_NAME.fullmatch(name[:-len(".alloy")]):
+            found.insert(0, (1, "name", "%s is not an Alloy identifier ([a-z_][a-z0-9_]*), which Fleet requires of the "
+                             "pipeline it names" % name[:-len(".alloy")]))
         for line, rule, detail in found:
             print("pipelines-check: refused: %s:%d: %s: %s" % (os.path.relpath(path, REPO), line, rule, detail))
         bad += bool(found)
