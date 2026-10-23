@@ -93,8 +93,9 @@ chart values in your checkout, so run it from `main`.
    (`recovery-state-mismatch.md`, step 1). An incomplete newest round is exit `7` with
    `recovery.require_snapshot=true`; without it, recovery falls back to the newest complete round, or to the whole
    log when there is none.
-4. Was there a deploy in the last ten minutes? On `dev`, Argo CD deploys: `make argocd-status
-   ENV=dev` names the synced revision and image. If a deploy is the cause, revert it on `main`.
+4. Was there a deploy in the last ten minutes? On `dev`, a promotion deploys: `make promote-log`
+   lists them with their times, and `make argocd-status ENV=dev` names the synced commit and image.
+   If a promotion is the cause, roll back with `make promote ENV=dev TAG=dev-<n>` (`promote.md`).
    Argo CD syncs the good build, and `make argocd-recover ENV=dev` replaces a pod stuck on the bad
    one. On a Helm-installed environment (kind, `prod`), `make helm-install ENV=<env>
    TAG=<previous>` reinstalls the previous build, with the StatefulSet still at zero (the

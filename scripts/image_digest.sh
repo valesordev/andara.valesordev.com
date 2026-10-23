@@ -4,7 +4,8 @@
 
 # Print the manifest digest a ghcr tag names right now, anonymously (AW-INF-013).
 #
-# helm_install.sh pins a moving tag (`:dev`) to this digest, so a rerun renders a new
+# helm_install.sh pins a tag to this digest, and `make promote` writes it into the dev tag's
+# values (AW-INF-059), so a rerun renders a new
 # PodTemplateSpec exactly when the tag has moved: `pullPolicy: Always` only re-resolves a
 # tag when a container starts, and never restarts one that is running an older build.
 #

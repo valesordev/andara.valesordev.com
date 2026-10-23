@@ -2,7 +2,7 @@
 # SPDX-License-Identifier: Apache-2.0
 # Copyright 2026 Valesor Development
 
-# Apache Kafka on the box for dev and prod, via Strimzi (AW-INF-014).
+# Apache Kafka on the box for prod, via Strimzi (AW-INF-014); dev uses the shared broker (AW-INF-059).
 #
 #   kafka.sh install <env>     make kafka-install: namespace, deploy/k8s/kafka/*.yaml, wait Ready,
 #                              then deploy/kafka/topics.yaml through topics.py. The Strimzi operator
@@ -10,8 +10,9 @@
 #   kafka.sh bounce <env>      make kafka-broker-bounce: lose one broker, prove the server never
 #                              left service while it was gone (AC-5)
 #
-# local has no cluster broker by design (values/local.yaml runs broker-free), so the
-# environment commands take dev or prod only.
+# local has no cluster broker by design (values/local.yaml runs broker-free). dev's broker is the
+# shared one in andara-shared (AW-INF-059): install refuses dev because Strimzi doesn't watch
+# andara-dev, and bounce refuses it outright, so both act on prod.
 #
 # Exit: 0 ok · 1 a step failed, or the bounce degraded the server · 2 bad usage or env ·
 # 3 a tool is missing.
@@ -37,8 +38,8 @@ need() {
 env_ns() {
   case "${1:-}" in
     dev|prod) echo "andara-$1" ;;
-    local) die "$CMD" "local has no cluster broker (values/local.yaml runs broker-free); ENV=dev or ENV=prod" 2 ;;
-    *) die "$CMD" "usage: make kafka-$CMD ENV=<dev|prod>" 2 ;;
+    local) die "$CMD" "local has no cluster broker (values/local.yaml runs broker-free); ENV=prod" 2 ;;
+    *) die "$CMD" "usage: make kafka-$CMD ENV=prod" 2 ;;
   esac
 }
 
@@ -106,6 +107,10 @@ under_replicated() {
 
 bounce() {
   local env="$1" ns victim="$KAFKA-broker-0"
+  # dev's broker is the shared one in andara-shared since AW-INF-059 (values/dev.yaml); bouncing
+  # it is AW-INF-055's to define, since local's server shares it.
+  [[ "$env" != "dev" ]] \
+    || die broker-bounce "ENV=dev: dev's broker is the shared andara-log in andara-shared; its bounce is AW-INF-055's. ENV=prod" 2
   ns="$(env_ns "$env")"
   need kubectl
   kube_require kafka-broker-bounce

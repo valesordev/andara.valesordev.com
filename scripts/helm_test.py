@@ -489,12 +489,13 @@ def test_label_values():
 
 
 def test_kafka_on_the_box():
-    """AW-INF-014 AC-8: dev and prod point at their namespace's Kafka `andara-log`, and
-    dev runs the sim and the Account store on it (the chart renders only what is set, so
-    the memory switches must be absent, leaving the `kafka` defaults). local stays
-    broker-free."""
-    want = "andara-log-kafka-bootstrap:9092"
-    for env in ("dev", "prod"):
+    """AW-INF-014 AC-8: prod points at its namespace's Kafka `andara-log`, dev at the shared one in
+    andara-shared under its topic prefix (AW-INF-059 AC-11), and both run the sim and the Account
+    store on it (the chart renders only what is set, so the memory switches must be absent,
+    leaving the `kafka` defaults). local stays broker-free."""
+    wants = {"dev": ("andara-log-kafka-bootstrap.andara-shared.svc:9092", "dev"),
+             "prod": ("andara-log-kafka-bootstrap:9092", None)}
+    for env, (want, prefix) in wants.items():
         rc, out, err = render(env)
         if rc:
             fail("%s: render failed: %s" % (env, err.strip()))
@@ -502,6 +503,8 @@ def test_kafka_on_the_box():
         data = find(docs(out), "ConfigMap", "andara-config")["data"]
         if data.get("ANDARA_KAFKA_BROKERS") != want:
             fail("%s: ANDARA_KAFKA_BROKERS is %r, want %r" % (env, data.get("ANDARA_KAFKA_BROKERS"), want))
+        if data.get("ANDARA_KAFKA_TOPIC_PREFIX") != prefix:
+            fail("%s: ANDARA_KAFKA_TOPIC_PREFIX is %r, want %r" % (env, data.get("ANDARA_KAFKA_TOPIC_PREFIX"), prefix))
         for key in ("ANDARA_SIM_SOURCE", "ANDARA_AUTH_STORE"):
             if data.get(key, "kafka") != "kafka":
                 fail("%s: %s is %r; the sim and Account store run on the broker" % (env, key, data[key]))
@@ -549,14 +552,14 @@ ARGOCD = os.path.join(REPO, "deploy", "argocd")
 
 
 def test_argocd_application():
-    """AW-INF-019: the Application's contract (main, ../values/dev.yaml, releaseName andara,
-    automated prune and selfHeal, no helm.parameters in git), annotation tracking, and the
-    Image Updater that owns image.tag (digest on :dev, argocd write-back)."""
+    """AW-INF-019, AW-INF-059: the Application's contract (the Git tag dev, ../values/dev.yaml,
+    releaseName andara, automated prune and selfHeal, no helm.parameters), annotation tracking,
+    and no Image Updater."""
     app = yaml.safe_load(open(os.path.join(ARGOCD, "andara-dev.yaml")))
     src = app["spec"]["source"]
     want = {
         "repoURL": "https://github.com/valesordev/andara.valesordev.com",
-        "targetRevision": "main",
+        "targetRevision": "dev",
         "path": "deploy/helm/andara",
     }
     for k, v in want.items():
@@ -568,7 +571,7 @@ def test_argocd_application():
     if helm.get("valueFiles") != ["../values/dev.yaml"]:
         fail("argocd application: helm.valueFiles %r" % helm.get("valueFiles"))
     if "parameters" in helm:
-        fail("argocd application: helm.parameters in git; Image Updater owns image.tag")
+        fail("argocd application: helm.parameters; everything the render takes is in the tagged commit")
     if app["spec"]["destination"].get("namespace") != "andara-dev":
         fail("argocd application: destination namespace %r" % app["spec"]["destination"].get("namespace"))
     auto = app["spec"].get("syncPolicy", {}).get("automated", {})
@@ -582,21 +585,33 @@ def test_argocd_application():
     if (not str(redis.get("repository") or "").startswith("mirror.gcr.io/")
             or not re.search(r"@sha256:[0-9a-f]{64}$", str(redis.get("tag") or ""))):
         fail("argocd values: redis must come from mirror.gcr.io, pinned by digest (#609), got %r" % redis)
-    upd = yaml.safe_load(open(os.path.join(ARGOCD, "andara-dev-image-updater.yaml")))["spec"]
-    if upd.get("writeBackConfig", {}).get("method") != "argocd":
-        fail("image updater: write-back must be argocd; nothing writes to main")
-    refs = upd.get("applicationRefs", [])
-    imgs = [i for r in refs if r.get("namePattern") == "andara-dev" for i in r.get("images", [])]
-    if len(imgs) != 1:
-        fail("image updater: want one image for andara-dev, got %r" % imgs)
-        return
-    i = imgs[0]
-    if i.get("imageName") != "ghcr.io/valesordev/andara-server:dev":
-        fail("image updater: tracks %r, want ghcr.io/valesordev/andara-server:dev" % i.get("imageName"))
-    if i.get("commonUpdateSettings", {}).get("updateStrategy") != "digest":
-        fail("image updater: strategy %r, want digest" % i.get("commonUpdateSettings"))
-    if i.get("manifestTargets", {}).get("helm", {}).get("tag") != "image.tag":
-        fail("image updater: must write image.tag")
+
+
+def test_dev_topic_prefix_required():
+    """AW-INF-059 AC-11: rendered with telemetry.environment=dev and an empty or absent topic
+    prefix, the chart fails naming the key; prod's empty prefix still renders."""
+    for extra in (["--set", "server.kafka.topic_prefix="], ["--set", "server.kafka.topic_prefix=null"]):
+        rc, _, err = render("dev", *extra)
+        if rc == 0:
+            fail("dev rendered with %s; the schema must require server.kafka.topic_prefix" % extra[1])
+        elif "topic_prefix" not in err:
+            fail("dev with %s refused, but the message doesn't name topic_prefix: %s" % (extra[1], err.strip()))
+    rc, _, err = render("prod", "--set", "server.kafka.topic_prefix=")
+    if rc:
+        fail("prod with an empty topic prefix must render: %s" % err.strip())
+
+
+def test_release_markers():
+    """AW-INF-059: the values a rollback promotion commits (lifecycle.md's release.rolled_back_to
+    and recovery.pin_round) render, and release refuses a key it doesn't declare."""
+    rc, out, err = render("dev", "--set", "release.rolled_back_to=dev-3", "--set", "server.recovery.pin_round=7")
+    if rc:
+        return fail("dev with the rollback markers: render failed: %s" % err.strip())
+    if find(docs(out), "ConfigMap", "andara-config")["data"].get("ANDARA_RECOVERY_PIN_ROUND") != "7":
+        fail("server.recovery.pin_round=7 did not reach ANDARA_RECOVERY_PIN_ROUND")
+    rc, _, _ = render("dev", "--set", "release.rolled_back=dev-3")
+    if rc == 0:
+        fail("release.rolled_back (a typo) rendered; release takes rolled_back_to only")
 
 
 def content_files(d):
@@ -778,6 +793,8 @@ def main():
     test_kafka_on_the_box()
     test_spawn_room_is_purgatory()
     test_argocd_application()
+    test_dev_topic_prefix_required()
+    test_release_markers()
     test_content_configmaps()
     test_content_checksum()
     test_snapshot_s3_and_projector_creds()

@@ -983,8 +983,108 @@
       "additionalProperties": {
         "type": "string"
       }
+    },
+    "release": {
+      "type": "object",
+      "additionalProperties": false,
+      "description": "Release markers, values not server keys (docs/specs/deploy/lifecycle.md). On dev, `make promote ENV=dev TAG=dev-<n>` commits them (AW-INF-059).",
+      "properties": {
+        "rolled_back_to": {
+          "type": "string",
+          "description": "The tag a rollback returned to; empty on a forward deploy or promotion"
+        }
+      }
     }
   },
+  "allOf": [
+    {
+      "if": {
+        "required": [
+          "server"
+        ],
+        "properties": {
+          "server": {
+            "required": [
+              "telemetry"
+            ],
+            "properties": {
+              "telemetry": {
+                "required": [
+                  "environment"
+                ],
+                "properties": {
+                  "environment": {
+                    "const": "dev"
+                  }
+                }
+              }
+            }
+          }
+        }
+      },
+      "then": {
+        "properties": {
+          "server": {
+            "required": [
+              "kafka"
+            ],
+            "properties": {
+              "kafka": {
+                "required": [
+                  "topic_prefix"
+                ],
+                "properties": {
+                  "topic_prefix": {
+                    "minLength": 1
+                  }
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    {
+      "if": {
+        "properties": {
+          "server": {
+            "properties": {
+              "telemetry": {
+                "properties": {
+                  "environment": {
+                    "const": "local"
+                  }
+                }
+              }
+            }
+          }
+        }
+      },
+      "then": {},
+      "else": {
+        "properties": {
+          "server": {
+            "type": "object",
+            "properties": {
+              "character": {
+                "type": "object",
+                "properties": {},
+                "required": [
+                  "spawn_room"
+                ]
+              }
+            },
+            "required": [
+              "character"
+            ]
+          }
+        },
+        "required": [
+          "server"
+        ]
+      }
+    }
+  ],
   "$defs": {
     "probe": {
       "type": "object",
@@ -1065,47 +1165,5 @@
         }
       }
     }
-  },
-  "allOf": [
-    {
-      "if": {
-        "properties": {
-          "server": {
-            "properties": {
-              "telemetry": {
-                "properties": {
-                  "environment": {
-                    "const": "local"
-                  }
-                }
-              }
-            }
-          }
-        }
-      },
-      "then": {},
-      "else": {
-        "properties": {
-          "server": {
-            "type": "object",
-            "properties": {
-              "character": {
-                "type": "object",
-                "properties": {},
-                "required": [
-                  "spawn_room"
-                ]
-              }
-            },
-            "required": [
-              "character"
-            ]
-          }
-        },
-        "required": [
-          "server"
-        ]
-      }
-    }
-  ]
+  }
 }

@@ -62,7 +62,7 @@ HAS_GO := $(shell find . -name '*.go' -not -path './.git/*' -not -path './bin/*'
         k8s-dry check-targets clean build build-info goldens \
         values-schema values-schema-check helm-test image image-publish image-check cli-release cli-release-check cli-release-publish kind-load helm-install measure-tick stack-smoke stack-play stack-linkdead stack-recover stack-recover-mismatch \
         platform-up platform-check kube-context-check cluster-up cluster-down cluster-rebuild stream-soak content-grammar-check observe-check dashboard-check observe-unavailable gcx-config gcx-check gcx-only-check scripts-test kafka-install kafka-broker-bounce \
-        argocd-install argocd-status argocd-ui argocd-recover argocd-uninstall world-reset content-seed env-destroy env-recover \
+        argocd-install promote promote-log argocd-status argocd-ui argocd-recover argocd-uninstall world-reset content-seed env-destroy env-recover \
         objectstore-install projector-stop projector-start projector-rebuild server-stop server-start core-versions-check \
         builder-reference builder-reference-check guide-check \
         stack-boundary-lost cli-offline-check stack-projector-check recovery-timing recovery-timing-previous recovery-timing-summary startup-budget-check alerts-sync alerts-diff update-agents \
@@ -313,7 +313,7 @@ image:
 	  -t $(IMAGE):$(TAG) .
 	@echo "image: $(IMAGE):$(TAG)"
 
-## image-publish: build the server image for linux/amd64 and push :sha-<12 hex> then :dev to ghcr — what CI runs on merge to main; needs `docker login ghcr.io` (AW-INF-013)
+## image-publish: build the server image for linux/amd64 and push :sha-<12 hex> to ghcr, printing its digest; nothing moves :dev (AW-INF-059) — what CI runs on merge to main; needs `docker login ghcr.io` (AW-INF-013)
 image-publish:
 	@$(SCRIPTS)/image_publish.sh "$(REGISTRY_IMAGE)" "$(VERSION)" "$(COMMIT)" "$(REVISION)"
 
@@ -408,17 +408,25 @@ cluster-down:
 cluster-rebuild:
 	@$(PY) $(SCRIPTS)/cluster.py rebuild "$(CONFIRM)"
 
-## kafka-install: Apache Kafka `andara-log` (3 brokers, KRaft) in andara-<env>, then the topics from deploy/kafka/topics.yaml — ENV=<dev|prod> (AW-INF-014)
+## kafka-install: Apache Kafka `andara-log` (3 brokers, KRaft) in andara-<env>, then the topics from deploy/kafka/topics.yaml — ENV=prod; dev refuses, its broker is the shared one (AW-INF-055) (AW-INF-014)
 kafka-install:
 	@PY=$(PY) $(SCRIPTS)/kafka.sh install "$(ENV)"
 
-## kafka-broker-bounce: delete one broker and prove the server never left service while it was gone — ENV=<dev|prod> (AW-INF-014 AC-5)
+## kafka-broker-bounce: delete one broker and prove the server never left service while it was gone — ENV=prod; dev's shared broker is AW-INF-055's (AW-INF-014 AC-5)
 kafka-broker-bounce:
 	@PY=$(PY) $(SCRIPTS)/kafka.sh bounce "$(ENV)"
 
-## argocd-install: Argo CD and Image Updater into `argocd` at pinned versions; with ENV=dev, dev's Secrets (if absent) and the andara-dev Application — dev follows main (AW-INF-019)
+## argocd-install: Argo CD into `argocd` at its pinned version; with ENV=dev, dev's Secrets (if absent) and the andara-dev Application, which follows the Git tag `dev` and needs it to exist (AW-INF-019, AW-INF-059)
 argocd-install:
 	@$(PY) $(SCRIPTS)/argocd.py install "$(if $(filter command line,$(origin ENV)),$(ENV),)"
+
+## promote: move dev to a main commit's image, or back to an earlier promotion — ENV=dev SHA=<main sha> | ENV=dev TAG=dev-<n> [PIN_ROUND=<round>]; one signed commit on release/dev, signed tags dev and dev-<n>, then waits for argocd-status to agree; Brian's shell only, refused under CLAUDECODE (AW-INF-059)
+promote:
+	@$(PY) $(SCRIPTS)/promote.py "$(if $(filter command line,$(origin ENV)),$(ENV))" "$(SHA)" "$(if $(filter command line,$(origin TAG)),$(TAG))" "$(PIN_ROUND)"
+
+## promote-log: the ten newest promotions of dev, newest first, each dev-<n> tag's event record (time, main SHA, image digest, who, rollback markers) — read first when an SLI moved (AW-INF-059)
+promote-log:
+	@$(PY) $(SCRIPTS)/promote.py log
 
 ## objectstore-install: versitygw, its PVC, the Secret andara-snapshot-s3 (generated once) and the bucket andara-snapshots-<env> in andara-<env> — idempotent — ENV=<dev|prod> (AW-INF-025)
 objectstore-install:
@@ -460,7 +468,7 @@ content-seed:
 env-recover:
 	@ENV_RECOVER_RTO=$(or $(ENV_RECOVER_RTO),120) $(PY) $(SCRIPTS)/env_recover.py "$(if $(filter command line,$(origin ENV)),$(ENV))" "$(CONFIRM)"
 
-## argocd-status: the andara-dev Application's sync and health, the main revision it synced, and the image it runs with the commit that built it — exit 1 unless Synced/Healthy
+## argocd-status: the andara-dev Application's sync and health, and the three answers to "which image is dev" — the commit tag `dev` points at, Argo's synced revision, the digest andara-0 runs — exit 1 unless Synced/Healthy and all three agree (AW-INF-059)
 argocd-status:
 	@$(PY) $(SCRIPTS)/argocd.py status "$(if $(filter command line,$(origin ENV)),$(ENV),dev)"
 
@@ -472,7 +480,7 @@ argocd-ui:
 argocd-recover:
 	@$(PY) $(SCRIPTS)/argocd.py recover "$(ENV)"
 
-## argocd-uninstall: remove the andara-dev Application without cascading and hand its resources back to Helm; `make helm-install ENV=dev` then works again — ENV=dev
+## argocd-uninstall: remove the andara-dev Application without cascading and hand its resources back to Helm; `make helm-install ENV=dev TAG=<sha-…@sha256:…>` then works again — ENV=dev
 argocd-uninstall:
 	@$(PY) $(SCRIPTS)/argocd.py uninstall "$(ENV)"
 
