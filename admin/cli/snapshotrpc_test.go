@@ -118,9 +118,9 @@ func TestSnapshotTag_Exits(t *testing.T) {
 	if res.exit != ExitOK || json.Unmarshal([]byte(res.stdout), &out) != nil || out.Result != "already_tagged" || out.Round != 4100 || !out.AlreadyTagged {
 		t.Errorf("re-tag: exit %d %q", res.exit, res.stdout)
 	}
-	for _, round := range []string{"7", "8"} {
-		if res := runCLI(t, []string{"snapshot", "tag", "--name", "rollback:" + round, "--round", round}, env); res.exit != ExitFail {
-			t.Errorf("round %s: exit %d, want %d", round, res.exit, ExitFail)
+	for round, msg := range map[string]string{"7": "refused: round_not_found", "8": "refused: round_incomplete"} {
+		if res := runCLI(t, []string{"snapshot", "tag", "--name", "rollback:" + round, "--round", round}, env); res.exit != ExitFail || !strings.Contains(res.stderr, msg) {
+			t.Errorf("round %s: exit %d %q, want %d and the server's %q", round, res.exit, res.stderr, ExitFail, msg)
 		}
 	}
 	if res := runCLI(t, []string{"snapshot", "tag"}, env); res.exit != ExitUsage {
