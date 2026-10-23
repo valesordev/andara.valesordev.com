@@ -88,6 +88,12 @@ type Round struct {
 	// TakenAt is the newest taken_at_unix_nano among the objects that could
 	// be read: diagnostic only (Admin.ListSnapshotRounds).
 	TakenAt int64
+	// Tags are the tag names on every object of the round, sorted; Tagged is
+	// set when any object carries any tag (AW-SRV-055). A crash between two
+	// tag Puts leaves a round Tagged whose name isn't in Tags: retention
+	// keeps it, and tagging it again completes it.
+	Tags   []string
+	Tagged bool
 }
 
 // ListRounds groups WorldStore keys by tick and marks completeness against
@@ -98,16 +104,37 @@ type Round struct {
 // every object of every round it returns. A caller that wants only the newest
 // complete round should call NewestComplete, which stops at the first.
 func ListRounds(ctx context.Context, ws sim.WorldStore, listed []sim.ZoneID, zonesAt ZonesAt) ([]Round, error) {
+	return ListRoundsWhere(ctx, ws, listed, zonesAt, 0, nil)
+}
+
+// ListRoundsWhere is ListRounds for the rounds match accepts (nil accepts
+// every round), stopping at limit of them when limit is above 0. match sees a
+// round before it is read, with its Zones' keys and its tags, so a round it
+// refuses and every round past the limit costs a key listing and no Get: the
+// listing's cost doesn't grow with the rounds retained (admin.proto,
+// ListSnapshotRoundsRequest.limit).
+func ListRoundsWhere(ctx context.Context, ws sim.WorldStore, listed []sim.ZoneID, zonesAt ZonesAt, limit int, match func(Round) bool) ([]Round, error) {
 	rounds, err := discover(ctx, ws, listed)
 	if err != nil {
 		return nil, err
 	}
+	if _, err := attachTags(ctx, ws, listed, rounds); err != nil {
+		return nil, err
+	}
+	out := rounds[:0]
 	for i := range rounds {
+		if limit > 0 && len(out) >= limit {
+			break
+		}
+		if match != nil && !match(rounds[i]) {
+			continue
+		}
 		if _, err := verify(ctx, ws, listed, zonesAt, &rounds[i]); err != nil {
 			return nil, err
 		}
+		out = append(out, rounds[i])
 	}
-	return rounds, nil
+	return out, nil
 }
 
 // NewestComplete returns the newest complete round and its decoded state, or

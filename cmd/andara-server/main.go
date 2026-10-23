@@ -304,6 +304,10 @@ func run(args []string, env config.EnvLookup, stdout, stderr io.Writer) (exit in
 	sweepCtx, stopSweep := context.WithCancel(ctx)
 	defer stopSweep()
 	go rt.Roster.RunSweep(sweepCtx)
+	// Snapshot retention (AW-SRV-055): untagged rounds past
+	// snapshot.keep_rounds, tagged ones past keep_deploy_rounds, and rounds
+	// past max_round_age, on the snapshot cadence.
+	go rt.RunSnapshotRetention(sweepCtx)
 
 	gwErr := make(chan error, 1)
 	go func() { gwErr <- gw.Wait() }()

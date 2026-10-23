@@ -7,15 +7,18 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"log/slog"
 	"sync"
 	"time"
 
 	"google.golang.org/protobuf/proto"
 
 	adminv1 "github.com/valesordev/andara/gen/go/andara/admin/v1"
+	"github.com/valesordev/andara/server/auth"
 	"github.com/valesordev/andara/server/recovery"
 	"github.com/valesordev/andara/server/sim"
 	"github.com/valesordev/andara/server/store"
+	"github.com/valesordev/andara/server/telemetry"
 )
 
 // The gRPC status codes Admin's snapshot RPCs answer with
@@ -63,31 +66,106 @@ func (a *SnapshotAdmin) ListSnapshotRounds(ctx context.Context, req *adminv1.Lis
 	if ws == nil {
 		return nil, &snapshotStatus{codeFailedPrecondition, "snapshots_disabled", "snapshots are disabled on this server (snapshot.interval is 0)"}
 	}
-	rounds, err := store.ListRounds(ctx, ws, a.rt.listedZones(), a.rt.zonesAt())
+	// Only the rounds returned are read: a filtered-out round, and every
+	// round past the limit, costs its key listing (admin.proto, limit).
+	holds := func(r store.Round) bool {
+		if req.GetZoneId() == "" {
+			return true
+		}
+		for _, z := range r.Zones {
+			if string(z.Zone) == req.GetZoneId() {
+				return true
+			}
+		}
+		return false
+	}
+	rounds, err := store.ListRoundsWhere(ctx, ws, a.rt.listedZones(), a.rt.zonesAt(), int(req.GetLimit()), holds)
 	if err != nil {
 		return nil, fmt.Errorf("list rounds: %w", err)
 	}
 	resp := &adminv1.ListSnapshotRoundsResponse{}
 	for _, r := range rounds {
 		zones := make([]string, 0, len(r.Zones))
-		holds := req.GetZoneId() == ""
 		for _, z := range r.Zones {
 			zones = append(zones, string(z.Zone))
-			if string(z.Zone) == req.GetZoneId() {
-				holds = true
-			}
-		}
-		if !holds {
-			continue
 		}
 		resp.Rounds = append(resp.Rounds, &adminv1.SnapshotRound{
 			Tick: uint64(r.Tick), StateVersion: r.StateVersion, ZoneIds: zones, Complete: r.Complete, TakenAtUnixNano: r.TakenAt,
+			Tags: r.Tags,
 		})
-		if lim := int(req.GetLimit()); lim > 0 && len(resp.Rounds) >= lim {
-			break
-		}
 	}
 	return resp, nil
+}
+
+// TagSnapshotRound tags a Complete round so retention keeps it (AW-SRV-055;
+// lifecycle.md, "Round tags"). The operator check is the gateway's; this logs
+// the actor and the round's tick.
+func (a *SnapshotAdmin) TagSnapshotRound(ctx context.Context, req *adminv1.TagSnapshotRoundRequest) (*adminv1.TagSnapshotRoundResponse, error) {
+	if !store.ValidTagName(req.GetName()) {
+		return nil, &snapshotStatus{codeInvalidArgument, "tag_name", fmt.Sprintf("%s, got %q", store.ErrTagName, req.GetName())}
+	}
+	ws, err := a.rt.openSnapshotStore()
+	if err != nil {
+		return nil, fmt.Errorf("snapshot store: %w", err)
+	}
+	if ws == nil {
+		return nil, &snapshotStatus{codeFailedPrecondition, "snapshots_disabled", "snapshots are disabled on this server (snapshot.interval is 0)"}
+	}
+	ts, ok := ws.(store.TagStore)
+	if !ok {
+		return nil, &snapshotStatus{codeFailedPrecondition, "tags_unsupported", "the snapshot store holds no tags"}
+	}
+	sw := a.rt.snapshotSweeper()
+	if err := sw.Lock(ctx); err != nil {
+		return nil, err
+	}
+	res, err := store.TagRoundAt(ctx, ts, a.rt.listedZones(), a.rt.zonesAt(), req.GetName(), sim.Tick(req.GetTick()))
+	sw.Unlock()
+	if err != nil {
+		return nil, tagStatus(err, req.GetTick())
+	}
+	actor := ""
+	if p, ok := auth.PrincipalFrom(ctx); ok {
+		actor = p.AccountID
+	}
+	a.rt.Tel.Log.LogAttrs(ctx, slog.LevelInfo, "snapshot round tagged",
+		slog.String("actor", actor), slog.Uint64("tick", uint64(res.Round.Tick)),
+		slog.String("name", req.GetName()), slog.Bool("already_tagged", res.AlreadyTagged),
+		slog.String("trace_id", telemetry.TraceID(ctx)))
+	return &adminv1.TagSnapshotRoundResponse{Tick: uint64(res.Round.Tick), AlreadyTagged: res.AlreadyTagged}, nil
+}
+
+// tagStatus is the status a TagRound refusal answers with: NOT_FOUND for no
+// round, FAILED_PRECONDITION for one that isn't Complete or that this binary
+// can't read. A store error is returned as it is.
+func tagStatus(err error, tick uint64) error {
+	var (
+		ri *sim.ErrRoundIncomplete
+		sv *sim.ErrStateVersion
+		rc *sim.ErrRoundContent
+		rz *sim.ErrRoundZoneUnknown
+	)
+	switch {
+	case errors.Is(err, store.ErrRoundNotFound) && tick == 0:
+		return &snapshotStatus{codeNotFound, "round_not_found", "no complete round to tag"}
+	case errors.Is(err, store.ErrRoundNotFound):
+		return &snapshotStatus{codeNotFound, "round_not_found", fmt.Sprintf("round %d not found", tick)}
+	case errors.As(err, &ri), errors.As(err, &rc), errors.As(err, &rz):
+		// The round's own tick: a request for the newest (tick 0) names none.
+		at := tick
+		switch {
+		case ri != nil:
+			at = uint64(ri.Tick)
+		case rc != nil:
+			at = uint64(rc.Tick)
+		case rz != nil:
+			at = uint64(rz.Tick)
+		}
+		return &snapshotStatus{codeFailedPrecondition, "round_incomplete", fmt.Sprintf("round %d is not complete: %s", at, err)}
+	case errors.As(err, &sv):
+		return &snapshotStatus{codeFailedPrecondition, "state_version", err.Error()}
+	}
+	return err
 }
 
 // VerifySnapshotRound restores one round into a scratch Engine, verifies it at

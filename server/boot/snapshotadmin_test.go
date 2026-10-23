@@ -6,6 +6,7 @@ package boot
 import (
 	"context"
 	"errors"
+	"strings"
 	"testing"
 	"time"
 
@@ -74,6 +75,21 @@ func TestVerifyResponse_RefusalsNameTheirStatus(t *testing.T) {
 		t.Error("an unclassified failure must be an error")
 	} else if errors.As(err, new(*snapshotStatus)) {
 		t.Errorf("an unclassified failure must not name a status: %v", err)
+	}
+}
+
+// A tag of the newest round (tick 0) that the round refuses names the round's
+// own tick, not the request's 0.
+func TestTagStatus_NamesTheRoundsTick(t *testing.T) {
+	for _, err := range []error{
+		&sim.ErrRoundIncomplete{Tick: 9, Cause: sim.RoundHash, Zones: []sim.ZoneID{"a"}},
+		&sim.ErrRoundContent{Tick: 9},
+		&sim.ErrRoundZoneUnknown{Tick: 9, Zone: "a"},
+	} {
+		var ss *snapshotStatus
+		if got := tagStatus(err, 0); !errors.As(got, &ss) || ss.reason != "round_incomplete" || !strings.HasPrefix(ss.msg, "round 9 is not complete") {
+			t.Errorf("%T: %v", err, got)
+		}
 	}
 }
 

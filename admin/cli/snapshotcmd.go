@@ -47,6 +47,7 @@ func newSnapshotCmd(rt *runtime) *cobra.Command {
 	}
 	cmd.AddCommand(newSnapshotListCmd(rt))
 	cmd.AddCommand(newSnapshotVerifyCmd(rt))
+	cmd.AddCommand(newSnapshotTagCmd(rt))
 	return cmd
 }
 
@@ -229,11 +230,15 @@ func (rt *runtime) snapshotListRPC(zone string, limit int) error {
 		Complete     bool     `json:"complete"`
 		TakenAt      string   `json:"taken_at,omitempty"`
 		AgeSeconds   int64    `json:"age_seconds,omitempty"`
+		Tags         []string `json:"tags"`
 	}
 	now := time.Now()
 	rows := make([]roundRow, 0, len(resp.Msg.GetRounds()))
 	for _, r := range resp.Msg.GetRounds() {
-		row := roundRow{Tick: r.GetTick(), StateVersion: r.GetStateVersion(), Zones: r.GetZoneIds(), Complete: r.GetComplete()}
+		row := roundRow{Tick: r.GetTick(), StateVersion: r.GetStateVersion(), Zones: r.GetZoneIds(), Complete: r.GetComplete(), Tags: r.GetTags()}
+		if row.Tags == nil {
+			row.Tags = []string{}
+		}
 		if ns := r.GetTakenAtUnixNano(); ns > 0 {
 			t := time.Unix(0, ns)
 			row.TakenAt, row.AgeSeconds = t.UTC().Format(time.RFC3339), int64(now.Sub(t).Seconds())
@@ -251,7 +256,7 @@ func (rt *runtime) snapshotListRPC(zone string, limit int) error {
 		return err
 	}
 	w := tabwriter.NewWriter(rt.stdout, 0, 0, 2, ' ', 0)
-	if _, err := fmt.Fprintln(w, "TICK\tVERSION\tZONES\tCOMPLETE\tAGE"); err != nil {
+	if _, err := fmt.Fprintln(w, "TICK\tVERSION\tZONES\tCOMPLETE\tAGE\tTAGS"); err != nil {
 		return err
 	}
 	for _, r := range rows {
@@ -259,11 +264,55 @@ func (rt *runtime) snapshotListRPC(zone string, limit int) error {
 		if r.TakenAt != "" {
 			age = (time.Duration(r.AgeSeconds) * time.Second).String()
 		}
-		if _, err := fmt.Fprintf(w, "%d\t%d\t%d\t%t\t%s\n", r.Tick, r.StateVersion, len(r.Zones), r.Complete, age); err != nil {
+		if _, err := fmt.Fprintf(w, "%d\t%d\t%d\t%t\t%s\t%s\n", r.Tick, r.StateVersion, len(r.Zones), r.Complete, age, dashIfEmpty(strings.Join(r.Tags, ","))); err != nil {
 			return err
 		}
 	}
 	return w.Flush()
+}
+
+func newSnapshotTagCmd(rt *runtime) *cobra.Command {
+	var (
+		name  string
+		round uint64
+	)
+	cmd := &cobra.Command{
+		Use:   "tag --name <t> [--round <tick>]",
+		Short: "Tag a complete snapshot round so retention keeps it",
+		Long: "Tag the newest complete snapshot round, or the round at --round, with --name\n" +
+			"(deploy:<tag> or rollback:<tick>), so the retention sweep keeps it among the newest\n" +
+			"snapshot.keep_deploy_rounds tagged rounds (Admin.TagSnapshotRound, operator only).\n\n" +
+			"Exits 0 when the round is tagged, or already carried the name; 1 when there is no such\n" +
+			"round or it isn't complete; 3 when the server can't be reached.",
+		SilenceUsage:  true,
+		SilenceErrors: true,
+		Args:          cobra.NoArgs,
+		RunE: func(_ *cobra.Command, _ []string) error {
+			if name == "" {
+				return &AppError{Exit: ExitUsage, Code: CodeInvalidValue, Message: "--name is required", Detail: map[string]any{"flag": "--name"}}
+			}
+			client, err := rt.adminClient()
+			if err != nil {
+				return err
+			}
+			ctx, cancel := rt.callCtx()
+			defer cancel()
+			resp, err := client.TagSnapshotRound(ctx, connect.NewRequest(&adminv1.TagSnapshotRoundRequest{Name: name, Tick: round}))
+			if err != nil {
+				return rpcError(err)
+			}
+			m := resp.Msg
+			result := "tagged"
+			if m.GetAlreadyTagged() {
+				result = "already_tagged"
+			}
+			return rt.writeResult(fmt.Sprintf("%s\nround=%d\nname=%s", result, m.GetTick(), name),
+				map[string]any{"result": result, "round": m.GetTick(), "name": name, "already_tagged": m.GetAlreadyTagged()})
+		},
+	}
+	cmd.Flags().StringVar(&name, "name", "", "tag name: deploy:<tag> or rollback:<tick> (required)")
+	cmd.Flags().Uint64Var(&round, "round", 0, "tick of the round to tag; 0 or unset tags the newest complete round")
+	return cmd
 }
 
 // verifyTimeout is how long `snapshot verify` waits at least: the default of

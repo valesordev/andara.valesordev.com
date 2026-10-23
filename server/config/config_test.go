@@ -647,6 +647,39 @@ func TestParse_RecoveryKeys(t *testing.T) {
 	}
 }
 
+// AW-SRV-055's retention keys: defaults, env, flag, file, and the refusals.
+func TestParse_SnapshotRetentionKeys(t *testing.T) {
+	c, err := Parse(nil, withTLS(nil), nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if c.SnapshotKeepRounds != 120 || c.SnapshotKeepDeployRounds != 30 || c.SnapshotMaxRoundAge != 552*time.Hour {
+		t.Fatalf("defaults keep_rounds=%d keep_deploy_rounds=%d max_round_age=%s", c.SnapshotKeepRounds, c.SnapshotKeepDeployRounds, c.SnapshotMaxRoundAge)
+	}
+	vals := map[string]string{"ANDARA_SNAPSHOT_KEEP_ROUNDS": "5", "ANDARA_SNAPSHOT_KEEP_DEPLOY_ROUNDS": "0", "ANDARA_SNAPSHOT_MAX_ROUND_AGE": "48h"}
+	c, err = Parse(nil, withTLS(func(k string) (string, bool) { v, ok := vals[k]; return v, ok }), nil)
+	if err != nil || c.SnapshotKeepRounds != 5 || c.SnapshotKeepDeployRounds != 0 || c.SnapshotMaxRoundAge != 48*time.Hour {
+		t.Fatalf("env: %v %d %d %s", err, c.SnapshotKeepRounds, c.SnapshotKeepDeployRounds, c.SnapshotMaxRoundAge)
+	}
+	c, err = Parse([]string{"--snapshot-keep-rounds=9", "--snapshot-keep-deploy-rounds=3", "--snapshot-max-round-age=1h"}, withTLS(nil), nil)
+	if err != nil || c.SnapshotKeepRounds != 9 || c.SnapshotKeepDeployRounds != 3 || c.SnapshotMaxRoundAge != time.Hour {
+		t.Fatalf("flags: %v %d %d %s", err, c.SnapshotKeepRounds, c.SnapshotKeepDeployRounds, c.SnapshotMaxRoundAge)
+	}
+	file := filepath.Join(t.TempDir(), "andara.yaml")
+	if err := os.WriteFile(file, []byte("snapshot:\n  keep_rounds: 11\n  keep_deploy_rounds: 4\n  max_round_age: 72h\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	c, err = Parse([]string{"--config", file}, withTLS(nil), nil)
+	if err != nil || c.SnapshotKeepRounds != 11 || c.SnapshotKeepDeployRounds != 4 || c.SnapshotMaxRoundAge != 72*time.Hour {
+		t.Fatalf("file: %v %d %d %s", err, c.SnapshotKeepRounds, c.SnapshotKeepDeployRounds, c.SnapshotMaxRoundAge)
+	}
+	for _, bad := range [][]string{{"--snapshot-keep-rounds=0"}, {"--snapshot-keep-deploy-rounds=-1"}, {"--snapshot-max-round-age=0s"}} {
+		if _, err := Parse(bad, withTLS(nil), io.Discard); err == nil {
+			t.Errorf("%v: accepted", bad)
+		}
+	}
+}
+
 // AW-SRV-052 AC-10: ingress.degraded_hold defaults to 120 s, is read from
 // the flag, the environment and the file, and below 90 s fails config load,
 // naming the key and the floor.

@@ -33,6 +33,11 @@ func (e *snapshotRefusal) Status() (uint32, string, string, proto.Message) {
 type fakeSnapshots struct {
 	rounds []*adminv1.SnapshotRound
 	verify func(tick uint64) (*adminv1.VerifySnapshotRoundResponse, error)
+	tag    func(req *adminv1.TagSnapshotRoundRequest) (*adminv1.TagSnapshotRoundResponse, error)
+}
+
+func (f *fakeSnapshots) TagSnapshotRound(_ context.Context, req *adminv1.TagSnapshotRoundRequest) (*adminv1.TagSnapshotRoundResponse, error) {
+	return f.tag(req)
 }
 
 func (f *fakeSnapshots) ListSnapshotRounds(_ context.Context, req *adminv1.ListSnapshotRoundsRequest) (*adminv1.ListSnapshotRoundsResponse, error) {
@@ -54,7 +59,7 @@ func snapshotServer(t *testing.T, f *fakeSnapshots) map[string]string {
 func TestSnapshotList_OverTheAdminRPC(t *testing.T) {
 	taken := time.Now().Add(-90 * time.Second).UnixNano()
 	env := snapshotServer(t, &fakeSnapshots{rounds: []*adminv1.SnapshotRound{
-		{Tick: 4200, StateVersion: 2, ZoneIds: []string{"town", "wilds"}, Complete: true, TakenAtUnixNano: taken},
+		{Tick: 4200, StateVersion: 2, ZoneIds: []string{"town", "wilds"}, Complete: true, TakenAtUnixNano: taken, Tags: []string{"deploy:abc123", "rollback:4200"}},
 		{Tick: 4100, StateVersion: 2, ZoneIds: []string{"town"}, Complete: false},
 	}})
 	res := runCLI(t, []string{"snapshot", "list"}, env)
@@ -62,19 +67,64 @@ func TestSnapshotList_OverTheAdminRPC(t *testing.T) {
 		t.Fatalf("exit %d: %s", res.exit, res.stderr)
 	}
 	lines := strings.Split(strings.TrimSpace(res.stdout), "\n")
-	if len(lines) != 3 || !strings.HasPrefix(lines[0], "TICK") || !strings.Contains(lines[1], "4200") || !strings.Contains(lines[1], "true") || !strings.Contains(lines[2], "false") {
+	if len(lines) != 3 || !strings.HasPrefix(lines[0], "TICK") || !strings.HasSuffix(lines[0], "TAGS") || !strings.Contains(lines[1], "4200") || !strings.Contains(lines[1], "true") ||
+		!strings.HasSuffix(lines[1], "deploy:abc123,rollback:4200") || !strings.Contains(lines[2], "false") || !strings.HasSuffix(lines[2], "-") {
 		t.Fatalf("table:\n%s", res.stdout)
 	}
 	res = runCLI(t, []string{"snapshot", "list", "-o", "json"}, env)
 	var out struct {
 		Count  int `json:"count"`
 		Rounds []struct {
-			Tick     uint64 `json:"tick"`
-			Complete bool   `json:"complete"`
+			Tick     uint64   `json:"tick"`
+			Complete bool     `json:"complete"`
+			Tags     []string `json:"tags"`
 		} `json:"rounds"`
 	}
-	if err := json.Unmarshal([]byte(res.stdout), &out); err != nil || out.Count != 2 || out.Rounds[0].Tick != 4200 || !out.Rounds[0].Complete {
+	if err := json.Unmarshal([]byte(res.stdout), &out); err != nil || out.Count != 2 || out.Rounds[0].Tick != 4200 || !out.Rounds[0].Complete ||
+		strings.Join(out.Rounds[0].Tags, ",") != "deploy:abc123,rollback:4200" || out.Rounds[1].Tags == nil || len(out.Rounds[1].Tags) != 0 {
 		t.Fatalf("json: %s (%v)", res.stdout, err)
+	}
+}
+
+// AW-SRV-055: `snapshot tag` exits 0 for a tag or a re-tag, 1 for no such
+// round or an incomplete one, with the server's message.
+func TestSnapshotTag_Exits(t *testing.T) {
+	var got []*adminv1.TagSnapshotRoundRequest
+	env := snapshotServer(t, &fakeSnapshots{tag: func(req *adminv1.TagSnapshotRoundRequest) (*adminv1.TagSnapshotRoundResponse, error) {
+		got = append(got, req)
+		switch req.GetTick() {
+		case 0:
+			return &adminv1.TagSnapshotRoundResponse{Tick: 4200}, nil
+		case 4100:
+			return &adminv1.TagSnapshotRoundResponse{Tick: 4100, AlreadyTagged: true}, nil
+		case 7:
+			return nil, &snapshotRefusal{5, "round_not_found"}
+		}
+		return nil, &snapshotRefusal{9, "round_incomplete"}
+	}})
+	res := runCLI(t, []string{"snapshot", "tag", "--name", "deploy:abc123"}, env)
+	if res.exit != ExitOK || !strings.HasPrefix(res.stdout, "tagged\nround=4200\nname=deploy:abc123") {
+		t.Errorf("newest: exit %d %q %s", res.exit, res.stdout, res.stderr)
+	}
+	if len(got) != 1 || got[0].GetTick() != 0 || got[0].GetName() != "deploy:abc123" {
+		t.Errorf("request without --round: %v", got)
+	}
+	res = runCLI(t, []string{"snapshot", "tag", "--name", "rollback:4100", "--round", "4100", "-o", "json"}, env)
+	var out struct {
+		Result        string `json:"result"`
+		Round         uint64 `json:"round"`
+		AlreadyTagged bool   `json:"already_tagged"`
+	}
+	if res.exit != ExitOK || json.Unmarshal([]byte(res.stdout), &out) != nil || out.Result != "already_tagged" || out.Round != 4100 || !out.AlreadyTagged {
+		t.Errorf("re-tag: exit %d %q", res.exit, res.stdout)
+	}
+	for round, msg := range map[string]string{"7": "refused: round_not_found", "8": "refused: round_incomplete"} {
+		if res := runCLI(t, []string{"snapshot", "tag", "--name", "rollback:" + round, "--round", round}, env); res.exit != ExitFail || !strings.Contains(res.stderr, msg) {
+			t.Errorf("round %s: exit %d %q, want %d and the server's %q", round, res.exit, res.stderr, ExitFail, msg)
+		}
+	}
+	if res := runCLI(t, []string{"snapshot", "tag"}, env); res.exit != ExitUsage {
+		t.Errorf("no --name: exit %d, want %d", res.exit, ExitUsage)
 	}
 }
 

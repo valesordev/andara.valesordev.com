@@ -414,6 +414,21 @@
               "type": "string",
               "pattern": "^([0-9]+(\\.[0-9]+)?(ns|us|\u00b5s|ms|s|m|h))+$",
               "description": "ANDARA_SNAPSHOT_UPLOAD_TIMEOUT (AW-SRV-006). Default when unset: '30s'."
+            },
+            "keep_rounds": {
+              "type": "integer",
+              "minimum": 1,
+              "description": "ANDARA_SNAPSHOT_KEEP_ROUNDS (AW-INF-007). Default when unset: 120."
+            },
+            "keep_deploy_rounds": {
+              "type": "integer",
+              "minimum": 0,
+              "description": "ANDARA_SNAPSHOT_KEEP_DEPLOY_ROUNDS (AW-INF-007). Default when unset: 30."
+            },
+            "max_round_age": {
+              "type": "string",
+              "pattern": "^([0-9]+(\\.[0-9]+)?(ns|us|\u00b5s|ms|s|m|h))+$",
+              "description": "ANDARA_SNAPSHOT_MAX_ROUND_AGE (AW-SRV-055). Default when unset: '552h'."
             }
           }
         },
