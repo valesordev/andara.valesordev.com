@@ -239,7 +239,8 @@ class SeparateMerge(Base):
         self.assertRefused("separate-merge", SOLO7DEV, detail="backend changed")
 
     def test_a_changed_provider(self):
-        self.replace(SOLO7DEV + "/main.tf", "url = var.grafana_url", 'url = "https://evil.example"')
+        self.replace(SOLO7DEV + "/main.tf", "url                  = var.grafana_url",
+                     'url                  = "https://evil.example"')
         self.assertRefused("separate-merge", SOLO7DEV, detail="provider grafana 0 changed")
 
     def test_changed_required_providers(self):

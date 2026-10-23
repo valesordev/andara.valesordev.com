@@ -492,11 +492,11 @@ alerts-sync:
 alerts-diff:
 	@$(PY) $(SCRIPTS)/alerts_sync.py diff
 
-## tf-plan: plan a Grafana Cloud Terraform root — STACK=solo7dev (solo7 and solo7-irm are CI's); GRAFANA_<STACK>_READ_TOKEN and SLACK_WEBHOOK_<DEV|PROD> from the environment or .local/box.env, exit 3 without them (AW-INF-046)
+## tf-plan: plan a Grafana Cloud Terraform root — STACK=solo7dev (solo7 and solo7-irm are CI's); GRAFANA_<STACK>_READ_TOKEN, SLACK_WEBHOOK_<DEV|PROD> and, for a root with a Fleet provider, GRAFANA_<STACK>_FLEET_READ_TOKEN from the environment or .local/box.env, exit 3 without them (AW-INF-046, AW-INF-051)
 tf-plan:
 	@$(PY) $(SCRIPTS)/tf.py plan --stack "$(STACK)"
 
-## tf-apply: plan, apply that plan, then require an empty second plan — STACK=solo7dev; GRAFANA_<STACK>_APPLY_TOKEN and the webhook, exit 3 without them; a held state lock exits 1 naming it (AW-INF-046)
+## tf-apply: plan, apply that plan, then require an empty second plan — STACK=solo7dev; GRAFANA_<STACK>_APPLY_TOKEN, the webhook and GRAFANA_<STACK>_FLEET_APPLY_TOKEN, exit 3 without them; a held state lock exits 1 naming it (AW-INF-046)
 tf-apply:
 	@$(PY) $(SCRIPTS)/tf.py apply --stack "$(STACK)"
 
