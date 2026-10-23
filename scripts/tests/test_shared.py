@@ -278,6 +278,42 @@ class FakeNet:
         raise AssertionError("unexpected kubectl %r" % (args,))
 
 
+class ProbeScript(unittest.TestCase):
+    """NET_SCRIPT itself, run locally by bash in place of `kubectl exec`: the anchoring is the
+    shell's, so a canned output can't test it (pre-review round 2)."""
+
+    @staticmethod
+    def local(cmd, capture_output=True, text=True):
+        return subprocess.run(cmd[cmd.index("--") + 1:], capture_output=True, text=True)
+
+    def setUp(self):
+        import socket
+        self.listener = socket.socket()
+        self.listener.bind(("127.0.0.1", 0))
+        self.listener.listen(8)
+        self.addCleanup(self.listener.close)
+        self.open = str(self.listener.getsockname()[1])
+        closed = socket.socket()
+        closed.bind(("127.0.0.1", 0))
+        self.closed = str(closed.getsockname()[1])
+        closed.close()
+
+    def probe(self, host, anchor_port, port):
+        return shared.probe_once("ns", "pod", host, run=self.local, anchor="127.0.0.1/" + anchor_port, port=port)
+
+    def test_connected(self):
+        self.assertEqual(self.probe("localhost", self.open, self.open), "connected")
+
+    def test_blocked_when_it_resolved_and_reached_the_anchor(self):
+        self.assertEqual(self.probe("localhost", self.open, self.closed), "blocked")
+
+    def test_unanchored_when_the_anchor_is_unreachable(self):
+        self.assertEqual(self.probe("localhost", self.closed, self.closed), "unanchored")
+
+    def test_unanchored_when_the_host_doesnt_resolve(self):
+        self.assertEqual(self.probe("no-such-host.invalid", self.open, self.closed), "unanchored")
+
+
 class NetCheck(unittest.TestCase):
     """make shared-netcheck (AW-INF-055 AC-5), over a fake cluster."""
 
@@ -311,8 +347,9 @@ class NetCheck(unittest.TestCase):
             ("andara-dev", "pod", "andara-netcheck-abc123-other"),
             ("andara-local", "pod", "andara-netcheck-abc123")])
         # every probe ran against the shared bootstrap's FQDN
-        hosts = {a[-1] for _, a in net.calls if a[0] == "exec"}
-        self.assertEqual(hosts, {"andara-log-kafka-bootstrap.andara-shared.svc"})
+        probes = {tuple(a[-3:]) for _, a in net.calls if a[0] == "exec"}
+        self.assertEqual(probes, {("andara-log-kafka-bootstrap.andara-shared.svc",
+                                   "kube-dns.kube-system.svc.cluster.local/53", "9092")})
 
     def test_the_probes_match_the_listener_peer_and_nothing_of_the_chart(self):
         net = FakeNet()
@@ -378,6 +415,14 @@ class NetCheck(unittest.TestCase):
             code, stdout, _ = self.run_net(net)
             self.assertEqual(code, 1, out)
             self.assertIn("FAIL an andara pod in an unlabelled namespace: unanchored (want blocked)", stdout)
+
+    def test_one_unanchored_attempt_among_the_refusals_fails_the_case(self):
+        net = FakeNet({("scratch", "andara-netcheck-abc123"): ["probe-ran\nblocked\n", FakeNet.BLOCKED]})
+        code, out, err = self.run_net(net)
+        self.assertEqual(code, 1)
+        self.assertIn("FAIL an andara pod in an unlabelled namespace: unanchored (want blocked)", out)
+        self.assertIn("its DNS or egress, not the listener's policy", err)
+        self.assertNotIn("is not as kafka.yaml declares", err)
 
     def test_a_probe_that_isnt_ready_names_itself_and_why_and_still_cleans_up(self):
         net = FakeNet(fail={"wait"})

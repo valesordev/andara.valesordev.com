@@ -202,9 +202,18 @@ def reset(env, ns, broker="cluster"):
     run = topics.rpk_runner(env, broker)
     # A namespace shared-up made holds no release until helm-install (or Argo CD) puts one there,
     # and the config map read next would fail as a bare NotFound.
-    if not exists(ns, SERVER):
-        raise StepFailed("no %s in %s, so there is no World to reset; run `make helm-install ENV=%s` "
-                         "first; nothing was changed" % (SERVER, ns, env))
+    # As argo_policy: only a confirmed NotFound means "no release"; any other error is reported as is.
+    p = kubectl(ns, "get", SERVER, "-o", "name", check=False)
+    if p.returncode != 0:
+        err = (p.stderr or p.stdout).strip()
+        if "NotFound" not in err:
+            raise StepFailed("read %s in %s (only NotFound counts as none): %s; nothing was changed"
+                             % (SERVER, ns, err))
+        install = ("`make helm-install ENV=local`" if env == "local"
+                   else "`make promote ENV=%s` and `make argocd-install ENV=%s`" % (env, env))
+        raise StepFailed("no server release in %s (%s not found), and world-reset needs one: it scales "
+                         "the server and reads andara-config. Install it first (%s); nothing was changed"
+                         % (ns, SERVER, install))
     argo_policy(ns)
     store = snapshot_store(ns)
     if store not in ("fs", "s3"):

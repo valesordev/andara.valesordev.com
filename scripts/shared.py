@@ -257,12 +257,13 @@ BOOTSTRAP = "%s-kafka-bootstrap.%s.svc"
 # Something every pod may reach whatever the listener's policy says: a refusal counts only from a
 # probe that resolved the bootstrap and reached this (live-assertions rule 3: anchor the absence).
 NET_ANCHOR = "kube-dns.kube-system.svc.cluster.local/53"
-# What runs in each probe pod: a marker first, so a probe that never ran can't read as refused;
-# then the anchor; then the verdict.
+NET_PORT = "9092"
+# What runs in each probe pod, as `bash -c NET_SCRIPT <host> <anchor host/port> <port>`: a marker
+# first, so a probe that never ran can't read as refused; then the anchor; then the verdict.
 NET_SCRIPT = ('echo probe-ran; getent hosts "$0" >/dev/null && echo resolved; '
-              'timeout 3 bash -c "exec 3<>/dev/tcp/%s" && echo anchored; '
-              'if timeout 3 bash -c "exec 3<>/dev/tcp/$0/9092"; '
-              'then echo connected; else echo blocked; fi') % NET_ANCHOR
+              'timeout 3 bash -c "exec 3<>/dev/tcp/$1" && echo anchored; '
+              'if timeout 3 bash -c "exec 3<>/dev/tcp/$0/$2"; '
+              'then echo connected; else echo blocked; fi')
 
 
 def tools_image(path=NET_TOOLS):
@@ -287,10 +288,10 @@ def probe_manifest(ns, name, app, image):
                      "containers": [{"name": "probe", "image": image, "command": ["sleep", "600"]}]}}
 
 
-def probe_once(ns, name, host, run=subprocess.run):
+def probe_once(ns, name, host, run=subprocess.run, anchor=NET_ANCHOR, port=NET_PORT):
     """"connected", "blocked", or "unanchored" (it didn't connect, but it also couldn't resolve the
     bootstrap or reach NET_ANCHOR, so the refusal proves nothing); Failed when the probe didn't run."""
-    out = kubectl(ns, "exec", name, "-c", "probe", "--", "bash", "-c", NET_SCRIPT, host, run=run)
+    out = kubectl(ns, "exec", name, "-c", "probe", "--", "bash", "-c", NET_SCRIPT, host, anchor, port, run=run)
     words = out.split()
     if "probe-ran" not in words or not ({"connected", "blocked"} & set(words)):
         raise Failed("probe %s/%s gave no verdict: %r" % (ns, name, out[:200]))
@@ -346,7 +347,7 @@ def netcheck(ns=None, run=subprocess.run, sleep=None, clock=None, suffix=None, i
                     why = None
                 raise Failed("probe %s/%s not Ready within 120s (%s)" % (pns, pod, why or "reason unknown"))
         say("netcheck: probes Ready; bootstrap %s:9092" % host)
-        failed = []
+        failed, unproven = [], []
         # Rule 1 of docs/specs/testing/live-assertions.md: the admitted probes are polled to a
         # deadline (a new pod's policy can lag its readiness); the refused ones are tried
         # `refusals` times after, and a single connection is a failure, as is a refusal from a
@@ -368,9 +369,15 @@ def netcheck(ns=None, run=subprocess.run, sleep=None, clock=None, suffix=None, i
             ok = verdict == want
             say("netcheck: %s %s: %s (want %s)" % ("ok" if ok else "FAIL", what, verdict, want))
             if not ok:
-                failed.append(what)
+                (unproven if verdict == "unanchored" else failed).append(what)
+        msgs = []
         if failed:
-            raise Failed("the listener's NetworkPolicy is not as kafka.yaml declares: %s" % "; ".join(failed))
+            msgs.append("the listener's NetworkPolicy is not as kafka.yaml declares: %s" % "; ".join(failed))
+        if unproven:
+            msgs.append("not proven, because the probe couldn't resolve the bootstrap or reach %s "
+                        "(its DNS or egress, not the listener's policy): %s" % (NET_ANCHOR, "; ".join(unproven)))
+        if msgs:
+            raise Failed(". ".join(msgs))
         say("netcheck: ok — admitted andara pods in andara-local and andara-dev only")
     finally:
         for pns, pod, _, _, _ in cases:
