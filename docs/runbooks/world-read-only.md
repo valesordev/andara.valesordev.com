@@ -46,7 +46,7 @@ successful ping.
 
 On the box (`dev`), one broker down is **not** this condition. The shared Kafka runs three
 brokers, and `dev`'s topics have `min.insync.replicas` 2 (AW-INF-014), so writes are still acknowledged, and `make
-kafka-broker-bounce ENV=<env>` proves the server never degrades while one is gone. Read-only on
+kafka-broker-bounce ENV=dev` proves the server never degrades while one is gone. Read-only on
 the box means two brokers are down, or the server cannot reach the bootstrap Service at all. Start
 from the Strimzi `Ready` condition and the under-replicated count above.
 

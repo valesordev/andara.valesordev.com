@@ -5,7 +5,7 @@
 {{- /*
 On the shared broker local's topics are `local.<name>` (ADR-0013 decision 4, AW-INF-055), so a
 local render without the prefix would point the server at names that aren't its own. dev's
-values gain the prefix with AW-INF-059, and the check extends to dev then (amendment 16).
+check is the values schema's allOf (schema.base.yaml, AW-INF-059, amendment 16).
 */ -}}
 {{- $server := .Values.server | default dict }}
 {{- if eq (toString (dig "telemetry" "environment" "" $server)) "local" }}

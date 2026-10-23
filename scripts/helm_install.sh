@@ -107,6 +107,13 @@ done
 
 kube_kubectl get namespace "$NS" >/dev/null 2>&1 || kube_kubectl create namespace "$NS" >/dev/null
 echo "helm-install: namespace $NS"
+# The shared Kafka's listener admits an andara pod only from a namespace carrying this label
+# (deploy/k8s/kafka/kafka.yaml, as `make shared-up` sets it). A namespace env-destroy removed and
+# this script recreated would otherwise wait out --wait on a broker it can't reach.
+if [[ "$ENVNAME" != "local" && "${KNS:-$NS}" != "$NS" ]]; then
+  kube_kubectl label namespace "$NS" "andara.valesor/env=$ENVNAME" --overwrite >/dev/null
+  echo "helm-install: namespace $NS labelled andara.valesor/env=$ENVNAME"
+fi
 
 # Environments whose content comes from ConfigMaps (server.content.source: dir) and whose
 # token key and first operator this script provisions. dev leaves this list when

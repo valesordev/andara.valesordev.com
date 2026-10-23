@@ -489,10 +489,11 @@ def test_label_values():
 
 
 def test_kafka_on_the_box():
-    """AW-INF-014 AC-8: prod points at its namespace's Kafka `andara-log`, dev at the shared one in
-    andara-shared under its topic prefix (AW-INF-059 AC-11), and both run the sim and the Account
-    store on it (the chart renders only what is set, so the memory switches must be absent,
-    leaving the `kafka` defaults). local stays broker-free."""
+    """AW-INF-014 AC-8: dev points at the shared Kafka in andara-shared under its topic prefix
+    (AW-INF-059 AC-11) and prod at a bare bootstrap on its own cluster (ADR-0013 decision 10), and
+    both run the sim and the Account store on it (the chart renders only what is set, so the memory
+    switches must be absent, leaving the `kafka` defaults). local names the shared Kafka under
+    `local` (AW-INF-055) but keeps its sim and Account store in memory until AW-INF-060."""
     shared = "andara-log-kafka-bootstrap.andara-shared.svc:9092"
     wants = {"dev": (shared, "dev"),
              "prod": ("andara-log-kafka-bootstrap:9092", None)}

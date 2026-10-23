@@ -734,8 +734,8 @@ class KafkaOperator(unittest.TestCase):
         self.assertIn("AW-INF-060", p.stderr)
         self.assertEqual([c for c in calls(log) if c.startswith(("kubectl", "helm"))], [])
 
-    def test_argocd_install_wants_the_shared_kafka(self):
-        # AW-INF-055: dev's broker is in andara-shared, not andara-dev.
+    def shared_kafka_preconditions(self, labels):
+        """preconditions("andara-dev") against a Ready shared Kafka, with andara-dev carrying labels."""
         c = Cluster()
         mod = with_cluster(load_argocd(), c)
         ready = {"status": {"conditions": [{"type": "Ready", "status": "True"}]}}
@@ -745,13 +745,75 @@ class KafkaOperator(unittest.TestCase):
             seen.append(a)
             if "kafka" in a:
                 return ready if a[:2] == ("-n", "andara-shared") else None
+            if a[:2] == ("get", "namespace"):
+                return {"metadata": {"labels": labels}} if a[2] == "andara-dev" else None
             return ready
         mod.kubectl_json = kubectl_json
         mod.VALUES = os.path.join(REPO, "deploy", "helm", "values", "dev.yaml")
         code, out, err = quiet(mod.preconditions, "andara-dev")
+        return code, out, err, seen
+
+    def test_bounce_dev_watches_the_server_in_andara_dev_and_kills_a_broker_in_andara_shared(self):
+        # Reviewer on #618: the first bounce whose server and brokers live in different namespaces.
+        d = tempfile.mkdtemp()
+        self.addCleanup(lambda: subprocess.run(["rm", "-rf", d]))
+        log, gone = os.path.join(d, "calls"), os.path.join(d, "deleted")
+        kubectl = ('case "$*" in\n'
+                   '  *"get pod andara-0"*) echo "True 2026-10-22T00:00:00Z 0";;\n'
+                   '  *"exec andara-0"*) echo \'andara_ingress_submits_total{outcome="unavailable"} 0\';;\n'
+                   '  *"delete pod"*) touch "%s";;\n'
+                   '  *"get pod andara-log-broker-0"*uid*) if [ -f "%s" ]; then echo u1; else echo u0; fi;;\n'
+                   '  *"get pod andara-log-broker-0"*ready*) echo true;;\n'
+                   'esac\nexit 0') % (gone, gone)
+        env = stub_bin(d, log, {"helm": "exit 0", "kubectl": kubectl})
+        p = subprocess.run([os.path.join(SCRIPTS, "kafka.sh"), "bounce", "dev"], capture_output=True, text=True, env=env)
+        self.assertEqual(p.returncode, 0, p.stderr)
+        made = calls(log)
+        broker = [c for c in made if "andara-log-broker-" in c]
+        server = [c for c in made if "andara-0" in c]
+        self.assertTrue([c for c in broker if " delete pod andara-log-broker-0" in c], made)
+        self.assertTrue(broker and all(" -n andara-shared " in c for c in broker), broker)
+        self.assertTrue(server and all(" -n andara-dev " in c for c in server), server)
+
+    def test_kafka_sh_refuses_prod_before_any_call(self):
+        # prod's Kafka isn't on this cluster (ADR-0013 decision 10).
+        for cmd in ("install", "bounce"):
+            d = tempfile.mkdtemp()
+            self.addCleanup(lambda d=d: subprocess.run(["rm", "-rf", d]))
+            log = os.path.join(d, "calls")
+            env = stub_bin(d, log, {"helm": "exit 0", "kubectl": "exit 0"})
+            p = subprocess.run([os.path.join(SCRIPTS, "kafka.sh"), cmd, "prod"], capture_output=True, text=True, env=env)
+            self.assertEqual(p.returncode, 2, (cmd, p.stderr))
+            self.assertIn("ADR-0013 decision 10", p.stderr)
+            self.assertEqual(calls(log), [], cmd)
+
+    def test_argocd_install_wants_the_shared_kafka(self):
+        # AW-INF-055: dev's broker is in andara-shared, not andara-dev.
+        code, out, err, seen = self.shared_kafka_preconditions({"andara.valesor/env": "dev"})
         self.assertEqual(code, 0, err)
         self.assertIn("kafka/andara-log in andara-shared", out)
         self.assertEqual([a[:2] for a in seen if "kafka" in a], [("-n", "andara-shared")])
+
+    def test_argocd_install_refuses_a_dev_namespace_the_listener_wont_admit(self):
+        # Reviewer on #618: env-destroy removes andara-dev and its label; the listener then drops
+        # the server, so argocd-install refuses rather than sync a server that can't reach the broker.
+        for labels in ({}, {"andara.valesor/env": "local"}):
+            code, _, err, _ = self.shared_kafka_preconditions(labels)
+            self.assertEqual(code, 1, labels)
+            self.assertIn("namespace andara-dev isn't labelled andara.valesor/env=dev", err)
+            self.assertIn("run `make shared-up` first", err)
+
+    def test_helm_install_labels_dev_s_namespace_for_the_shared_kafka(self):
+        # A namespace helm-install recreates (after env-destroy) carries the label the listener admits.
+        kubectl = ('case "$*" in "get crd applications.argoproj.io") exit 1;;\n'
+                   '  *"kafka andara-log"*|*clusterissuer*) echo True;;\nesac\nexit 0')
+        with tempfile.TemporaryDirectory() as d:
+            log = os.path.join(d, "calls")
+            env = stub_bin(d, log, {"kubectl": kubectl, "helm": "exit 0"})
+            subprocess.run([os.path.join(SCRIPTS, "helm_install.sh"), "dev", "andara-server", "sha-0123456789ab", "", "1"],
+                           capture_output=True, text=True, env=env)
+            self.assertIn("kubectl --context kind-andara label namespace andara-dev andara.valesor/env=dev --overwrite",
+                          calls(log))
 
     def test_no_install_path_carries_another_watch_list(self):
         """AC-5's grep: kafka-operator and kafka.sh's WATCHED list are gone."""
