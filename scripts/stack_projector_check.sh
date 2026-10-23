@@ -54,7 +54,8 @@ work="$(mktemp -d)"
 pid=""
 trap '[[ -z "$pid" ]] || kill "$pid" 2>/dev/null || true; rm -rf "$work"' EXIT
 
-ANDARA_KAFKA_BROKERS="$BROKERS" ANDARA_HTTP_PORT="$PORT" ANDARA_OTLP_ENDPOINT="$OTLP" \
+ANDARA_KAFKA_BROKERS="$BROKERS" ANDARA_KAFKA_TOPIC_PREFIX="${ANDARA_KAFKA_TOPIC_PREFIX:-local}" \
+ANDARA_HTTP_PORT="$PORT" ANDARA_OTLP_ENDPOINT="$OTLP" \
 ANDARA_SNAPSHOT_FS_PATH="$SNAP" ANDARA_CONTENT_SOURCE=dir \
 ANDARA_CONTENT_PATH="${ANDARA_CONTENT_PATH:-$PWD/testdata/content/valid}" \
   bin/andara-projector state --rebuild >"$work/out" 2>"$work/log" &

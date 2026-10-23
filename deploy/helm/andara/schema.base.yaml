@@ -201,6 +201,35 @@ properties:
   podAnnotations:
     type: object
     additionalProperties: {type: string}
+  release:
+    type: object
+    additionalProperties: false
+    description: "Release markers, values not server keys (docs/specs/deploy/lifecycle.md). On dev, `make promote ENV=dev TAG=dev-<n>` commits them (AW-INF-059)."
+    properties:
+      rolled_back_to: {type: string, description: "The tag a rollback returned to; empty on a forward deploy or promotion"}
+# dev's topics carry the `dev.` prefix on the shared broker (ADR-0013 amendment 16, AW-INF-059):
+# an empty prefix there would read and write prod's topic names. local's check is
+# templates/configmap.yaml's `required` (AW-INF-055).
+allOf:
+  - if:
+      required: [server]
+      properties:
+        server:
+          required: [telemetry]
+          properties:
+            telemetry:
+              required: [environment]
+              properties:
+                environment: {const: dev}
+    then:
+      properties:
+        server:
+          required: [kafka]
+          properties:
+            kafka:
+              required: [topic_prefix]
+              properties:
+                topic_prefix: {minLength: 1}
 $defs:
   probe:
     type: object

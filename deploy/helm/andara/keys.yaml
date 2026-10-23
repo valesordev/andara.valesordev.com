@@ -122,6 +122,13 @@ keys:
   # Empty is prod's value; outside prod it is a startup warn until the follow-on story makes it
   # fatal (ADR-0013 Amendment 16). The chart's values and required check are AW-INF-055's.
   - {key: kafka.topic_prefix,        env: ANDARA_KAFKA_TOPIC_PREFIX,      type: string, default: "", story: AW-SRV-058}
+  # The SASL principal; empty means no SASL, which is how everything runs today. The password
+  # is a file, re-read on each new connection and only when a username is set: the `password`
+  # key of the Strimzi KafkaUser Secret, mounted whole by secrets.kafkaCreds. Every projector
+  # envFroms andara-config, so a live sasl_username reaches it too and must be overridden per
+  # container from the projector's own principal (AW-INF-056).
+  - {key: kafka.sasl_username,       env: ANDARA_KAFKA_SASL_USERNAME,      type: string, default: "", story: AW-SRV-044}
+  - {key: kafka.sasl_password_file,  env: ANDARA_KAFKA_SASL_PASSWORD_FILE, type: string, default: /etc/andara/secrets/kafka/password, story: AW-SRV-044}
   - {key: auth.store,                env: ANDARA_AUTH_STORE,              type: enum, values: [kafka, memory], default: kafka, story: AW-SRV-008}
   - {key: auth.session_ttl,          env: ANDARA_AUTH_SESSION_TTL,        type: duration, default: 1h, story: AW-SRV-008}
   - {key: auth.refresh_ttl,          env: ANDARA_AUTH_REFRESH_TTL,        type: duration, default: 720h, story: AW-SRV-008}

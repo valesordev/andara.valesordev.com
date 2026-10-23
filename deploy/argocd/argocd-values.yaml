@@ -20,7 +20,7 @@ redis:
     tag: 8.6.4-alpine@sha256:2cc044fc5a07c9b701f8f1255a309ae9ad7856e694ac03513bf3648c01e40763
 configs:
   cm:
-    # Annotation tracking, so the app.kubernetes.io/* labels `make kafka-install` and
+    # Annotation tracking, so the app.kubernetes.io/* labels `make shared-up` and
     # others put on resources are never read as the Application's.
     application.resourceTrackingMethod: annotation
     # The box's Traefik doesn't publish an address into Ingress status (it owns the host

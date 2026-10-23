@@ -43,6 +43,21 @@ class Refusals(unittest.TestCase):
     def test_no_env_is_usage(self):
         self.assertRefused(make("CONFIRM=andara-dev"), "usage: make world-reset")
 
+    # AW-INF-055 AC-7: local on the shared broker is reset by name; on compose it isn't.
+    def test_local_on_compose_is_still_refused(self):
+        self.assertRefused(make("ENV=local", "CONFIRM=andara-local", "BROKER=compose"), "make down VOLUMES=1")
+
+    def test_broker_with_dev_is_refused(self):
+        self.assertRefused(make("ENV=dev", "CONFIRM=andara-dev", "BROKER=cluster"), "only for local")
+
+    def test_an_unknown_broker_is_refused(self):
+        self.assertRefused(make("ENV=local", "CONFIRM=andara-local", "BROKER=laptop"), "compose or cluster")
+
+    def test_local_on_the_cluster_passes_the_refusals(self):
+        self.assertEqual(world_reset.check_args(["local", "andara-local", "--broker", "cluster"]),
+                         ("local", "andara-local", "cluster"))
+        self.assertEqual(world_reset.check_args(["dev", "andara-dev"]), ("dev", "andara-dev", "cluster"))
+
 
 class FailsClosed(unittest.TestCase):
     """Preconditions stop the reset before anything on the cluster changes (Codex on #165)."""
@@ -70,7 +85,7 @@ class FailsClosed(unittest.TestCase):
     def run_reset(self, **kw):
         calls, kubectl = self.fake(**kw)
         with mock.patch.object(world_reset, "kubectl", kubectl), \
-                mock.patch.object(world_reset.topics, "rpk_runner", lambda env: None):
+                mock.patch.object(world_reset.topics, "rpk_runner", lambda env, broker=None: None):
             with self.assertRaises(world_reset.StepFailed) as e:
                 world_reset.reset("dev", "andara-dev")
         changed = [c for c in calls if c[0] in ("patch", "scale", "delete")]
@@ -165,6 +180,38 @@ class Scope(unittest.TestCase):
             ["andara.commands.v1", "andara.events.v1", "andara.state.v1", "andara.accounts.v1"]))
         for t in world_reset.RESET_TOPICS:
             self.assertFalse(t.startswith("andara.content.") or t == "andara.audit.v1", t)
+
+    def test_the_names_are_the_environments_own(self):
+        self.assertEqual(world_reset.reset_names("dev")[0], "dev.andara.commands.v1")
+        self.assertEqual(world_reset.reset_names("local")[0], "local.andara.commands.v1")
+        for env in ("dev", "local"):
+            for name in world_reset.reset_names(env):
+                self.assertTrue(name.startswith(env + ".andara."), name)
+
+    def test_a_reset_of_one_environment_never_touches_the_other(self):
+        # AW-INF-055 AC-7, against a broker that holds both environments' topics.
+        names = ["%s.%s" % (p, t) for p in ("dev", "local")
+                 for t in world_reset.RESET_TOPICS + ["andara.audit.v1", "andara.content.active.v1"]]
+        for env, other in (("local", "dev"), ("dev", "local")):
+            with self.subTest(env=env):
+                live, calls = set(names), []
+
+                def run(args, live=live, calls=calls):
+                    calls.append(list(args))
+                    if args[:2] == ["topic", "list"]:
+                        return types.SimpleNamespace(returncode=0, stderr="",
+                                                     stdout=json.dumps([{"name": n, "partitions": 1} for n in live]))
+                    if args[:2] == ["topic", "delete"]:
+                        live.discard(args[2])
+                    return types.SimpleNamespace(returncode=0, stdout="", stderr="")
+
+                with mock.patch.object(world_reset.topics, "run_action", return_value=0) as apply:
+                    world_reset.reset_topics(env, run, sleep=lambda s: None)
+                deleted = [c[2] for c in calls if c[:2] == ["topic", "delete"]]
+                self.assertEqual(sorted(deleted), sorted(world_reset.reset_names(env)))
+                self.assertFalse([c for c in calls if any(str(a).startswith(other + ".") for a in c)])
+                self.assertEqual(apply.call_args.args[:2], ("apply", env))
+                self.assertIs(apply.call_args.kwargs["rp"], False)
 
 
 if __name__ == "__main__":

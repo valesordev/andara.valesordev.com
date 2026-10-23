@@ -32,6 +32,11 @@ server:
     # Same reason: the tick loop runs on the memory source — the World ticks with no
     # Command input and publishes nothing — until the local cluster has a broker.
     source: memory
+  # The shared Kafka in andara-shared (AW-INF-055), under local's own topic prefix. Nothing
+  # above reads it yet: the memory switches move to the broker with AW-INF-060.
+  kafka:
+    brokers: andara-log-kafka-bootstrap.andara-shared.svc:9092
+    topic_prefix: local
 # The box's Traefik holds :80/:443 on the kind control plane (the kind port mapping was
 # made for it), so the chart binds no host port of its own (AC-8). `andara.local` resolves
 # by the /etc/hosts line `make helm-install` prints. Connections from the box arrive at

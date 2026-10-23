@@ -11,7 +11,43 @@
 # Delivered by AW-INF-004; consumed by AW-INF-002's local stack so that local and
 # production topics come from one declaration rather than from a compose-file duplicate.
 #
-# Retention values are seconds. -1 means infinite.
+# Retention values are milliseconds (retention.ms) and bytes per partition (retention.bytes).
+# -1 means infinite.
+#
+# Every name below is the topic's name *within* an environment. On the shared broker in
+# andara-shared (ADR-0013 decisions 3–5, AW-INF-055) the topic is `<prefix>.<name>`, with the
+# prefix from `environments` (`dev.andara.commands.v1`); with an empty prefix it is `<name>`
+# (prod, on its own broker). scripts/topics.py builds the name; nothing else does.
+
+# One entry per environment. `prefix` is kafka.topic_prefix (no trailing dot: ADR-0013
+# amendment 6). Every other key is a topic config that overrides every topic's own value in
+# that environment.
+#
+# local's are the bound on what one environment can take of the shared brokers' disks
+# (ADR-0013 amendment 4: until AW-INF-056 applies the principals' quotas, they're the only
+# bound). 64 MiB per partition and 7 days are the ADR's starting values; AW-INF-055 measures
+# a local soak and records the values it keeps here. The retention.* keys apply to the topics
+# whose cleanup.policy includes delete; compacted topics declare no retention, since without
+# delete the broker ignores it (docs/specs/kafka/broker-contract.md, `local.` bounds). The
+# segment.* keys apply to every topic.
+#
+# The segment values are what make the bounds bite: neither retention nor compaction touches
+# the active segment, so with Kafka's defaults (1 GiB, 7 days) a partition would hold about
+# 1 GiB, for up to a week, before either took effect. At 16 MiB and at most a day, a delete
+# partition holds about 80 MiB: local's 134 of them come to about 10.5 GiB at RF 1, spread over
+# three 20 GiB PVCs. The contract requires segment.bytes <= retention.bytes / 4 and
+# segment.ms <= 86400000.
+environments:
+  local:
+    prefix: local
+    retention.bytes: 67108864     # 64 MiB per partition
+    retention.ms: 604800000       # 7 days
+    segment.bytes: 16777216       # 16 MiB
+    segment.ms: 86400000          # 1 day
+  dev:
+    prefix: dev
+  prod:
+    prefix: ""
 
 defaults:
   replication_factor:
@@ -140,3 +176,51 @@ consumer_groups:
   - andara-projection-redis-<env>    # Redis index               <- andara.state.v1
   - andara-projection-pg-<env>       # Postgres index            <- andara.state.v1, accounts, audit
   - andara-content-<env>             # content resolver          <- content topics
+
+# Principals: one per workload per environment (ADR-0011 decision 4, as ADR-0013 decision 6
+# amends it). scripts/kafka_users.py renders a Strimzi KafkaUser `<name>-<env>` for every
+# environment with a prefix, with each topic ACL on the LITERAL name `<prefix>.<topic>` and each
+# group ACL PREFIXED on `<group>-<env>`; `make kafka-users-check` validates the render
+# (AW-INF-055 AC-9). They are rendered here and applied by AW-INF-056, once the broker has an
+# authorizer: a KafkaUser with ACLs on a broker without one sits not-Ready (ADR-0013 amendment
+# 19). andara-operator, the one superuser, is platform-scoped and is AW-INF-056's.
+#
+# No environment principal creates, deletes or reconfigures a topic: that is the operator's
+# alone (ADR-0011). andara-projection-redis and andara-projection-pg are declared by AW-SRV-017
+# and AW-SRV-018 when they land.
+principals:
+  - name: andara-server
+    topics:
+      andara.commands.v1: [Read, Write]
+      andara.events.v1: [Read, Write]
+      andara.accounts.v1: [Read, Write]
+      andara.audit.v1: [Read, Write]
+      andara.content.blobs.v1: [Read, Write]
+      andara.content.versions.v1: [Read, Write]
+      andara.content.active.v1: [Read, Write]
+      # No Write on andara.state.v1: the projector is its one writer (AW-SRV-019 AC-9).
+    groups:
+      andara-sim: [Read]
+      andara-content: [Read]
+  - name: andara-projector-state
+    topics:
+      andara.commands.v1: [Read]
+      andara.events.v1: [Read]
+      andara.state.v1: [Read, Write]
+      # The replica loads content exactly as the server does, read-only (cmd/andara-projector).
+      andara.content.blobs.v1: [Read]
+      andara.content.versions.v1: [Read]
+      andara.content.active.v1: [Read]
+    groups:
+      # Delete: `andara-projector --rebuild` deletes its own group (Committer.Wipe).
+      andara-projector-state: [Read, Delete]
+    # andara_state_topic_bytes reads DescribeLogDirs, which Kafka authorizes on the cluster.
+    cluster: [Describe]
+
+# Quotas per environment, on each of its principals (Strimzi KafkaUser `spec.quotas`, bytes per
+# second per broker). They bind once the broker authenticates (AW-INF-056; ADR-0013 amendment
+# 4). local's bound one environment's share of the shared brokers; dev has none.
+quotas:
+  local:
+    producerByteRate: 2097152     # 2 MiB/s
+    consumerByteRate: 8388608     # 8 MiB/s: a projector rebuild reads the whole log

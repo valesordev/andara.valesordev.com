@@ -95,7 +95,7 @@ class EnvGuard(unittest.TestCase):
             mod = with_cluster(load_argocd(), c)
             code, _, err = quiet(mod.install, env)
             self.assertEqual(code, 2, env)
-            self.assertIn("only dev follows main", err)
+            self.assertIn("only dev is on Argo CD", err)
             self.assertEqual(c.calls, [], "%s: %s" % (env, c.calls))
 
     def test_every_env_command_refuses_prod(self):
@@ -147,40 +147,171 @@ class Secrets(unittest.TestCase):
         self.assertFalse(any("s3cret" in a for a in args), args)
 
 
-class Seed(unittest.TestCase):
-    """The first render is already pinned; an image.tag Image Updater set is never overwritten."""
+def AGREED(ns):
+    """agreement() with the three answers agreeing, for status tests about something else."""
+    return {"tag": "abc123", "argo": "abc123", "pinned": "", "running": "", "mismatch": []}
 
-    def test_a_new_application_is_created_seeded_and_without_sync(self):
+
+class Application(unittest.TestCase):
+    """AW-INF-059: the Application follows the tag `dev`, which must exist before it's applied, and
+    carries no helm.parameters, so nothing outside the tagged commit decides the render."""
+
+    def mod(self, cluster, tag="c0ffee" * 6 + "abcd"):
+        mod = with_cluster(load_argocd(), cluster)
+        mod.tag_commit = lambda: tag
+        return mod
+
+    def test_no_tag_refuses_and_applies_nothing(self):
         c = Cluster(app=None)
-        mod = with_cluster(load_argocd(), c)
-        quiet(mod.application, "andara-dev")
-        created = c.made("kubectl", "create", "-f", "-")
-        self.assertEqual(len(created), 1)
-        first = json.loads(created[0][1])
-        self.assertNotIn("syncPolicy", first["spec"])
-        self.assertEqual(first["spec"]["source"]["helm"]["parameters"],
-                         [{"name": "image.tag", "value": "dev@sha256:" + "ab" * 32}])
-        # The file turns sync on only after the create.
-        order = [i for i, (a, _) in enumerate(c.calls) if "create" in a or "--server-side" in a]
-        self.assertEqual(order, sorted(order))
-        self.assertTrue(c.made("apply", "--server-side"))
+        code, _, err = quiet(self.mod(c, tag="").application, "andara-dev")
+        self.assertEqual(code, 1)
+        self.assertIn("make promote ENV=dev SHA=<main sha>", err)
+        self.assertEqual(c.made("apply"), [])
 
-    def test_an_existing_parameter_is_kept(self):
-        app = {"spec": {"source": {"helm": {"parameters": [{"name": "image.tag", "value": "dev@sha256:" + "cd" * 32}]}}}}
-        c = Cluster(app=app)
-        mod = with_cluster(load_argocd(), c)
-        quiet(mod.application, "andara-dev")
-        self.assertEqual(c.made("create"), [])
+    def test_a_new_application_is_the_file_alone(self):
+        c = Cluster(app=None)
+        code, out, _ = quiet(self.mod(c).application, "andara-dev")
+        self.assertEqual(code, 0)
         self.assertEqual(c.made("patch"), [])
+        self.assertEqual(c.made("create"), [])
+        applies = c.made("apply", "--server-side")
+        self.assertEqual(len(applies), 1)
+        self.assertIn(os.path.join(REPO, "deploy", "argocd", "andara-dev.yaml"), applies[0][0])
+        self.assertIn("follows tag dev", out)
         self.assertEqual([a for a, _ in c.calls if a[0].endswith("image_digest.sh")], [])
 
-    def test_an_application_found_without_the_parameter_is_seeded_before_the_file(self):
-        c = Cluster(app={"spec": {"source": {"helm": {}}}, "metadata": {"name": "andara-dev"}})
-        mod = with_cluster(load_argocd(), c)
-        quiet(mod.application, "andara-dev")
+    def test_image_updater_s_parameter_is_removed_before_the_file(self):
+        app = {"spec": {"source": {"helm": {"parameters": [{"name": "image.tag", "value": "dev@sha256:" + "cd" * 32}]}}}}
+        c = Cluster(app=app)
+        quiet(self.mod(c).application, "andara-dev")
         patches = [i for i, (a, _) in enumerate(c.calls) if "patch" in a]
         applies = [i for i, (a, _) in enumerate(c.calls) if "--server-side" in a]
         self.assertTrue(patches and applies and max(patches) < min(applies), c.calls)
+        self.assertIn("/spec/source/helm/parameters", c.calls[patches[0]][0][-1])
+
+
+class RecoverAndBroker(unittest.TestCase):
+    """AW-INF-059 review: recover reads image.tag from the synced commit, which a promotion made
+    from another clone may not be in this one; preconditions look for the broker dev.yaml names."""
+
+    def test_recover_names_a_synced_commit_it_cannot_read(self):
+        mod = load_argocd()
+        sts = {"status": {"updateRevision": "new"}}
+        pod = {"metadata": {"labels": {"controller-revision-hash": "old"}}}
+        mod.kubectl_json = lambda *a: sts if "statefulset" in a else pod if "pod" in a else {}
+        mod.stalled = lambda ns: "server: CrashLoopBackOff"
+        mod.app_state = lambda name: ("Synced", "Degraded", "f" * 40, {})
+        mod.have_commit = lambda c: False
+        mod.run = lambda *a, **k: self.fail("recover deleted something: %r" % (a,))
+        code, _, err = quiet(mod.recover, "dev")
+        self.assertEqual(code, 1)
+        self.assertIn("the synced commit ffffffffffff isn't in this clone or on origin", err)
+
+    def test_have_commit_fetches_a_commit_only_origin_has(self):
+        d = tempfile.mkdtemp()
+        self.addCleanup(lambda: subprocess.run(["rm", "-rf", d]))
+        ident = ["-c", "user.name=t", "-c", "user.email=t@example.invalid"]
+
+        def g(cwd, *a):
+            return subprocess.run(["git", *ident, *a], cwd=cwd, capture_output=True, text=True, check=True).stdout.strip()
+        origin, work, other = (os.path.join(d, n) for n in ("origin.git", "work", "other"))
+        g(d, "init", "-q", "--bare", origin)
+        g(d, "init", "-q", work)
+        g(d, "init", "-q", other)
+        empty = "4b825dc642cb6eb9a060e54bf8d69288fbee4904"
+        only_origin = g(other, "commit-tree", empty, "-m", "promotion made from another clone")
+        g(other, "push", "-q", origin, only_origin + ":refs/tags/dev")
+        g(work, "remote", "add", "origin", origin)
+        mod = load_argocd()
+        mod.REPO = work
+        self.assertTrue(mod.have_commit(only_origin))
+        self.assertFalse(mod.have_commit("f" * 40))
+        self.assertFalse(mod.have_commit(""))
+
+    def test_run_names_a_call_that_doesnt_answer(self):
+        mod = load_argocd()
+        with self.assertRaises(RuntimeError) as e:
+            mod.run(["sleep", "5"], timeout=0.2)
+        self.assertIn("no answer in", str(e.exception))
+
+    def test_uninstall_names_the_tag_dev_needs(self):
+        c = Cluster(app=None)
+        mod = with_cluster(load_argocd(), c)
+        mod.run = lambda *a, **k: SimpleNamespace(returncode=0, stdout="", stderr="")
+        code, out, _ = quiet(mod.uninstall, "dev")
+        self.assertEqual(code, 0)
+        self.assertIn("`make helm-install ENV=dev TAG=<the build make argocd-status showed>` takes them back", out)
+
+    def test_preconditions_look_for_the_shared_broker(self):
+        mod = load_argocd()
+        asked = []
+        ready = {"status": {"conditions": [{"type": "Ready", "status": "True"}]}}
+
+        def kj(*a):
+            if "kafka" in a:
+                asked.append(a[a.index("-n") + 1])
+                return {}
+            return ready
+        mod.kubectl_json = kj
+        mod.run = lambda *a, **k: SimpleNamespace(returncode=0, stdout="", stderr="")
+        code, _, err = quiet(mod.preconditions, "andara-dev")
+        self.assertEqual(code, 1)
+        self.assertEqual(asked, ["andara-shared"])
+        self.assertIn("no Ready kafka/andara-log in andara-shared; run `make shared-up` first", err)
+
+
+class Agreement(unittest.TestCase):
+    """AW-INF-059 Observability: argocd-status's three answers (the tag's commit, Argo's synced
+    revision, andara-0's digest against the digest that commit pins) and exit 1 on any mismatch."""
+
+    TAG = "a" * 40
+    DIGEST = "sha256:" + "ab" * 32
+
+    def mod(self, argo, running, pinned="sha-0123456789ab@" + DIGEST, tag=TAG):
+        mod = load_argocd()
+        mod.tag_commit = lambda: tag
+        mod.image_tag_at = lambda c: pinned if c == tag else ""
+        mod.app_state = lambda name: ("Synced", "Healthy", argo, {"x": 1})
+        mod.running_digest = lambda ns: running
+        return mod
+
+    def test_one_answer(self):
+        a = self.mod(self.TAG, self.DIGEST).agreement("andara-dev")
+        self.assertEqual(a["mismatch"], [])
+        self.assertEqual(a["pinned"], self.DIGEST)
+
+    def test_argo_behind_the_tag(self):
+        a = self.mod("b" * 40, self.DIGEST).agreement("andara-dev")
+        self.assertEqual(len(a["mismatch"]), 1)
+        self.assertIn("argo synced bbbbbbbbbbbb, tag dev is aaaaaaaaaaaa", a["mismatch"][0])
+
+    def test_running_another_digest(self):
+        a = self.mod(self.TAG, "sha256:" + "cd" * 32).agreement("andara-dev")
+        self.assertIn("andara-0 runs", a["mismatch"][0])
+
+    def test_an_unpinned_tag_disagrees(self):
+        a = self.mod(self.TAG, self.DIGEST, pinned="dev").agreement("andara-dev")
+        self.assertIn("pins no digest", a["mismatch"][0])
+
+    def test_no_tag(self):
+        a = self.mod(self.TAG, self.DIGEST, tag="").agreement("andara-dev")
+        self.assertEqual(a["mismatch"], ["no tag dev on origin"])
+
+    def test_status_exits_1_on_a_mismatch_while_synced_and_healthy(self):
+        mod = self.mod("b" * 40, self.DIGEST)
+        mod.kubectl_json = lambda *a: {}
+        mod.active_packs = lambda ns: [("andara.core", 1)]
+        mod.stalled = lambda ns: None
+        code, out, _ = quiet(mod.status, "dev")
+        self.assertEqual(code, 1)
+        self.assertIn("disagree     argo synced", out)
+
+    def test_running_digest_reads_the_server_container_s_image_id(self):
+        mod = load_argocd()
+        mod.kubectl_json = lambda *a: {"status": {"containerStatuses": [
+            {"name": "sidecar", "imageID": "x@sha256:" + "11" * 32},
+            {"name": "server", "imageID": "ghcr.io/valesordev/andara-server@" + self.DIGEST}]}}
+        self.assertEqual(mod.running_digest("andara-dev"), self.DIGEST)
 
 
 class Stalled(unittest.TestCase):
@@ -281,6 +412,7 @@ class StatusWaitingOk(unittest.TestCase):
     def run_status(self, waiting_ok, sync="Synced", health="Progressing"):
         mod = load_argocd()
         mod.app_state = lambda name: (sync, health, "abc123", {"x": 1})
+        mod.agreement = AGREED
         mod.kubectl_json = lambda *a: {}
         mod.active_packs = lambda ns: [("andara.core", 1)]
         mod.stalled = lambda ns: None
@@ -306,6 +438,7 @@ class StatusStalledOrWaiting(unittest.TestCase):
     def run_status(self, waiting_ok, stuck, content_waiting):
         mod = load_argocd()
         mod.app_state = lambda name: ("Synced", "Progressing", "abc123", {"x": 1})
+        mod.agreement = AGREED
         mod.kubectl_json = lambda *a: {}
         mod.active_packs = lambda ns: [("andara.core", 1)]
         mod.stalled = lambda ns: stuck
@@ -357,6 +490,7 @@ class StatusStalledOrWaiting(unittest.TestCase):
         asked = []
         mod = load_argocd()
         mod.app_state = lambda name: ("Synced", "Healthy", "abc123", {"x": 1})
+        mod.agreement = AGREED
         mod.kubectl_json = lambda *a: {}
         mod.active_packs = lambda ns: [("andara.core", 1)]
         mod.stalled = lambda ns: None
@@ -369,13 +503,82 @@ class StatusStalledOrWaiting(unittest.TestCase):
 class HelmInstallRefusal(unittest.TestCase):
     """AC-7: once the Application exists, helm-install exits 1, naming it, and changes nothing."""
 
+    def test_dev_without_a_tag_refuses_before_any_call(self):
+        """AW-INF-059: :dev no longer moves, so installing dev by hand names its build."""
+        with tempfile.TemporaryDirectory() as d:
+            log = os.path.join(d, "calls")
+            env = stub_bin(d, log, {"kubectl": "exit 0", "helm": "exit 0"})
+            p = subprocess.run([os.path.join(SCRIPTS, "helm_install.sh"), "dev", "andara-server", "dev", "", ""],
+                               capture_output=True, text=True, env=env)
+            self.assertEqual(p.returncode, 2, p.stderr)
+            self.assertIn("ENV=dev needs TAG=sha-<12>@sha256:<digest>", p.stderr)
+            self.assertFalse(os.path.exists(log) and open(log).read().strip())
+            # A TAG given, but the frozen :dev, is refused the same way.
+            p = subprocess.run([os.path.join(SCRIPTS, "helm_install.sh"), "dev", "andara-server", "dev", "", "1"],
+                               capture_output=True, text=True, env=env)
+            self.assertEqual(p.returncode, 2, p.stderr)
+            self.assertFalse(os.path.exists(log) and open(log).read().strip())
+            # A digest-pinned build with trailing junk is not a build.
+            p = subprocess.run([os.path.join(SCRIPTS, "helm_install.sh"), "dev", "andara-server",
+                                "sha-0123456789ab@sha256:" + "ab" * 32 + "x", "", "1"],
+                               capture_output=True, text=True, env=env)
+            self.assertEqual(p.returncode, 2, p.stderr)
+
+    def test_dev_with_a_pinned_build_passes_the_guard_and_finds_the_shared_broker(self):
+        """The TAG every message names (sha-<12>@sha256:<64 hex>) gets past the guard, and the broker
+        is looked for where values/dev.yaml says it is: andara-shared, not andara-dev."""
+        with tempfile.TemporaryDirectory() as d:
+            log = os.path.join(d, "calls")
+            env = stub_bin(d, log, {
+                "kubectl": 'case "$*" in "get crd applications.argoproj.io") exit 1;; '
+                           '"-n andara-shared get kafka andara-log"*) echo True; exit 0;; esac\nexit 1',
+                "helm": "exit 0"})
+            for tag in ("sha-0123456789ab@sha256:" + "ab" * 32, "sha-0123456789ab"):
+                p = subprocess.run([os.path.join(SCRIPTS, "helm_install.sh"), "dev", "andara-server", tag, "", "1"],
+                                   capture_output=True, text=True, env=env)
+                self.assertNotEqual(p.returncode, 2, p.stderr)
+                self.assertNotIn("ENV=dev needs TAG", p.stderr)
+                self.assertIn("helm-install: kafka/andara-log in andara-shared is Ready", p.stdout, p.stderr)
+            self.assertFalse([c for c in calls(log) if "-n andara-dev get kafka" in c])
+
+    def test_prod_checks_its_own_namespace_s_broker(self):
+        """prod's values name a bare broker, so the check stays in andara-prod, whose Kafka is not on this cluster."""
+        with tempfile.TemporaryDirectory() as d:
+            log = os.path.join(d, "calls")
+            env = stub_bin(d, log, {
+                "kubectl": 'case "$*" in "get crd applications.argoproj.io") exit 1;; '
+                           '"-n andara-prod get kafka andara-log"*) echo True; exit 0;; esac\nexit 1',
+                "helm": "exit 0"})
+            p = subprocess.run([os.path.join(SCRIPTS, "helm_install.sh"), "prod", "andara-server", "v1.0.0", "", "1"],
+                               capture_output=True, text=True, env=env)
+            self.assertIn("helm-install: kafka/andara-log in andara-prod is Ready", p.stdout, p.stderr)
+            self.assertFalse([c for c in calls(log) if "-n andara-shared" in c])
+        with tempfile.TemporaryDirectory() as d:
+            log = os.path.join(d, "calls")
+            env = stub_bin(d, log, {"kubectl": 'case "$*" in "get crd applications.argoproj.io") exit 1;; esac\nexit 1',
+                                    "helm": "exit 0"})
+            p = subprocess.run([os.path.join(SCRIPTS, "helm_install.sh"), "prod", "andara-server", "v1.0.0", "", "1"],
+                               capture_output=True, text=True, env=env)
+            self.assertEqual(p.returncode, 1)
+            self.assertIn("no Ready kafka/andara-log in andara-prod; nothing on this cluster installs a Kafka in andara-prod (ADR-0013 decision 10)", p.stderr)
+
+    def test_dev_without_the_shared_broker_names_shared_up(self):
+        with tempfile.TemporaryDirectory() as d:
+            log = os.path.join(d, "calls")
+            env = stub_bin(d, log, {"kubectl": 'case "$*" in "get crd applications.argoproj.io") exit 1;; esac\nexit 1',
+                                    "helm": "exit 0"})
+            p = subprocess.run([os.path.join(SCRIPTS, "helm_install.sh"), "dev", "andara-server", "sha-0123456789ab", "", "1"],
+                               capture_output=True, text=True, env=env)
+            self.assertEqual(p.returncode, 1)
+            self.assertIn("no Ready kafka/andara-log in andara-shared; run `make shared-up` first", p.stderr)
+
     def test_refuses_and_touches_nothing(self):
         with tempfile.TemporaryDirectory() as d:
             log = os.path.join(d, "calls")
             env = stub_bin(d, log, {
                 "kubectl": 'case "$*" in "get crd applications.argoproj.io"|"-n argocd get application andara-dev") exit 0;; esac\nexit 0',
                 "helm": "exit 0"})
-            p = subprocess.run([os.path.join(SCRIPTS, "helm_install.sh"), "dev", "andara-server", "dev", "", ""],
+            p = subprocess.run([os.path.join(SCRIPTS, "helm_install.sh"), "dev", "andara-server", "sha-0123456789ab", "", "1"],
                                capture_output=True, text=True, env=env)
             self.assertEqual(p.returncode, 1, p.stderr)
             self.assertIn("make: helm-install: andara-dev is deployed by Argo CD (application andara-dev); see make argocd-status",
@@ -439,7 +642,7 @@ class IssuerRefusal(unittest.TestCase):
         with tempfile.TemporaryDirectory() as d:
             log = os.path.join(d, "calls")
             env = stub_bin(d, log, {"kubectl": kubectl, "helm": "exit 0"})
-            p = subprocess.run([os.path.join(SCRIPTS, "helm_install.sh"), "dev", "andara-server", "dev", "", ""],
+            p = subprocess.run([os.path.join(SCRIPTS, "helm_install.sh"), "dev", "andara-server", "sha-0123456789ab", "", "1"],
                                capture_output=True, text=True, env=env)
             self.assertEqual(p.returncode, 1, p.stderr)
             self.assertIn("ClusterIssuer letsencrypt is not Ready; run `make platform-up`", p.stderr)
@@ -477,17 +680,140 @@ class KafkaOperator(unittest.TestCase):
         p = subprocess.run([os.path.join(SCRIPTS, "kafka.sh"), "install", "dev"], capture_output=True, text=True, env=env)
         return p, calls(log)
 
-    def test_an_operator_watching_andara_shared_refuses_dev(self):
-        p, made = self.run_install(["andara-shared"])
-        self.assertEqual(p.returncode, 1)
-        self.assertIn("Strimzi watches andara-shared, not andara-dev", p.stderr)
+    def test_an_operator_not_watching_andara_shared_refuses(self):
+        # AW-INF-055: every environment's broker is the shared one in andara-shared.
+        p, made = self.run_install(["andara-dev"])
+        self.assertEqual(p.returncode, 3)
+        self.assertIn("Strimzi watches andara-dev, not andara-shared", p.stderr)
         self.assertFalse([c for c in made if c.startswith("helm upgrade") or c.startswith("helm install") or " apply " in c], made)
+
+    def test_an_operator_watching_andara_shared_applies_there_and_never_installs_strimzi(self):
+        p, made = self.run_install(["andara-shared"])
+        applies = [c for c in made if " apply " in c]
+        self.assertTrue(applies, (p.stderr, made))
+        self.assertTrue(all("-n andara-shared apply -f deploy/k8s/kafka/" in c for c in applies), applies)
+        self.assertFalse([c for c in made if c.startswith("helm upgrade") or c.startswith("helm install")], made)
 
     def test_no_operator_names_platform_up(self):
         p, made = self.run_install(None)
-        self.assertEqual(p.returncode, 1)
+        self.assertEqual(p.returncode, 3)
         self.assertIn("run `make platform-up`", p.stderr)
         self.assertFalse([c for c in made if c.startswith("helm upgrade") or " apply " in c], made)
+
+    def test_shared_up_labels_both_namespaces_and_puts_locals_topics_on_the_cluster(self):
+        # AW-INF-055 AC-2 and AC-3: the labels the listener admits, and local's topics applied to
+        # the shared Kafka, never to the compose Redpanda that `--broker`'s default would pick.
+        d = tempfile.mkdtemp()
+        self.addCleanup(lambda: subprocess.run(["rm", "-rf", d]))
+        log = os.path.join(d, "calls")
+        values = json.dumps({"watchNamespaces": ["andara-shared"]})
+        helm = 'case "$1" in get) echo \'%s\'; exit 0;; esac\nexit 0' % values
+        # PY is a stub too: it runs the inline JSON read and kube.py, and logs the topics.py calls.
+        py = 'case "$1" in -c|*/kube.py) exec python3 "$@";; esac\nexit 0'
+        env = stub_bin(d, log, {"helm": helm, "kubectl": "exit 0", "pystub": py})
+        env["PY"] = os.path.join(d, "pystub")
+        p = subprocess.run([os.path.join(SCRIPTS, "kafka.sh"), "up"], capture_output=True, text=True, env=env)
+        self.assertEqual(p.returncode, 0, p.stderr)
+        made = calls(log)
+        for e in ("local", "dev"):
+            self.assertIn("kubectl --context kind-andara label namespace andara-%s andara.valesor/env=%s --overwrite"
+                          % (e, e), made)
+        topic_calls = [c for c in made if "topics.py" in c]
+        self.assertEqual(topic_calls, ["pystub scripts/topics.py apply --env local --broker cluster",
+                                       "pystub scripts/topics.py apply --env dev"])
+        self.assertTrue([c for c in made if "-n andara-shared apply -f deploy/k8s/kafka/" in c], made)
+
+    def test_bounce_refuses_local_before_any_call(self):
+        # local's server runs on memory until AW-INF-060, so a bounce would pass proving nothing.
+        d = tempfile.mkdtemp()
+        self.addCleanup(lambda: subprocess.run(["rm", "-rf", d]))
+        log = os.path.join(d, "calls")
+        env = stub_bin(d, log, {"helm": "exit 0", "kubectl": "exit 0"})
+        p = subprocess.run([os.path.join(SCRIPTS, "kafka.sh"), "bounce", "local"], capture_output=True, text=True, env=env)
+        self.assertEqual(p.returncode, 2, p.stderr)
+        self.assertIn("AW-INF-060", p.stderr)
+        self.assertEqual([c for c in calls(log) if c.startswith(("kubectl", "helm"))], [])
+
+    def shared_kafka_preconditions(self, labels):
+        """preconditions("andara-dev") against a Ready shared Kafka, with andara-dev carrying labels."""
+        c = Cluster()
+        mod = with_cluster(load_argocd(), c)
+        ready = {"status": {"conditions": [{"type": "Ready", "status": "True"}]}}
+        seen = []
+
+        def kubectl_json(*a):
+            seen.append(a)
+            if "kafka" in a:
+                return ready if a[:2] == ("-n", "andara-shared") else None
+            if a[:2] == ("get", "namespace"):
+                return {"metadata": {"labels": labels}} if a[2] == "andara-dev" else None
+            return ready
+        mod.kubectl_json = kubectl_json
+        mod.VALUES = os.path.join(REPO, "deploy", "helm", "values", "dev.yaml")
+        code, out, err = quiet(mod.preconditions, "andara-dev")
+        return code, out, err, seen
+
+    def test_bounce_dev_watches_the_server_in_andara_dev_and_kills_a_broker_in_andara_shared(self):
+        # Reviewer on #618: the first bounce whose server and brokers live in different namespaces.
+        d = tempfile.mkdtemp()
+        self.addCleanup(lambda: subprocess.run(["rm", "-rf", d]))
+        log, gone = os.path.join(d, "calls"), os.path.join(d, "deleted")
+        kubectl = ('case "$*" in\n'
+                   '  *"get pod andara-0"*) echo "True 2026-10-22T00:00:00Z 0";;\n'
+                   '  *"exec andara-0"*) echo \'andara_ingress_submits_total{outcome="unavailable"} 0\';;\n'
+                   '  *"delete pod"*) touch "%s";;\n'
+                   '  *"get pod andara-log-broker-0"*uid*) if [ -f "%s" ]; then echo u1; else echo u0; fi;;\n'
+                   '  *"get pod andara-log-broker-0"*ready*) echo true;;\n'
+                   'esac\nexit 0') % (gone, gone)
+        env = stub_bin(d, log, {"helm": "exit 0", "kubectl": kubectl})
+        p = subprocess.run([os.path.join(SCRIPTS, "kafka.sh"), "bounce", "dev"], capture_output=True, text=True, env=env)
+        self.assertEqual(p.returncode, 0, p.stderr)
+        made = calls(log)
+        broker = [c for c in made if "andara-log-broker-" in c]
+        server = [c for c in made if "andara-0" in c]
+        self.assertTrue([c for c in broker if " delete pod andara-log-broker-0" in c], made)
+        self.assertTrue(broker and all(" -n andara-shared " in c for c in broker), broker)
+        self.assertTrue(server and all(" -n andara-dev " in c for c in server), server)
+
+    def test_kafka_sh_refuses_prod_before_any_call(self):
+        # prod's Kafka isn't on this cluster (ADR-0013 decision 10).
+        for cmd in ("install", "bounce"):
+            d = tempfile.mkdtemp()
+            self.addCleanup(lambda d=d: subprocess.run(["rm", "-rf", d]))
+            log = os.path.join(d, "calls")
+            env = stub_bin(d, log, {"helm": "exit 0", "kubectl": "exit 0"})
+            p = subprocess.run([os.path.join(SCRIPTS, "kafka.sh"), cmd, "prod"], capture_output=True, text=True, env=env)
+            self.assertEqual(p.returncode, 2, (cmd, p.stderr))
+            self.assertIn("ADR-0013 decision 10", p.stderr)
+            self.assertEqual(calls(log), [], cmd)
+
+    def test_argocd_install_wants_the_shared_kafka(self):
+        # AW-INF-055: dev's broker is in andara-shared, not andara-dev.
+        code, out, err, seen = self.shared_kafka_preconditions({"andara.valesor/env": "dev"})
+        self.assertEqual(code, 0, err)
+        self.assertIn("kafka/andara-log in andara-shared", out)
+        self.assertEqual([a[:2] for a in seen if "kafka" in a], [("-n", "andara-shared")])
+
+    def test_argocd_install_refuses_a_dev_namespace_the_listener_wont_admit(self):
+        # Reviewer on #618: env-destroy removes andara-dev and its label; the listener then drops
+        # the server, so argocd-install refuses rather than sync a server that can't reach the broker.
+        for labels in ({}, {"andara.valesor/env": "local"}):
+            code, _, err, _ = self.shared_kafka_preconditions(labels)
+            self.assertEqual(code, 1, labels)
+            self.assertIn("namespace andara-dev isn't labelled andara.valesor/env=dev", err)
+            self.assertIn("run `make shared-up` first", err)
+
+    def test_helm_install_labels_dev_s_namespace_for_the_shared_kafka(self):
+        # A namespace helm-install recreates (after env-destroy) carries the label the listener admits.
+        kubectl = ('case "$*" in "get crd applications.argoproj.io") exit 1;;\n'
+                   '  *"kafka andara-log"*|*clusterissuer*) echo True;;\nesac\nexit 0')
+        with tempfile.TemporaryDirectory() as d:
+            log = os.path.join(d, "calls")
+            env = stub_bin(d, log, {"kubectl": kubectl, "helm": "exit 0"})
+            subprocess.run([os.path.join(SCRIPTS, "helm_install.sh"), "dev", "andara-server", "sha-0123456789ab", "", "1"],
+                           capture_output=True, text=True, env=env)
+            self.assertIn("kubectl --context kind-andara label namespace andara-dev andara.valesor/env=dev --overwrite",
+                          calls(log))
 
     def test_no_install_path_carries_another_watch_list(self):
         """AC-5's grep: kafka-operator and kafka.sh's WATCHED list are gone."""

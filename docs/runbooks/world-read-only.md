@@ -28,20 +28,25 @@ later. Detection takes at most the probe interval (one second), so that is the w
 ```
 curl -s http://<server>:8080/metrics | grep andara_ingress_degraded        # 1 while read-only
 kubectl --context kind-andara -n andara-<env> logs statefulset/andara | grep 'command log'          # "unreachable" with the broker error; "reachable" on exit
-kubectl --context kind-andara -n andara-<env> get kafka andara-log                                   # Strimzi's Ready condition for the cluster
-kubectl --context kind-andara -n andara-<env> get pods -l strimzi.io/cluster=andara-log              # andara-log-broker-{0,1,2}
-kubectl --context kind-andara -n andara-<env> exec andara-log-broker-1 -c kafka -- \
+kubectl --context kind-andara -n andara-shared get kafka andara-log                                   # Strimzi's Ready condition for the cluster
+kubectl --context kind-andara -n andara-shared get pods -l strimzi.io/cluster=andara-log              # andara-log-broker-{0,1,2}
+kubectl --context kind-andara -n andara-shared exec andara-log-broker-1 -c kafka -- \
   /opt/kafka/bin/kafka-topics.sh --bootstrap-server localhost:9092 --describe --under-replicated-partitions
-kubectl --context kind-andara -n andara-<env> exec deploy/andara-kafka-tools -- rpk topic list      # rpk, through the toolbox
+kubectl --context kind-andara -n andara-shared exec deploy/andara-kafka-tools -- rpk topic list      # rpk, through the toolbox
+make shared-check                                                                                     # each broker PVC's use, and each environment's bytes on it
 ```
+
+The brokers are shared: `local` and `dev` both use the Kafka `andara-log` in `andara-shared`, each
+with its own topics (`local.andara.…`, `dev.andara.…`, AW-INF-055). A broker fault therefore
+puts both environments read-only at once, and one environment can fill the disks for both.
 
 Locally: `make up`, `docker compose -f deploy/compose/docker-compose.yaml stop redpanda`, and the
 gauge flips within a second; `start redpanda` and it clears within a second of the first
 successful ping.
 
-On the box (`dev`, `prod`), one broker down is **not** this condition. Each namespace runs three
-brokers with `min.insync.replicas` 2 (AW-INF-014), so writes are still acknowledged, and `make
-kafka-broker-bounce ENV=<env>` proves the server never degrades while one is gone. Read-only on
+On the box (`dev`), one broker down is **not** this condition. The shared Kafka runs three
+brokers, and `dev`'s topics have `min.insync.replicas` 2 (AW-INF-014), so writes are still acknowledged, and `make
+kafka-broker-bounce ENV=dev` proves the server never degrades while one is gone. Read-only on
 the box means two brokers are down, or the server cannot reach the bootstrap Service at all. Start
 from the Strimzi `Ready` condition and the under-replicated count above.
 
@@ -56,6 +61,7 @@ without traffic; a produce failing and a ping then failing flips it sooner.
 | brokers up, gauge still 1 | `rpk cluster health` from a broker pod; `min.insync.replicas` unsatisfied looks like this from the producer's side (`acks=all`). `AW-INF-005` owns the replica-side procedure. |
 | gauge 0, players still see `UNAVAILABLE` | the reason is different: `in_transit` is a stuck cross-Zone handoff (`AW-SRV-028`), not the log. `andara_ingress_held_intents` and the `command rejected` lines say which. |
 | gauge flapping | a partition of the network between server and brokers, or a broker restarting in a loop. The probe clears the state on one successful ping and re-enters it on one failure; look at the broker, not the server. |
+| a broker's disk full (its log directory offline, the broker crash-looping) | `make shared-check`: it exits 1 naming the PVC over 80%, or one it couldn't measure because its broker is down, and its `broker <n>` lines say which environment's prefix holds the bytes. `local`'s topics are bounded (64 MiB per partition, 7 days); if `local.` is the one filling it, `make world-reset ENV=local CONFIRM=andara-local BROKER=cluster` frees it. Never delete a `dev.` topic to make room: it's `dev`'s Command history. Escalate to SRE with the `shared-check` output. |
 
 Do **not** restart `andara-server` to fix this. It would replay recovery for nothing, and the
 ingress is already waiting for exactly the thing you would be restarting it to wait for.

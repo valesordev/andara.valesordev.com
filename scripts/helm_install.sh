@@ -8,9 +8,9 @@
 # prod pull the image .github/workflows/publish.yaml pushes to ghcr (AW-INF-013); a TAG= on
 # the command line pins one, and scripts/helm_image_args.sh is the rule.
 #
-# The broker: local runs without one (accounts and commands in memory). dev and prod use
-# their namespace's Kafka `andara-log` (AW-INF-014), which `make kafka-install` creates;
-# this script refuses to touch their release until it is Ready.
+# The broker: local runs without one (accounts and commands in memory). dev uses the shared
+# Kafka `andara-log` in andara-shared (AW-INF-014, AW-INF-055, AW-INF-059), which `make shared-up`
+# creates; this script refuses to touch the release until the broker the values file names is Ready.
 #
 # Content: local and dev read Zone Definitions from a ConfigMap the chart renders out of
 # testdata/content/valid (contentVolume.render), as compose reads a directory, until
@@ -35,6 +35,12 @@ VALUES="deploy/helm/values/${ENVNAME}.yaml"
 NS="andara-${ENVNAME}"
 
 [[ -f "$VALUES" ]] || { echo "make: helm-install: no values file at $VALUES" >&2; exit 1; }
+# main's values/dev.yaml names `:dev`, which nothing moves since AW-INF-059: dev runs what the Git
+# tag `dev` pins. Installing dev by hand (the take-back path) names that build explicitly.
+if [[ "$ENVNAME" == "dev" ]] && { [[ -z "$TAG_SET" ]] || ! [[ "$TAG" =~ ^sha-[0-9a-f]{12}(@sha256:[0-9a-f]{64})?$ ]]; }; then
+  echo "make: helm-install: ENV=dev needs TAG=sha-<12>@sha256:<digest>, the build \`make argocd-status\` or \`make promote-log\` shows; :dev no longer moves (AW-INF-059)" >&2
+  exit 2
+fi
 for tool in helm kubectl; do
   command -v "$tool" >/dev/null 2>&1 || { echo "make: helm-install: $tool not found" >&2; exit 1; }
 done
@@ -50,15 +56,28 @@ if kube_kubectl get crd applications.argoproj.io >/dev/null 2>&1 \
   exit 1
 fi
 
-# dev and prod run the sim and the Account store on their namespace's Kafka (AW-INF-014
-# AC-7). Without it the pod would crash-loop on an unreachable broker for the full --wait,
-# so the release is not touched until the broker is Ready.
+# dev and prod run the sim and the Account store on Kafka (AW-INF-014 AC-7). Without it the
+# pod would crash-loop on an unreachable broker for the full --wait, so the release is not
+# touched until the broker is Ready. The broker is the one the values file names:
+# andara-log-kafka-bootstrap.<namespace>.svc (dev's is the shared one in andara-shared since
+# AW-INF-059), or a bare name in the environment's own namespace (prod).
 if [[ "$ENVNAME" != "local" ]]; then
-  kready="$(kube_kubectl -n "$NS" get kafka andara-log \
+  KNS="$("${PY:-python3}" - "$VALUES" "$NS" <<'PYEOF'
+import sys, yaml
+values, ns = sys.argv[1:3]
+b = str((((yaml.safe_load(open(values)) or {}).get("server") or {}).get("kafka") or {}).get("brokers") or "")
+parts = b.split(":", 1)[0].split(".")
+print(parts[1] if len(parts) > 1 else ns)
+PYEOF
+)"
+  # A bare name is a broker in the environment's own namespace: prod's, which isn't on this
+  # cluster (ADR-0013 decision 10), so nothing here installs it.
+  if [[ "$KNS" == "$NS" ]]; then khint="nothing on this cluster installs a Kafka in $NS (ADR-0013 decision 10)"; else khint="run \`make shared-up\` first"; fi
+  kready="$(kube_kubectl -n "$KNS" get kafka andara-log \
     -o jsonpath='{.status.conditions[?(@.type=="Ready")].status}' 2>/dev/null || true)"
   [[ "$kready" == "True" ]] \
-    || { echo "make: helm-install: no Ready kafka/andara-log in $NS; run \`make kafka-install ENV=$ENVNAME\` first" >&2; exit 1; }
-  echo "helm-install: kafka/andara-log in $NS is Ready"
+    || { echo "make: helm-install: no Ready kafka/andara-log in $KNS; $khint" >&2; exit 1; }
+  echo "helm-install: kafka/andara-log in $KNS is Ready"
 fi
 
 # The platform the chart is written for: the cluster's Traefik owns :443 (AC-8) and
@@ -88,6 +107,13 @@ done
 
 kube_kubectl get namespace "$NS" >/dev/null 2>&1 || kube_kubectl create namespace "$NS" >/dev/null
 echo "helm-install: namespace $NS"
+# The shared Kafka's listener admits an andara pod only from a namespace carrying this label
+# (deploy/k8s/kafka/kafka.yaml, as `make shared-up` sets it). A namespace env-destroy removed and
+# this script recreated would otherwise wait out --wait on a broker it can't reach.
+if [[ "$ENVNAME" != "local" && "${KNS:-$NS}" != "$NS" ]]; then
+  kube_kubectl label namespace "$NS" "andara.valesor/env=$ENVNAME" --overwrite >/dev/null
+  echo "helm-install: namespace $NS labelled andara.valesor/env=$ENVNAME"
+fi
 
 # Environments whose content comes from ConfigMaps (server.content.source: dir) and whose
 # token key and first operator this script provisions. dev leaves this list when
@@ -136,9 +162,9 @@ fi
 
 mapfile -t IMAGE_ARGS < <("$REPO/scripts/helm_image_args.sh" "$ENVNAME" "$IMAGE" "$TAG" "$IMAGE_SET" "$TAG_SET")
 
-# A moving tag (`:dev`) is pinned to the digest it names now. `pullPolicy: Always` only
-# re-resolves a tag when a container starts, so without this a rerun after `publish` moved
-# the tag renders an identical pod and leaves the old build running. With it, the pod rolls
+# A tag without a digest is pinned to the digest it names now. `pullPolicy: Always` only
+# re-resolves a tag when a container starts, so without this a rerun after the tag moved
+# renders an identical pod and leaves the old build running. With it, the pod rolls
 # exactly when the tag has moved, and the pod spec records which build it runs. `sha-` tags
 # are immutable and pass through; local's image is kind-loaded and never resolved.
 if [[ "$ENVNAME" != "local" ]]; then

@@ -18,7 +18,7 @@ snapshots are switched off (`snapshot.interval: 0`), because that is not a stale
 
 Read that first, because everything below depends on not treating this as an outage. Snapshots
 are an RTO optimisation layered on a recovery path that is already correct: Kafka is the
-authority on order, and replaying `andara.commands.v1` from its beginning reconstructs the World
+authority on order, and replaying `dev.andara.commands.v1` from its beginning reconstructs the World
 exactly (ADR-0002, `AW-SRV-007`). RPO is zero and is decided by broker settings, not by anything
 this alert covers. A stale snapshot costs **recovery time**, and only if the process dies before
 it is fixed.
@@ -106,3 +106,10 @@ andara-cli snapshot list --zone <zone>   # a new newest row within snapshot.inte
 - **Do not treat this as data loss in an incident channel.** It is not, and saying so sends
   people looking for a problem that does not exist. The accurate sentence is "recovery would be
   slower than intended until the next round completes".
+
+**The topics are prefixed, and the broker is shared.** The topic names here are `dev`'s on the
+Kafka `andara-log` in `andara-shared`, which `local` shares under `local.` (AW-INF-055). Read them
+through the toolbox there (`kubectl --context kind-andara -n andara-shared exec
+deploy/andara-kafka-tools -- rpk topic describe dev.andara.events.v1`). `make shared-check`
+reports each broker PVC's use and each environment's bytes on it, so a filling disk is
+attributed to the environment filling it (`world-read-only.md`).

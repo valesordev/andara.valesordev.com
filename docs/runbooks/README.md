@@ -35,6 +35,7 @@ says "connect to the database" is a gap in the CLI (`CLAUDE.md` §10).
 | `terraform-state.md` | `AW-INF-046` | — (Grafana Cloud Terraform state: bootstrap, credentials, a held lock, a failed apply, the test alert) |
 | `grafana-credentials.md` | `AW-INF-076` | — (every hand-made Grafana Cloud credential: click path, scopes, expiry, storage, reader, rotation) |
 | `terraform-run-failed.md` | `AW-INF-076` | — (a red `apply`, `apply-prod`, `drift` or `drift-prod-irm` run: who looks, what first, the dev-box fallback) |
+| `promote.md` | `AW-INF-059` | — (moving `dev`: `make promote`, its rollback, a promotion that doesn't sync, the first tag on a rebuilt cluster) |
 
 ## Planned
 

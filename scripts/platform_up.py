@@ -136,8 +136,8 @@ def validate(doc):
     errors = []
     for k in keys(doc):
         if "updater" in k.lower().replace("_", "").replace("-", ""):
-            errors.append("%s: Argo CD Image Updater is not a platform item; it keeps its pin in "
-                          "scripts/argocd.py until AW-INF-059 removes it" % k)
+            errors.append("%s: Argo CD Image Updater is not a platform item; AW-INF-059 removed it, and "
+                          "`make promote` moves dev" % k)
     for k in doc:
         if k not in ("kind",) + CHARTS + OPTIONAL:
             errors.append("%s: not a platform item (%s)" % (k, ", ".join(("kind",) + CHARTS + OPTIONAL)))
@@ -169,7 +169,8 @@ NODE_IMAGE_RE = re.compile(r"kindest/node(:v?\d|@sha256:)")
 # What names each chart item on a line, lowercased with `-`, `_` and spaces removed.
 ALIASES = {"certManager": ("certmanager",), "traefik": ("traefik",), "strimzi": ("strimzi",),
            "argocd": ("argocd",)}
-# Not a platform item, though its name contains one: it keeps its own pin until AW-INF-059.
+# Not a platform item, though its name contains one; AW-INF-059 removed it, and this keeps a
+# stray mention from reading as an Argo CD pin.
 NOT_ITEMS = ("imageupdater",)
 PIN_DIRS = ("scripts", os.path.join(".github", "workflows"))
 PIN_EXEMPT = (os.path.join("scripts", "tests"),)

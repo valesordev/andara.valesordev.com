@@ -1,9 +1,18 @@
-# The command log for one Andara environment: Apache Kafka via Strimzi (AW-INF-014).
+# The command log for the box's Andara environments: Apache Kafka via Strimzi (AW-INF-014),
+# shared by andara-local and andara-dev (ADR-0013 decisions 3–5, AW-INF-055).
 #
 # ADR-0002 §7 puts Kafka in production and Redpanda only on a laptop; dev and prod on the
-# box are the production path, so this is Kafka (decided 2026-09-24, Brian). One cluster
-# per `andara-<env>` namespace: `make kafka-install ENV=<env>` applies this file unchanged
-# with `kubectl -n andara-<env> apply`, so nothing here names a namespace.
+# box are the production path, so this is Kafka (decided 2026-09-24, Brian). One cluster, in
+# the namespace andara-shared: `make shared-up` applies this file unchanged with
+# `kubectl -n andara-shared apply`, so nothing here names a namespace. The environments are
+# kept apart by topic prefix (`local.`, `dev.`, deploy/kafka/topics.yaml) and, from
+# AW-INF-056, by per-environment principals whose ACLs are scoped to the prefix. Clients reach
+# it as andara-log-kafka-bootstrap.andara-shared.svc:9092.
+#
+# What sharing costs (ADR-0013): one environment can fill the brokers' disks or exhaust their
+# partitions or connections, and a broker fault disturbs both. local's topics carry a size and
+# age bound (topics.yaml), and `make shared-check` reports each PVC's use and each prefix's
+# bytes.
 #
 # Three combined controller+broker nodes, because deploy/kafka/topics.yaml declares
 # replication factor 3 and min.insync.replicas 2 for dev and prod: one broker can be lost
@@ -72,15 +81,32 @@ spec:
         port: 9092
         type: internal
         tls: false
-        # Strimzi renders this into the listener's NetworkPolicy: the server and projector
-        # pods (the chart's app.kubernetes.io/name) and the rpk toolbox, nothing else. No
-        # TLS or SASL: traffic never leaves the namespace (AC-6).
+        # Strimzi renders this into the listener's NetworkPolicy. Each peer is ORed with the
+        # others; within a peer the namespaceSelector and podSelector are ANDed. So: the
+        # server and projector pods (the chart's app.kubernetes.io/name: andara) in a namespace
+        # labelled andara.valesor/env local or dev, which `make shared-up` labels; the rpk
+        # toolbox in andara-shared; and the brokers themselves, because tools run in a broker
+        # pod reach the other brokers on this listener: `make shared-check`'s kafka-log-dirs
+        # and `make kafka-broker-bounce`'s kafka-topics --under-replicated-partitions (Strimzi
+        # admits broker-to-broker traffic on its own internal ports only). Nothing
+        # else, including an `andara` pod in an unlabelled namespace. No TLS or SASL yet: SASL
+        # is AW-INF-056's, and traffic never leaves the cluster.
         networkPolicyPeers:
-          - podSelector:
+          - namespaceSelector:
               matchExpressions:
-                - key: app.kubernetes.io/name
+                - key: andara.valesor/env
                   operator: In
-                  values: [andara, andara-kafka-tools]
+                  values: [local, dev]
+            podSelector:
+              matchLabels:
+                app.kubernetes.io/name: andara
+          - podSelector:
+              matchLabels:
+                app.kubernetes.io/name: andara-kafka-tools
+          - podSelector:
+              matchLabels:
+                strimzi.io/cluster: andara-log
+                strimzi.io/pool-name: broker
     config:
       default.replication.factor: 3
       min.insync.replicas: 2

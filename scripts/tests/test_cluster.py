@@ -387,12 +387,16 @@ class Rebuild(Base):
         p = mock.patch.object(cluster, "run_platform", lambda r: self.platform_runs.append(r.id))
         p.start()
         self.addCleanup(p.stop)
+        p = mock.patch.object(cluster, "run_shared", lambda r: None)
+        p.start()
+        self.addCleanup(p.stop)
 
-    def test_exports_then_deletes_then_creates_then_platform_up(self):
+    def test_exports_then_deletes_then_creates_then_platform_up_then_shared_up(self):
         k = self.fake(Kind(clusters=("solo7", "andara")))
         order = []
         k_run = k.run
         cluster.run_platform = lambda r: order.append("platform-up " + r.id)
+        cluster.run_shared = lambda r: order.append("shared-up " + r.id)
 
         def run(*cmd, check=True):
             order.append(os.path.basename(cmd[0]) + " " + cmd[1])
@@ -405,8 +409,11 @@ class Rebuild(Base):
             return {"cert-manager/andara-ca-tls": "written", "andara-dev/andara-edge-tls": "absent"}
 
         cluster.rebuild(self.run_, "andara", self.free_ports(), export=export)
-        steps = [s for s in order if s.split()[0] in ("export", "platform-up") or s.split()[1] in ("delete", "create")]
-        self.assertEqual(steps, ["export kind-andara", "kind delete", "kind create", "platform-up " + self.run_.id])
+        steps = [s for s in order if s.split()[0] in ("export", "platform-up", "shared-up")
+                 or s.split()[1] in ("delete", "create")]
+        self.assertEqual(steps, ["export kind-andara", "kind delete", "kind create", "platform-up " + self.run_.id,
+                                 "shared-up " + self.run_.id])
+        self.assertFalse([line for line in self.out if "AW-INF-055" in line], "shared-up's Kafka is no longer pending")
         self.assertIn("pending the collectors: AW-INF-065", [line.strip() for line in self.out])
         self.assertFalse([line for line in self.out if "AW-INF-054" in line], "platform-up is no longer pending")
         self.assertEqual(self.out[-1], "rebuilt context=kind-andara")

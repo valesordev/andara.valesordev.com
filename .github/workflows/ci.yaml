@@ -108,6 +108,10 @@ jobs:
       # AW-INF-053: every kubectl, helm and kind call names ANDARA_KUBE_CONTEXT's cluster.
       - name: kube context
         run: make kube-context-check
+      # AW-INF-055 AC-9: the KafkaUsers rendered from topics.yaml grant no principal topic Create,
+      # Alter or AlterConfigs, and no literal `*`.
+      - name: kafka users
+        run: make kafka-users-check
       # AW-INF-051: every Fleet pipeline validates and writes only to the chart's receiver.
       - name: fleet pipelines
         run: make pipelines-check
