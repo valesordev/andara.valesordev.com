@@ -105,7 +105,8 @@ class FakeBroker:
 
     def __init__(self, topics, refuse=None, replicas=None):
         # topics: {name: (partitions, {key: value})}. A key the broker "doesn't report" is
-        # simply absent, as on Redpanda. replicas: {name: n}, listed as rpk lists it when given.
+        # simply absent, as on Redpanda. replicas: {name: n}, listed as rpk lists it (3 when not
+        # given; None leaves the field out, as a listing of another shape would).
         self.topics = {n: (p, dict(c)) for n, (p, c) in topics.items()}
         self.replicas = replicas or {}
         self.refuse = refuse or set()   # {(topic, key)} the broker rejects
@@ -115,9 +116,13 @@ class FakeBroker:
         self.calls.append(list(args))
         ok = lambda out="": SimpleNamespace(returncode=0, stdout=out, stderr="")  # noqa: E731
         if args[:2] == ["topic", "list"]:
-            return ok(json.dumps([dict({"name": n, "partitions": p},
-                                       **({"replicas": self.replicas[n]} if n in self.replicas else {}))
-                                  for n, (p, _) in self.topics.items()]))
+            rows = []
+            for n, (p, _) in self.topics.items():
+                row = {"name": n, "partitions": p}
+                if self.replicas.get(n, 3) is not None:
+                    row["replicas"] = self.replicas.get(n, 3)
+                rows.append(row)
+            return ok(json.dumps(rows))
         if args[:2] == ["topic", "describe"]:
             _, cfg = self.topics[args[2]]
             return ok("KEY  VALUE  SOURCE\n" + "\n".join(
@@ -567,13 +572,26 @@ class Platform(unittest.TestCase):
         """Codex on #650: an RF-1 `_schemas` with min ISR 1 must not have its min ISR raised to 2
         (the registry's acks=all writes would then all fail) and then be reported as matching."""
         for action in ("apply", "diff"):
-            b = FakeBroker({"_schemas": (1, {"cleanup.policy": "compact", "min.insync.replicas": "1"})},
-                           replicas={"_schemas": 1})
-            with contextlib.redirect_stderr(io.StringIO()) as died:
-                code, _, err = self.run_platform(b, action)
-            self.assertEqual(code, 1, action)
-            self.assertIn("_schemas has replication factor 1, declared 3; changing replication is refused", err + died.getvalue())
-            self.assertFalse([c for c in b.calls if c[1] == "alter-config"], action)
+            for rf in (1, 5):
+                b = FakeBroker({"_schemas": (1, {"cleanup.policy": "compact", "min.insync.replicas": "1"})},
+                               replicas={"_schemas": rf})
+                with contextlib.redirect_stderr(io.StringIO()) as died:
+                    code, _, err = self.run_platform(b, action)
+                self.assertEqual(code, 1, (action, rf))
+                self.assertIn("_schemas has replication factor %d, declared 3; changing replication is refused" % rf,
+                              err + died.getvalue())
+                self.assertFalse([c for c in b.calls if c[1] == "alter-config"], (action, rf))
+
+    def test_a_listing_without_replicas_is_refused_not_skipped(self):
+        """Pre-review: the shared broker's listing always carries replicas; one that doesn't changed
+        shape, and reading it as 'nothing to compare' would let the min ISR change through."""
+        b = FakeBroker({"_schemas": (1, {"cleanup.policy": "compact", "min.insync.replicas": "1"})},
+                       replicas={"_schemas": None})
+        with contextlib.redirect_stderr(io.StringIO()) as died:
+            code, _, _ = self.run_platform(b)
+        self.assertEqual(code, 1)
+        self.assertIn("could not read _schemas's replication factor", died.getvalue())
+        self.assertFalse([c for c in b.calls if c[1] == "alter-config"])
 
     def test_the_declared_replication_factor_matches(self):
         b = FakeBroker({"_schemas": (1, {"cleanup.policy": "compact", "min.insync.replicas": "2"})},

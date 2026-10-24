@@ -617,7 +617,10 @@ def run_platform(action, run, decl=DECL, out=sys.stdout, err=sys.stderr):
         # Refused before any config change: a min.insync.replicas raised past a topic's real
         # replication would fail every acks=all write while the settings read as matching.
         have_rf = live[name].get("replicas")
-        if have_rf is not None and have_rf != rf:
+        if have_rf is None:
+            die("could not read %s's replication factor from `rpk topic list`; refusing to compare or "
+                "alter it" % name)
+        if have_rf != rf:
             die("%s has replication factor %d, declared %d; changing replication is refused (it is a "
                 "partition reassignment, done by hand)" % (name, have_rf, rf))
         have = describe_config(run, name)
