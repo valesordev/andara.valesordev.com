@@ -61,7 +61,7 @@ HAS_GO := $(shell find . -name '*.go' -not -path './.git/*' -not -path './bin/*'
         proto proto-check adr \
         k8s-dry check-targets clean build build-info goldens \
         values-schema values-schema-check helm-test image image-publish image-check cli-release cli-release-check cli-release-publish kind-load helm-install measure-tick stack-smoke stack-play stack-linkdead stack-recover stack-recover-mismatch \
-        platform-up platform-check kube-context-check cluster-up cluster-down cluster-rebuild stream-soak content-grammar-check observe-check dashboard-check observe-unavailable gcx-config gcx-check gcx-only-check scripts-test kafka-install kafka-broker-bounce shared-up shared-down shared-check shared-netcheck kafka-users kafka-users-check \
+        platform-up platform-check kube-context-check cluster-up cluster-down cluster-rebuild stream-soak content-grammar-check observe-check slo-report dashboard-check observe-unavailable gcx-config gcx-check gcx-only-check scripts-test kafka-install kafka-broker-bounce shared-up shared-down shared-check shared-netcheck kafka-users kafka-users-check \
         argocd-install promote promote-log argocd-status argocd-ui argocd-recover argocd-uninstall world-reset content-seed env-destroy env-recover \
         objectstore-install projector-stop projector-start projector-rebuild server-stop server-start core-versions-check \
         builder-reference builder-reference-check guide-check \
@@ -593,6 +593,10 @@ tf-lock:
 ## tf-bootstrap-gcp: create or verify the andara-tfstate bucket, service accounts, IAM conditions and workload identity, seed the three states; idempotent, run once by the GCP project owner (GCP_STATE_PROJECT, GCP_DEVBOX_IDENTITY; docs/runbooks/terraform-state.md)
 tf-bootstrap-gcp:
 	@$(PY) $(SCRIPTS)/tf_bootstrap_gcp.py
+
+## slo-report: render the 28-day SLIs of world-write-availability.md and kafka-availability.md into their measurement tables, reading solo7dev through gcx; no drill exclusion yet (AW-INF-081) (GRAFANA_SOLO7DEV_READ_TOKEN from the environment or .local/box.env; exits 3 without it) (AW-INF-039)
+slo-report:
+	@$(PY) $(SCRIPTS)/slo_report.py
 
 ## observe-check: ask ENV's Grafana Cloud stack, through gcx, whether andara-<env>'s metrics, logs and traces arrived; KEEP_LIST=1 checks every series the rules and the dashboard name instead (GRAFANA_<STACK>_READ_TOKEN from the environment or .local/box.env; exits 3 without it) — ENV=<local|dev|staging|prod> (AW-INF-075)
 observe-check:

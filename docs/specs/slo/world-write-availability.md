@@ -17,7 +17,7 @@ This SLO is about the one thing players cannot do in that state: act.
 
 ```promql
 1 - avg by (namespace) (
-      avg_over_time(max_over_time(andara_ingress_degraded[1m])[28d:1m])
+      avg_over_time(max_over_time(andara_ingress_degraded{cluster!="ci"}[1m])[28d:1m])
     )
 ```
 
@@ -28,6 +28,8 @@ This SLO is about the one thing players cannot do in that state: act.
 - **`max_over_time(…[1m])` inside** (ruling 3). Under a persistent produce fault the gauge saw-tooths: 1 for
   `ingress.degraded_hold`, then 0 for up to `ingress.produce_deadline` until the next Submit rediscovers the
   fault. Taking each minute's max means the gap never reads as health.
+- **`cluster!="ci"`**: CI ships to `solo7dev` as `namespace="andara-local"` on cluster `ci` (`ADR-0014`
+  A3). Its short runs aren't `local`'s availability. Compose series carry no `cluster` label and still match.
 - **Per `namespace`** (ruling 4). `local` and `dev` share brokers but not budgets. Once `AW-INF-047`'s edit
   lands, the grouping is `by (environment, namespace)`.
 

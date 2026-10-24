@@ -47,7 +47,7 @@ log.
 
 ```promql
 1 - avg by (namespace) (
-      avg_over_time((max_over_time(andara_consumer_lag[1m]) > bool 400)[28d:1m])
+      avg_over_time((max_over_time(andara_consumer_lag{cluster!="ci"}[1m]) > bool 400)[28d:1m])
     )
 ```
 
@@ -55,6 +55,8 @@ log.
   behind for the whole window costs 1/64 of the budget, and the whole log behind costs all of it.
 - **`max_over_time(…[1m])` inside** means a Partition that crosses the threshold between 15 s scrapes still
   counts for that minute. Sampling can't read a lag spike as health.
+- **`cluster!="ci"`**: CI ships to `solo7dev` as `namespace="andara-local"` on cluster `ci` (`ADR-0014`
+  A3). Its short runs aren't `local`'s availability. Compose series carry no `cluster` label and still match.
 - **Per `namespace`** (ruling 4): `local` and `dev` share brokers but not budgets. Once `AW-INF-047`'s edit
   lands, the grouping is `by (environment, namespace)`.
 
