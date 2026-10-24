@@ -23,7 +23,8 @@ says "connect to the database" is a gap in the CLI (`CLAUDE.md` §10).
 | `certificate-expiring.md` | `AW-INF-006` | `CertificateExpiringSoon` |
 | `ingress-error-rate.md` | `AW-INF-006` | `IngressErrorRateHigh` |
 | `simulation-lagging.md` | `AW-SRV-002` | `SimulationLagging` |
-| `world-read-only.md` | `AW-SRV-010`, completed by `AW-INF-005` | `WorldReadOnly` |
+| `world-read-only.md` | `AW-SRV-010`, completed by `AW-INF-039` | `WorldReadOnly` |
+| `simulation-consumer-lagging.md` | `AW-INF-039` | `SimulationConsumerLagging` |
 | `sessions-dropping.md` | `AW-SRV-011` | `SessionsDroppingAtRate` |
 | `snapshot-stale.md` | `AW-SRV-006` | `SnapshotStale` |
 | `state-projector-diverged.md` | `AW-SRV-019` | `StateProjectorDiverged` |
@@ -41,6 +42,5 @@ says "connect to the database" is a gap in the CLI (`CLAUDE.md` §10).
 
 | File | Story | Alert |
 |------|-------|-------|
-| `simulation-consumer-lagging.md` | `AW-INF-005` | `SimulationConsumerLagging` |
 | `deploy-and-rollback.md` | `AW-INF-007` | — (procedure, not an alert) |
 | `npcs-unattended.md` | `AW-SRV-009` | `NPCsUnattended` |

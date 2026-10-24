@@ -20,7 +20,8 @@ in `docs/runbooks/` is incomplete.
 |------|--------|--------------|--------|
 | `tick-health.md` | proposed targets | `AW-SRV-002` | tick budget adherence, simulation lag |
 | `recovery.md` | proposed targets | `AW-SRV-006`, `AW-SRV-007` | RPO and RTO |
-| `world-write-availability.md` | proposed targets | `AW-INF-005` | the World accepting Commands |
+| `world-write-availability.md` | proposed targets; SLI settled 2026-10-24 | `AW-INF-005`, `AW-INF-039` | the World accepting Commands: Partition-time not read-only |
+| `kafka-availability.md` | proposed target | `AW-INF-039` | accepted Commands applied in time: Partition-time within 400 offsets of the log |
 | `edge-availability.md` | proposed targets | `AW-INF-006` | the edge letting players through: 5xx ratio, certificate validity |
 | `session-availability.md` | target decided 2026-09-20 | `AW-SRV-011` | the Event stream staying open: server-ended streams per stream-second |
 | `projection-freshness.md` | proposed target | `AW-SRV-019`, shared with `AW-SRV-017`/`018` | index lag while the World ticks; replica integrity (no budget) |
@@ -29,12 +30,6 @@ in `docs/runbooks/` is incomplete.
 "Proposed targets" means the number was reasoned from the architecture but not yet checked against a
 running system. The owning story validates it against first measurement and either confirms it or comes
 back with why not.
-
-## Planned
-
-| File | Owning story | Covers |
-|------|--------------|--------|
-| `kafka-availability.md` | `AW-INF-005` | broker availability underneath write availability |
 
 ## The numbers that constrain each other
 

@@ -1,9 +1,27 @@
 # WorldReadOnly
 
-**Alert:** `max(andara_ingress_degraded) == 1` for 1 m (`AW-INF-005` owns the rule and the SLO).
-**Severity:** page. **SLO:** `AW-INF-005`'s Kafka availability SLO, when it lands.
-**Ships with:** `AW-SRV-010` (this runbook and the metric); `AW-INF-005` completes it with the
-alert, the SLO, and the broker-side mitigations.
+**Alert:** `max by (namespace) (andara_ingress_degraded) == 1` for 30 s, `keep_firing_for: 2m`
+(`files/alerts.yaml`, `AW-INF-039`).
+**Severity:** page. **SLO:** `docs/specs/slo/world-write-availability.md`.
+**Ships with:** `AW-SRV-010` (this runbook and the metric); `AW-INF-039` completes it with the
+alert, the SLO, and the first-step branch below.
+
+## First: how many Partitions?
+
+The alert pages on one degraded Partition, so the page alone doesn't say how much of the World is
+read-only. Read the count for the paged `namespace` before anything else:
+
+```
+sum by (namespace) (andara_ingress_degraded{namespace="andara-<env>"})
+```
+
+| Count | What it is | First mitigation |
+|---|---|---|
+| **64** (every Partition) | **The log is unreachable** from this server: brokers down, the bootstrap Service unreachable, or two of three brokers gone. Every player in the environment is read-only. | Bring the brokers back (*How to confirm* and the mitigation table below). Once they're up, confirm the contract still holds: `make broker-assert ENV=<env>` once `AW-INF-038` lands, and until then `make shared-check` and Strimzi's `Ready` on `kafka/andara-log`. Don't restart the server. |
+| **a few** (1–63) | **A Partition fault.** The rest of the log is fine, and only players in those Partitions' Zones can't act. Usually an under-replicated Partition whose ISR fell below `min.insync.replicas`, or a leader election that didn't settle. | Find the Partitions (`andara_ingress_degraded == 1` by `partition`), then their ISR: `kafka-topics.sh --describe --under-replicated-partitions` from a broker (below). Bring the lagging replica's broker back, or wait out the election. A `NOT_ENOUGH_REPLICAS` produce error clears after `ingress.degraded_hold` (120 s) and a healthy probe. |
+
+If `local` and `dev` page together, it's the shared brokers (`andara-shared`). Treat it as the 64 case
+in both.
 
 ## What fired, and what the player is experiencing
 
@@ -58,7 +76,7 @@ without traffic; a produce failing and a ping then failing flips it sooner.
 | Symptom | Action |
 |---------|--------|
 | brokers down or unreachable | bring the broker back; the ingress recovers on its own — no server restart, no client reconnect. Recovery is logged `command log reachable`. |
-| brokers up, gauge still 1 | `rpk cluster health` from a broker pod; `min.insync.replicas` unsatisfied looks like this from the producer's side (`acks=all`). `AW-INF-005` owns the replica-side procedure. |
+| brokers up, gauge still 1 | `rpk cluster health` from a broker pod; `min.insync.replicas` unsatisfied looks like this from the producer's side (`acks=all`). The "a few" row of *First* is the replica-side procedure. |
 | gauge 0, players still see `UNAVAILABLE` | the reason is different: `in_transit` is a stuck cross-Zone handoff (`AW-SRV-028`), not the log. `andara_ingress_held_intents` and the `command rejected` lines say which. |
 | gauge flapping | a partition of the network between server and brokers, or a broker restarting in a loop. The probe clears the state on one successful ping and re-enters it on one failure; look at the broker, not the server. |
 | a broker's disk full (its log directory offline, the broker crash-looping) | `make shared-check`: it exits 1 naming the PVC over 80%, or one it couldn't measure because its broker is down, and its `broker <n>` lines say which environment's prefix holds the bytes. `local`'s topics are bounded (64 MiB per partition, 7 days); if `local.` is the one filling it, `make world-reset ENV=local CONFIRM=andara-local BROKER=cluster` frees it (it needs local's release; without one it refuses, naming `make helm-install ENV=local`). Never delete a `dev.` topic to make room: it's `dev`'s Command history. Escalate to SRE with the `shared-check` output. |
@@ -82,6 +100,5 @@ ingress is already waiting for exactly the thing you would be restarting it to w
 ## When to escalate
 
 The server side of this is complete when the broker is back. If the broker cannot be brought
-back within the SLO's error budget, that is `AW-INF-005`'s escalation: the Kafka availability SLO
-and the replica procedure. If the gauge stays 1 with a healthy cluster, that is a server bug —
+back within the SLO's error budget, the exhaustion policy in `world-write-availability.md` applies. If the gauge stays 1 with a healthy cluster, that is a server bug —
 open one with the `command log unreachable` line and `rpk cluster health` output.
