@@ -46,13 +46,28 @@ rule.
 log.
 
 ```promql
-1 - avg by (namespace) (
-      avg_over_time((max_over_time(andara_consumer_lag{cluster!="ci"}[1m]) > bool 400)[28d:1m])
+1 - sum by (namespace) (
+      sum_over_time((max by (namespace, partition) (
+        max_over_time(andara_consumer_lag{cluster!="ci"}[1m])
+      ) > bool 400)[28d:1m])
+    )
+  / sum by (namespace) (
+      count_over_time(max by (namespace, partition) (
+        max_over_time(andara_consumer_lag{cluster!="ci"}[1m])
+      )[28d:1m])
     )
 ```
 
-- **Per Partition, then averaged** (the shape of ruling 2 in `world-write-availability.md`): one Partition
-  behind for the whole window costs 1/64 of the budget, and the whole log behind costs all of it.
+- **Lagging Partition-minutes over observed Partition-minutes** (the shape of ruling 2 in
+  `world-write-availability.md`): one Partition behind for the whole window costs 1/64 of the budget, and the
+  whole log behind costs all of it.
+- **One series per Partition** (`max by (namespace, partition)`, before the subquery). A pod replacement
+  gives a Partition a new `instance` series. Collapsed, the old and new pods' minutes are weighted by how
+  long each was observed. Averaged separately, a two-minute lagging pod would weigh as much as its 28-day
+  healthy replacement.
+- **A minute with no series is left out**, unlike the write SLI's fixed denominator: while the process is
+  down or recovering nothing consumes, and that time is charged to write availability.
+  `scripts/tests/test_slo_report.py` evaluates this expression with `promtool`.
 - **`max_over_time(…[1m])` inside** means a Partition that crosses the threshold between 15 s scrapes still
   counts for that minute. Sampling can't read a lag spike as health.
 - **`cluster!="ci"`**: CI ships to `solo7dev` as `namespace="andara-local"` on cluster `ci` (`ADR-0014`

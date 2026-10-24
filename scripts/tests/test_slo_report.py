@@ -175,9 +175,12 @@ class WriteSLISemantics(unittest.TestCase):
     """The write SLI counts a minute with no sample as unavailable: a server that is down or restarting
     (no Ready pod, so no scrape) spends the budget, as the document's deploy tension says it must."""
 
+    DOC, METRIC = 0, "andara_ingress_degraded"
+
     def evaluate(self, values, want, more=()):
         """values is partition 0's series; more adds (instance, values) series for the same Partition."""
-        expr = scaled(slo_report.DOCS[0]["expr"])
+        expr = scaled(slo_report.DOCS[self.DOC]["expr"])
+        metric = self.METRIC
         d = tempfile.mkdtemp()
         self.addCleanup(shutil.rmtree, d)
         with open(os.path.join(d, "rules.yaml"), "w") as f:
@@ -187,9 +190,9 @@ class WriteSLISemantics(unittest.TestCase):
             "evaluation_interval": "1m",
             "tests": [{
                 "interval": "1m",
-                "input_series": [{"series": 'andara_ingress_degraded{namespace="andara-dev",partition="0"}',
+                "input_series": [{"series": metric + '{namespace="andara-dev",partition="0"}',
                                   "values": values}] + [
-                    {"series": 'andara_ingress_degraded{namespace="andara-dev",partition="0",instance="%s"}' % i,
+                    {"series": metric + '{namespace="andara-dev",partition="0",instance="%s"}' % i,
                      "values": v} for i, v in more],
                 "promql_expr_test": [{"expr": expr, "eval_time": "20m",
                                       "exp_samples": [{"labels": '{namespace="andara-dev"}', "value": want}]}],
@@ -219,6 +222,30 @@ class WriteSLISemantics(unittest.TestCase):
     def test_a_degraded_minute_costs_a_minute(self):
         # Degraded samples at minutes 1, 3 and 5: three of the twenty steps.
         self.evaluate("0 1 0 1 0 1 0x16", 0.85)
+
+
+class KafkaSLISemantics(WriteSLISemantics):
+    """The read SLI is lagging Partition-minutes over observed Partition-minutes. A minute with no series
+    (the process down or recovering) is left out, because the restart is charged to write availability, and
+    a pod replacement's new instance is the same Partition, weighted by the minutes it was observed."""
+
+    DOC, METRIC = 1, "andara_consumer_lag"
+
+    def test_healthy_throughout_is_one(self):
+        self.evaluate("0x22", 1)
+
+    def test_minutes_with_no_sample_count_against_it(self):
+        # Overrides the write case: here a gap is left out, not charged. Lag 500 at minutes 1 and 2 of the
+        # ten observed steps (minutes 1-9 and 20; steps 10-19 have no series).
+        self.evaluate("0 500 500 0x6 _x10 0x1", 0.8)
+
+    def test_a_second_series_for_a_partition_is_not_extra_health(self):
+        # A short-lived instance that lagged for its two minutes, then its replacement healthy for the
+        # rest: two lagging minutes of twenty, not half the window.
+        self.evaluate("_x2 0x18", 0.9, more=[("old", "500 500 500 _x19")])
+
+    def test_a_degraded_minute_costs_a_minute(self):
+        self.evaluate("0 500 0 500 0 500 0x16", 0.85)
 
 
 if __name__ == "__main__":

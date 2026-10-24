@@ -53,8 +53,14 @@ DOCS = [
     {
         "file": "kafka-availability.md",
         "target": 0.999,
-        "expr": '1 - avg by (namespace) ('
-                'avg_over_time((max_over_time(andara_consumer_lag{cluster!="ci"}[1m]) > bool 400)[28d:1m]))',
+        # Lagging Partition-minutes over observed Partition-minutes. One series per Partition first, so a
+        # pod replacement's new instance is the same Partition weighted by its minutes, not a separate
+        # series averaged with equal weight. A minute with no series is left out: the restart is charged
+        # to write availability.
+        "expr": '1 - sum by (namespace) (sum_over_time((max by (namespace, partition) ('
+                'max_over_time(andara_consumer_lag{cluster!="ci"}[1m])) > bool 400)[28d:1m])) / '
+                'sum by (namespace) (count_over_time(max by (namespace, partition) ('
+                'max_over_time(andara_consumer_lag{cluster!="ci"}[1m]))[28d:1m]))',
     },
 ]
 
