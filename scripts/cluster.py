@@ -63,7 +63,6 @@ WAIT = "5m"
 NOT_YET = [
     "the dev edge certificate restore (andara-dev/andara-edge-tls, once andara-dev exists; "
     "platform-up restores the CA root only): AW-INF-066",
-    "the schema registry: AW-INF-057",
     "the collectors: AW-INF-065",
 ]
 

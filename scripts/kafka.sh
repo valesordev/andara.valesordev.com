@@ -8,7 +8,8 @@
 #   kafka.sh up                make shared-up: the application namespaces with their
 #                              andara.valesor/env label, deploy/k8s/kafka/*.yaml in andara-shared,
 #                              wait Ready, both environments' topics from deploy/kafka/topics.yaml,
-#                              then the shared object store (`make objectstore-up` and each
+#                              the platform topics and the schema registry (AW-INF-057), then
+#                              the shared object store (`make objectstore-up` and each
 #                              environment's `objectstore-install`, AW-INF-058).
 #   kafka.sh install <env>     make kafka-install: the same Kafka, then only <env>'s topics.
 #   kafka.sh bounce <env>      make kafka-broker-bounce: lose one broker, prove <env>'s server never
@@ -108,6 +109,15 @@ topics_for() {
   "$PY" scripts/topics.py apply --env "$env" "${broker[@]}"
 }
 
+# The schema registry (AW-INF-057): its platform topic first, then Karapace, waited on.
+schema_registry() {
+  "$PY" scripts/topics.py apply --platform
+  kube_kubectl -n "$KAFKA_NS" apply -f deploy/k8s/schema-registry/ >/dev/null
+  kube_kubectl -n "$KAFKA_NS" rollout status deploy/andara-schema-registry --timeout=5m >/dev/null \
+    || die "$CMD" "the schema registry in $KAFKA_NS did not become Available: kubectl --context $ANDARA_KUBE_CONTEXT -n $KAFKA_NS logs deploy/andara-schema-registry"
+  echo "shared: schema registry Ready at http://andara-schema-registry.$KAFKA_NS.svc:8081"
+}
+
 # The shared object store (AW-INF-058): the gateway, then each environment's user, bucket and Secret.
 objectstore_for_all() {
   local env
@@ -120,6 +130,7 @@ up() {
   local env
   for env in "${ENVS[@]}"; do topics_for "$env"; done
   brokers
+  schema_registry
   objectstore_for_all
 }
 

@@ -271,6 +271,8 @@ SWEEP = [
     ("projector.py", [PY, "scripts/projector.py", "stop", "dev"]),
     ("objectstore.py", [PY, "scripts/objectstore.py", "install", "dev"]),
     ("topics.py", [PY, "scripts/topics.py", "diff", "--env", "dev"]),
+    # dev's registry is the shared Karapace, reached by a port-forward (AW-INF-057).
+    ("schemas.py", [PY, "scripts/schemas.py", "diff", "--env", "dev"]),
 ]
 
 

@@ -56,6 +56,9 @@ kubeconform -strict -summary -kubernetes-version "$KUBE_VERSION" \
 kubeconform -strict -summary -kubernetes-version "$KUBE_VERSION" \
   -schema-location default -schema-location "$CRD_SCHEMAS" \
   deploy/k8s/kafka/*.yaml | sed "s/^/k8s-dry [kafka]: /"
+# The shared schema registry `make shared-up` applies in andara-shared (AW-INF-057).
+kubeconform -strict -summary -kubernetes-version "$KUBE_VERSION" \
+  deploy/k8s/schema-registry/*.yaml | sed "s/^/k8s-dry [schema-registry]: /"
 # The snapshot object stores: the shared one `make objectstore-up` applies in andara-shared (AW-INF-058),
 # and prod's own that `make objectstore-install ENV=prod` applies in andara-prod (AW-INF-025).
 kubeconform -strict -summary -kubernetes-version "$KUBE_VERSION" \

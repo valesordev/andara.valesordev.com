@@ -88,7 +88,8 @@ spec:
         # toolbox in andara-shared; and the brokers themselves, because tools run in a broker
         # pod reach the other brokers on this listener: `make shared-check`'s kafka-log-dirs
         # and `make kafka-broker-bounce`'s kafka-topics --under-replicated-partitions (Strimzi
-        # admits broker-to-broker traffic on its own internal ports only). Nothing
+        # admits broker-to-broker traffic on its own internal ports only); and the schema
+        # registry in andara-shared, which keeps its schemas in _schemas (AW-INF-057). Nothing
         # else, including an `andara` pod in an unlabelled namespace. No TLS or SASL yet: SASL
         # is AW-INF-056's, and traffic never leaves the cluster.
         networkPolicyPeers:
@@ -107,6 +108,9 @@ spec:
               matchLabels:
                 strimzi.io/cluster: andara-log
                 strimzi.io/pool-name: broker
+          - podSelector:
+              matchLabels:
+                app.kubernetes.io/name: andara-schema-registry
     config:
       default.replication.factor: 3
       min.insync.replicas: 2

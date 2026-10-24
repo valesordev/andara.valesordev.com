@@ -513,3 +513,82 @@ class Usage(unittest.TestCase):
         code, err = self.main("apply", "--env", "local", "--broker", "laptop")
         self.assertEqual(code, 2)
         self.assertIn("compose or cluster", err)
+
+
+class Platform(unittest.TestCase):
+    """AW-INF-057: `topics.py apply --platform`, the platform topics on the shared broker (literal
+    names, outside every prefix), from the real declaration."""
+
+    def run_platform(self, broker, action="apply", decl=topics.DECL):
+        out, err = io.StringIO(), io.StringIO()
+        with mock.patch("sys.exit", side_effect=SystemExit) as _:
+            try:
+                code = topics.run_platform(action, broker, decl=decl, out=out, err=err)
+            except SystemExit as e:
+                code = e.code if e.code is not None else 1
+        return code, out.getvalue(), err.getvalue()
+
+    def test_the_declaration_has_the_registry_topic(self):
+        got = {t["name"]: t for t in topics.parse_platform_topics(topics.DECL)}
+        self.assertEqual(got["_schemas"]["partitions"], "1")
+        self.assertEqual(got["_schemas"]["replication_factor"], "3")
+        self.assertEqual(got["_schemas"]["cleanup.policy"], "compact")
+        self.assertNotIn("why", got["_schemas"])  # prose is skipped
+
+    def test_a_missing_topic_is_created_literally_with_its_settings(self):
+        b = FakeBroker({})
+        code, out, _ = self.run_platform(b)
+        self.assertEqual(code, 0)
+        create = [c for c in b.calls if c[:2] == ["topic", "create"]][0]
+        self.assertEqual(create[:7], ["topic", "create", "_schemas", "-p", "1", "-r", "3"])
+        self.assertIn("cleanup.policy=compact", create)
+        self.assertIn("min.insync.replicas=2", create)
+        self.assertIn("created _schemas (platform)", out)
+
+    def test_a_matching_topic_is_left(self):
+        b = FakeBroker({"_schemas": (1, {"cleanup.policy": "compact", "min.insync.replicas": "2"})})
+        code, out, _ = self.run_platform(b)
+        self.assertEqual(code, 0)
+        self.assertFalse([c for c in b.calls if c[1] in ("create", "alter-config")])
+        self.assertIn("1 platform topic(s) match", out)
+
+    def test_a_drifted_setting_is_altered_on_apply_and_reported_on_diff(self):
+        b = FakeBroker({"_schemas": (1, {"cleanup.policy": "compact", "min.insync.replicas": "1"})})
+        code, _, err = self.run_platform(b, "diff")
+        self.assertEqual(code, 1)
+        self.assertIn("_schemas: min.insync.replicas is '1', declaration says '2'", err)
+        code, out, _ = self.run_platform(b)
+        self.assertEqual((code, b.topics["_schemas"][1]["min.insync.replicas"]), (0, "2"))
+
+    def test_adding_delete_to_the_compacted_topic_is_refused(self):
+        # Anchored on the platform entry: the first `cleanup.policy: compact` in the file is an
+        # environment topic's.
+        decl = self.decl_with("    cleanup.policy: compact\n    min.insync.replicas: 2\n    owner: AW-INF-057",
+                              "    cleanup.policy: delete\n    min.insync.replicas: 2\n    owner: AW-INF-057")
+        b = FakeBroker({"_schemas": (1, {"cleanup.policy": "compact", "min.insync.replicas": "2"})})
+        code, _, err = self.run_platform(b, decl=decl)
+        self.assertEqual(code, 1)
+        self.assertIn("_schemas cleanup.policy compact -> delete can delete data", err)
+        self.assertFalse(b.alters())
+
+    def test_repartitioning_is_refused(self):
+        code, _, _ = self.run_platform(FakeBroker({"_schemas": (3, {"cleanup.policy": "compact"})}))
+        self.assertEqual(code, 1)
+
+    def test_a_platform_topic_inside_a_prefix_or_andara_is_refused(self):
+        for name in ("dev.schemas", "andara.schemas.v1"):
+            with self.subTest(name=name):
+                code, _, _ = self.run_platform(FakeBroker({}), decl=self.decl_with("- name: _schemas", "- name: " + name))
+                self.assertEqual(code, 1)
+
+    def decl_with(self, old, new):
+        import tempfile
+        with open(topics.DECL) as f:
+            text = f.read()
+        assert old in text
+        d = tempfile.mkdtemp()
+        self.addCleanup(__import__("shutil").rmtree, d)
+        path = os.path.join(d, "topics.yaml")
+        with open(path, "w") as f:
+            f.write(text.replace(old, new, 1))
+        return path

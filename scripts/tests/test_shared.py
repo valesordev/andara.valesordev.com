@@ -191,6 +191,8 @@ class ListenerPeers(unittest.TestCase):
             {"podSelector": {"matchLabels": {"app.kubernetes.io/name": "andara-kafka-tools"}}},
             # The pool shared-check picks its pod from (shared.broker_pod), in andara-shared only.
             {"podSelector": {"matchLabels": {"strimzi.io/cluster": shared.KAFKA, "strimzi.io/pool-name": "broker"}}},
+            # The schema registry, which keeps its schemas in _schemas (AW-INF-057).
+            {"podSelector": {"matchLabels": {"app.kubernetes.io/name": "andara-schema-registry"}}},
         ])
 
 
@@ -218,25 +220,32 @@ class Down(unittest.TestCase):
         # The fixture kubeconfig (scripts-test) holds kind-andara, so kube.require passes offline.
         with contextlib.redirect_stdout(io.StringIO()), contextlib.redirect_stderr(io.StringIO()):
             shared.down("andara-shared", ns="andara-shared", run=run)
-        self.assertEqual([c[:2] for c in calls], [["delete", "-f"], ["delete", "pvc"], ["delete", "-f"],
-                                                  ["delete", "secret"]])
-        self.assertIn("strimzi.io/cluster=andara-log", calls[1])
-        self.assertEqual(calls[2][2], shared.OBJECTSTORE_MANIFEST)
-        self.assertIn("andara-objectstore-root", calls[3])
+        self.assertEqual([c[:2] for c in calls], [["delete", "-f"], ["delete", "-f"], ["delete", "pvc"],
+                                                  ["delete", "-f"], ["delete", "secret"]])
+        self.assertEqual(calls[0][2], shared.REGISTRY_MANIFESTS)  # the registry before its broker
+        self.assertEqual(calls[1][2], shared.KAFKA_MANIFESTS)
+        self.assertIn("strimzi.io/cluster=andara-log", calls[2])
+        self.assertEqual(calls[3][2], shared.OBJECTSTORE_MANIFEST)
+        self.assertIn("andara-objectstore-root", calls[4])
         self.assertFalse([c for c in calls if "namespace" in c])
 
 
 class FakeNet:
     """kubectl as shared.netcheck uses it. verdicts maps (namespace, pod) to a list of probe outputs,
-    one per exec, the last repeated; a namespace in scratch_like stands for the unlabelled one."""
+    one per exec, the last repeated; a namespace in scratch_like stands for the unlabelled one. With
+    no override, each probe answers as shared.NET_WANTS says its listener admits it, so a correctly
+    declared policy passes for every listener."""
 
     BLOCKED = "probe-ran\nresolved\nanchored\nblocked\n"
+    CONNECTED = "probe-ran\nresolved\nanchored\nconnected\n"
+    PORTS = {"9092": "kafka", "9000": "objectstore", "8081": "registry"}
 
-    def __init__(self, verdicts=None, labels=None, fail=(), objectstore=False):
+    def __init__(self, verdicts=None, labels=None, fail=(), objectstore=False, registry=False):
         self.labels = labels if labels is not None else {"andara-local": "local", "andara-dev": "dev"}
         self.verdicts = verdicts or {}
         self.fail = set(fail)       # of "create", "apply", "wait"
         self.objectstore = objectstore  # whether andara-shared has the gateway's Service (AW-INF-058)
+        self.registry = registry    # whether it has the schema registry's (AW-INF-057)
         self.calls, self.applied, self.execs, self.ready = [], [], {}, set()
         self.hosts = []             # (namespace, pod, host:port) per exec
 
@@ -255,6 +264,9 @@ class FakeNet:
         no = types.SimpleNamespace(returncode=1, stdout="", stderr="boom")
         if args[:3] == ["get", "service", "andara-objectstore"]:
             return ok("service/andara-objectstore") if self.objectstore else \
+                types.SimpleNamespace(returncode=1, stdout="", stderr="NotFound")
+        if args[:3] == ["get", "service", "andara-schema-registry"]:
+            return ok("service/andara-schema-registry") if self.registry else \
                 types.SimpleNamespace(returncode=1, stdout="", stderr="NotFound")
         if args[:2] == ["apply", "-f"]:
             if "apply" in self.fail:
@@ -278,15 +290,25 @@ class FakeNet:
             if (ns, pod) not in self.ready:
                 raise AssertionError("exec in %s/%s before its Ready wait" % (ns, pod))
             key = (ns, pod) if (ns, pod) in self.verdicts else ("scratch", pod) if ns.startswith("andara-netcheck-") else (ns, pod)
-            seq = self.verdicts.get(key, ["probe-ran\nresolved\nanchored\nconnected\n"
-                                          if "-other" not in pod and not ns.startswith("andara-netcheck-")
-                                          else self.BLOCKED])
+            seq = self.verdicts.get(key) or [self.CONNECTED if shared.NET_WANTS[self.PORTS[args[-1]]][
+                self.case(ns, pod)] == "connected" else self.BLOCKED]
             n = self.execs.get((ns, pod), 0)
             self.execs[(ns, pod)] = n + 1
             # exec <pod> -c probe -- bash -c SCRIPT <host> <anchor> <port>
             self.hosts.append((ns, pod, "%s:%s" % (args[-3], args[-1])))
             return ok(seq[min(n, len(seq) - 1)])
         raise AssertionError("unexpected kubectl %r" % (args,))
+
+    @staticmethod
+    def case(ns, pod):
+        """The probe's key in shared.NET_WANTS."""
+        if ns.startswith("andara-netcheck-"):
+            return "scratch"
+        if pod.endswith("-other"):
+            return "other"
+        if pod.endswith("-tools"):
+            return "tools"
+        return ns.replace("andara-", "")
 
 
 @unittest.skipUnless(shutil.which("getent") and shutil.which("timeout") and shutil.which("bash"),
@@ -358,7 +380,8 @@ class NetCheck(unittest.TestCase):
             ("", "namespace", "andara-netcheck-abc123"),
             ("andara-dev", "pod", "andara-netcheck-abc123"),
             ("andara-dev", "pod", "andara-netcheck-abc123-other"),
-            ("andara-local", "pod", "andara-netcheck-abc123")])
+            ("andara-local", "pod", "andara-netcheck-abc123"),
+            ("andara-shared", "pod", "andara-netcheck-abc123-tools")])
         # every probe ran against the shared bootstrap's FQDN
         probes = {tuple(a[-3:]) for _, a in net.calls if a[0] == "exec"}
         self.assertEqual(probes, {("andara-log-kafka-bootstrap.andara-shared.svc",
@@ -368,7 +391,7 @@ class NetCheck(unittest.TestCase):
         net = FakeNet()
         code, out, err = self.run_net(net)
         self.assertEqual(code, 0, err)
-        self.assertIn("no object store in andara-shared (`make objectstore-up`); its policy is not checked", out)
+        self.assertIn("no object store in andara-shared; its policy is not checked", out)
         self.assertEqual({h for _, _, h in net.hosts}, {"andara-log-kafka-bootstrap.andara-shared.svc:9092"})
 
     def test_with_the_object_store_every_case_is_probed_on_both_listeners(self):
@@ -380,7 +403,8 @@ class NetCheck(unittest.TestCase):
                                  "andara-objectstore.andara-shared.svc:9000"})
         for ns, pod in {(n, p) for n, p, _ in net.hosts}:
             self.assertEqual({h for n, p, h in net.hosts if (n, p) == (ns, pod)}, hosts, (ns, pod))
-        self.assertIn("on the Kafka listener (kafka.yaml) and the object store (objectstore/shared.yaml)", out)
+        self.assertIn("each listener admits only its declared peers: the Kafka listener (kafka.yaml), "
+                      "the object store (objectstore/shared.yaml)", out)
 
     def test_a_connection_to_the_object_store_from_outside_fails_naming_it(self):
         # The unlabelled namespace's probe: refused by the listener (first three execs), connected
@@ -397,14 +421,36 @@ class NetCheck(unittest.TestCase):
         net = FakeNet()
         self.run_net(net)
         by = {(m["metadata"]["namespace"], m["metadata"]["name"]): m for m in net.applied}
-        self.assertEqual(len(by), 4)
+        self.assertEqual(len(by), 5)
         for (ns, name), m in by.items():
             labels = m["metadata"]["labels"]
             self.assertNotIn("app", labels, name)  # the chart's selectors carry app: andara
             self.assertEqual(m["spec"]["containers"][0]["image"], "probe:img")
-            want = None if name.endswith("-other") else "andara"
+            want = None if name.endswith("-other") else "andara-kafka-tools" if name.endswith("-tools") else "andara"
             self.assertEqual(labels.get("app.kubernetes.io/name"), want, (ns, name))
         self.assertIn(("andara-netcheck-abc123", "andara-netcheck-abc123"), by)
+        # The toolbox probe is in andara-shared, where the registry's and Kafka's toolbox peer is.
+        self.assertIn(("andara-shared", "andara-netcheck-abc123-tools"), by)
+
+    def test_the_registry_admits_only_the_toolbox(self):
+        """AW-INF-057 AC-1: the andara pods that reach Kafka are refused by the registry."""
+        net = FakeNet(objectstore=True, registry=True)
+        code, out, err = self.run_net(net)
+        self.assertEqual(code, 0, err)
+        for what in ("an andara pod in andara-local: blocked", "an andara pod in andara-dev: blocked",
+                     "an andara pod in an unlabelled namespace: blocked",
+                     "a pod not labelled andara in andara-dev: blocked",
+                     "a toolbox pod in andara-shared: connected"):
+            self.assertIn("ok the schema registry (schema-registry/registry.yaml), %s" % what, out)
+
+    def test_an_andara_pod_reaching_the_registry_fails(self):
+        # andara-dev's andara probe: admitted by Kafka (5 execs worth) and the object store, and the
+        # registry lets it in too: a failure naming the registry.
+        net = FakeNet({("andara-dev", "andara-netcheck-abc123"): [FakeNet.CONNECTED]}, objectstore=True, registry=True)
+        code, out, err = self.run_net(net)
+        self.assertEqual(code, 1)
+        self.assertIn("FAIL the schema registry (schema-registry/registry.yaml), an andara pod in andara-dev: "
+                      "connected (want blocked)", out)
 
     def test_a_connection_from_the_unlabelled_namespace_fails_naming_it_and_still_cleans_up(self):
         net = FakeNet({("scratch", "andara-netcheck-abc123"): ["probe-ran\nconnected\n"]})
@@ -413,7 +459,7 @@ class NetCheck(unittest.TestCase):
         self.assertIn("FAIL the Kafka listener (kafka.yaml), an andara pod in an unlabelled namespace: connected (want blocked)", out)
         self.assertIn("is not as its manifest declares: the Kafka listener (kafka.yaml): an andara pod in an unlabelled namespace", err)
         self.assertNotIn("not proven", err)
-        self.assertEqual(len(self.cleanup(net)), 4)
+        self.assertEqual(len(self.cleanup(net)), 5)
 
     def test_one_connection_in_the_refusal_attempts_fails(self):
         # A connection outranks an unanchored attempt: one connection proves the policy failed.
@@ -453,7 +499,7 @@ class NetCheck(unittest.TestCase):
         code, _, err = self.run_net(net)
         self.assertEqual(code, 1)
         self.assertIn("gave no verdict", err)
-        self.assertEqual(len(self.cleanup(net)), 4)
+        self.assertEqual(len(self.cleanup(net)), 5)
 
     def test_an_unlabelled_or_missing_environment_namespace_refuses_before_creating_anything(self):
         for labels in ({"andara-local": "local", "andara-dev": ""}, {"andara-local": "local"}):
@@ -485,7 +531,7 @@ class NetCheck(unittest.TestCase):
         code, _, err = self.run_net(net)
         self.assertEqual(code, 1)
         self.assertIn("probe andara-local/andara-netcheck-abc123 not Ready within 120s (ImagePullBackOff)", err)
-        self.assertEqual(len(self.cleanup(net)), 4)
+        self.assertEqual(len(self.cleanup(net)), 5)
         self.assertFalse([a for _, a in net.calls if a[0] == "exec"])
 
     def test_a_failed_create_or_apply_fails_and_cleans_up_what_it_made(self):

@@ -4,10 +4,22 @@
 
 """Register and verify protobuf subjects against the schema registry (AW-INF-004).
 
-    scripts/schemas.py check                 # offline; runs inside `make check`
-    scripts/schemas.py apply [--env local]   # needs a live registry
-    scripts/schemas.py diff  [--env local]   # needs a live registry
-    scripts/schemas.py subjects-for <file>   # which subjects carry a .proto file
+    scripts/schemas.py check                                       # offline; runs inside `make check`
+    scripts/schemas.py apply --env <local|dev> [--broker compose|cluster]   # needs a live registry
+    scripts/schemas.py diff  --env <local|dev> [--broker compose|cluster]   # needs a live registry
+    scripts/schemas.py subjects-for <file>                         # which subjects carry a .proto file
+
+ENVIRONMENTS AND THE SHARED REGISTRY (AW-INF-057, ADR-0013 decision 8). local and dev share one
+Karapace in andara-shared, so every registered subject carries the environment's topic prefix
+(deploy/kafka/topics.yaml): `dev.andara.commands.v1-value`, and a reference's subject is
+`<prefix>.<import path>` with the reference's `name` kept as the import path. The declaration
+itself names subjects unprefixed; `apply` and `diff` add the prefix. The registry is
+ANDARA_SCHEMA_REGISTRY_URL when set; otherwise local on the compose broker (the default while
+deploy/compose/ exists, as for topics.py) is compose's registry on localhost, and everything on
+the cluster is reached through `kubectl port-forward` to svc/andara-schema-registry. `apply`
+asks the registry about every existing subject before it registers any, so a refused change
+registers nothing. Exit codes: 0 ok; 1 an API failure or an incompatible change; 2 usage (ENV
+missing or unknown); 3 the cluster or its context missing.
 
 WHICH TARGET ENFORCES WHAT — the division here is deliberate and measured, not stylistic:
 
@@ -15,7 +27,9 @@ WHICH TARGET ENFORCES WHAT — the division here is deliberate and measured, not
     It is NOT re-checked here. Redpanda's registry was measured on 2026-09-10 and accepts
     both a removed field and a RENUMBERED field as BACKWARD-compatible. Renumbering would
     make replay misread every historical record (ADR-0002), so the registry cannot be the
-    detector for it and buf is.
+    detector for it and buf is. The shared Karapace (6.2.4, re-measured 2026-10-24 for
+    AW-INF-057) rejects the renumbering but still accepts the removed field, so it remains a
+    second opinion, and buf the rule.
   * `check` verifies the declaration itself — offline, no broker, safe inside `make check`.
   * `diff` is the question git cannot answer: does the registry hold what we declared.
 
@@ -33,6 +47,7 @@ import urllib.parse
 import urllib.request
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+import topics  # noqa: E402
 from topics import parse_declaration as parse_topics  # noqa: E402
 
 REPO = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
@@ -43,6 +58,10 @@ PROTO_DIR = os.path.join(REPO, "docs", "specs", "protocol")
 STORY_ID = re.compile(r"^AW-[A-Z]+-\d{3}$")
 
 ACCEPT = "application/vnd.schemaregistry.v1+json"
+ENVS = ("local", "dev")
+REGISTRY_NS = "andara-shared"
+REGISTRY_SERVICE = "svc/andara-schema-registry"
+RUN_ID = "%x" % (os.getpid() ^ int.from_bytes(os.urandom(2), "big"))
 STRATEGIES = ("TopicNameStrategy", "TopicRecordNameStrategy")
 
 
@@ -144,16 +163,65 @@ def descriptor():
     return files
 
 
+def ascii_comments(text, rel="<source>"):
+    """The source with every non-ASCII character in a `//` comment replaced by `?`.
+
+    Karapace 6.2.4 refuses a schema with any non-ASCII character (`ValueError: string argument
+    should contain only ASCII characters`, HTTP 500; measured 2026-10-24, AW-INF-057 AC-8), where
+    Redpanda accepted it. The protos use em dashes and the like in comments only, and a registry
+    stores the schema canonicalised, comments dropped, so this changes nothing a registry keeps.
+    A non-ASCII character outside a comment would change the schema, so it is refused here."""
+    out = []
+    for n, line in enumerate(text.split("\n"), start=1):
+        code, sep, comment = line.partition("//")
+        if any(ord(c) > 127 for c in code):
+            die("%s:%d: a non-ASCII character outside a // comment; Karapace refuses it, and "
+                "replacing it would change the schema" % (rel, n))
+        out.append(code + sep + "".join(c if ord(c) < 128 else "?" for c in comment))
+    return "\n".join(out)
+
+
 def source_of(rel):
+    """The .proto as the registry is sent it (ascii_comments)."""
     with open(os.path.join(PROTO_DIR, rel), "r", encoding="utf-8") as fh:
-        return fh.read()
+        return ascii_comments(fh.read(), rel)
 
 
-def registry_url(env):
+def prefix_of(env):
+    """The environment's topic prefix, which is also its subject prefix."""
+    return topics.environment(TOPICS, env)["prefix"]
+
+
+def env_subject(prefix, subject):
+    return "%s.%s" % (prefix, subject) if prefix else subject
+
+
+def port_forward():
+    """A port-forward to the shared registry: (url, process). Exit 3 without the cluster."""
+    import kube
+    try:
+        kube.require()
+    except kube.Missing as e:
+        die(str(e), 3)
+    import shutil
+    if shutil.which("kubectl") is None:
+        die("kubectl not found; the shared registry is on the cluster", 3)
+    proc = subprocess.Popen(kube.kubectl("-n", REGISTRY_NS, "port-forward", REGISTRY_SERVICE, ":8081"),
+                            stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True)
+    m = re.search(r"Forwarding from 127\.0\.0\.1:(\d+)", proc.stdout.readline() or "")
+    if not m:
+        proc.kill()
+        die("no port-forward to %s in %s: %s" % (REGISTRY_SERVICE, REGISTRY_NS, proc.stderr.read().strip()[:300]))
+    return "http://127.0.0.1:%s" % m.group(1), proc
+
+
+def registry_url(env, broker):
+    """(url, port-forward process or None) for env's registry."""
     if os.environ.get("ANDARA_SCHEMA_REGISTRY_URL"):
-        return os.environ["ANDARA_SCHEMA_REGISTRY_URL"].rstrip("/")
-    port = os.environ.get("ANDARA_SCHEMA_REGISTRY_PORT", "8081")
-    return "http://localhost:%s" % port
+        return os.environ["ANDARA_SCHEMA_REGISTRY_URL"].rstrip("/"), None
+    if env == "local" and broker == "compose":
+        return "http://localhost:%s" % os.environ.get("ANDARA_SCHEMA_REGISTRY_PORT", "8081"), None
+    return port_forward()
 
 
 def call(url, path, method="GET", payload=None, params=""):
@@ -250,8 +318,9 @@ def check():
         if r["file"] not in files:
             errors.append("reference '%s': file is not in the protobuf module" % r["file"])
         if r["subject"] != r["file"]:
-            errors.append("reference '%s': the subject must equal the import path ('%s'), "
-                          "because that is how the registry resolves it" % (r["subject"], r["file"]))
+            errors.append("reference '%s': the subject must equal the import path ('%s'); apply "
+                          "registers it as <prefix>.<import path>, with the reference's name kept as "
+                          "the import path" % (r["subject"], r["file"]))
 
     pending_topics = {}
     for p in doc["pending"]:
@@ -285,7 +354,7 @@ def check():
 
 # --------------------------------------------------------------------------- apply
 
-def register(url, subject, source, refs, second_opinion=True):
+def register(url, subject, source, refs):
     """Register one subject. Returns (id, created). Idempotent: an identical schema
     returns its existing id and adds no version."""
     payload = {"schemaType": "PROTOBUF", "schema": source}
@@ -297,53 +366,87 @@ def register(url, subject, source, refs, second_opinion=True):
     except RuntimeError:
         pass  # no such subject yet
 
-    if existing:
-        # A second opinion, never the primary one — see the module docstring.
-        verdict = call(url, "/compatibility/subjects/%s/versions/latest" % q(subject),
-                       "POST", payload, "?verbose=true")
-        if second_opinion and verdict.get("is_compatible") is False:
-            for m in verdict.get("messages", []):
-                sys.stderr.write("make: schemas-apply: %s: %s\n" % (subject, m))
-            die("registry rejected '%s' as backward-incompatible" % subject)
-
     out = call(url, "/subjects/%s/versions" % q(subject), "POST", payload)
     created = not existing or existing.get("id") != out.get("id")
     return out.get("id"), created
 
 
-def reference_list(url, files, rel):
+def incompatible(url, subject, source, refs, mode):
+    """The registry's messages when it refuses this source for an existing subject, else None.
+    A second opinion, never the primary one — see the module docstring."""
+    payload = {"schemaType": "PROTOBUF", "schema": source}
+    if refs:
+        payload["references"] = refs
+    try:
+        call(url, "/subjects/%s/versions/latest" % q(subject))
+    except RuntimeError:
+        return None  # a new subject has nothing to be compatible with
+    verdict = call(url, "/compatibility/subjects/%s/versions/latest" % q(subject),
+                   "POST", payload, "?verbose=true")
+    if verdict.get("is_compatible") is False:
+        return verdict.get("messages") or ["not %s-compatible" % mode]
+    return None
+
+
+def reference_list(url, files, rel, prefix=""):
     """Reference entries for a file's imports, with concrete versions.
 
     Not `version: -1`. Confluent reads -1 as "latest"; Redpanda rejects it — and rejects it
     as `422 parse error at offset 2772`, an offset past the end of the schema, which sends
-    you looking at the .proto rather than at the reference. Measured 2026-09-10.
+    you looking at the .proto rather than at the reference. Measured 2026-09-10. Karapace
+    accepts -1 (re-measured 2026-10-24); concrete versions work on both, and compose's
+    Redpanda is still `make up`'s registry.
+
+    A reference's subject is `<prefix>.<import path>` and its name the import path, so local
+    and dev never share one; Karapace resolves it by subject (measured 2026-10-24).
     """
     refs = []
     for d in files.get(rel, {}).get("deps", []):
-        latest = call(url, "/subjects/%s/versions/latest" % q(d))
-        refs.append({"name": d, "subject": d, "version": latest["version"]})
+        subject = env_subject(prefix, d)
+        try:
+            latest = call(url, "/subjects/%s/versions/latest" % q(subject))
+        except RuntimeError:
+            continue  # not registered yet: only the compatibility pass asks before it exists
+        refs.append({"name": d, "subject": subject, "version": latest["version"]})
     return refs
 
 
-def apply_action(env):
+def apply_action(env, url):
     doc = parse_schema_declaration(DECL)
     files = descriptor()
-    url = registry_url(env)
+    prefix = prefix_of(env)
+    mode = doc["compatibility"]
+    items = doc["references"] + doc["subjects"]
 
-    call(url, "/config", "PUT", {"compatibility": doc["compatibility"]})
-    print("schemas-apply: global compatibility set to %s" % doc["compatibility"])
+    # Every existing subject is asked before any is registered, so a refused change registers
+    # nothing anywhere (AC-4).
+    refused = []
+    for r in items:
+        subject = env_subject(prefix, r["subject"])
+        msgs = incompatible(url, subject, source_of(r["file"]), reference_list(url, files, r["file"], prefix), mode)
+        if msgs:
+            for m in msgs:
+                sys.stderr.write("schemas: error %s refused under compatibility %s: %s run=%s\n"
+                                 % (subject, mode, m, RUN_ID))
+            refused.append(subject)
+    if refused:
+        die("the registry refuses %s under compatibility %s; nothing was registered"
+            % (", ".join(refused), mode))
+
+    call(url, "/config", "PUT", {"compatibility": mode})
+    print("schemas-apply: global compatibility set to %s run=%s" % (mode, RUN_ID))
 
     made = 0
     # References first: the registry resolves a reference by subject name, so the imported
     # file has to already be there when the importer is registered.
-    for r in doc["references"] + doc["subjects"]:
-        subject, rel = r["subject"], r["file"]
-        sid, created = register(url, subject, source_of(rel), reference_list(url, files, rel))
-        call(url, "/config/%s" % q(subject), "PUT", {"compatibility": doc["compatibility"]})
+    for r in items:
+        subject, rel = env_subject(prefix, r["subject"]), r["file"]
+        sid, created = register(url, subject, source_of(rel), reference_list(url, files, rel, prefix))
+        call(url, "/config/%s" % q(subject), "PUT", {"compatibility": mode})
         made += 1 if created else 0
-        print("  %-46s id=%-4s %s" % (subject, sid, "registered" if created else "unchanged"))
-    print("schemas-apply: %d subject(s), %d newly registered (env=%s)"
-          % (len(doc["references"]) + len(doc["subjects"]), made, env))
+        print("schemas: %s %s id=%s run=%s" % (subject, "registered" if created else "unchanged", sid, RUN_ID))
+    print("schemas-apply: %d subject(s), %d newly registered (env=%s, prefix=%s)"
+          % (len(items), made, env, prefix or "(none)"))
 
 
 # --------------------------------------------------------------------------- diff
@@ -367,11 +470,11 @@ def lookup(url, subject, source, refs):
         raise
 
 
-def diff_action(env):
+def diff_action(env, url):
     doc = parse_schema_declaration(DECL)
     files = descriptor()
-    url = registry_url(env)
-    declared = [(r["subject"], r["file"]) for r in doc["references"] + doc["subjects"]]
+    prefix = prefix_of(env)
+    declared = [(env_subject(prefix, r["subject"]), r["file"]) for r in doc["references"] + doc["subjects"]]
     drift = []
 
     for subject, rel in sorted(declared):
@@ -380,7 +483,7 @@ def diff_action(env):
         except RuntimeError:
             drift.append("%s: declared but not registered — run `make schemas-apply`" % subject)
             continue
-        found = lookup(url, subject, source_of(rel), reference_list(url, files, rel))
+        found = lookup(url, subject, source_of(rel), reference_list(url, files, rel, prefix))
         if found is None:
             drift.append("%s: %s is not registered under this subject at any version — the "
                          "declaration and the registry disagree" % (subject, rel))
@@ -390,8 +493,13 @@ def diff_action(env):
                                                            latest.get("version")))
 
     names = {s for s, _ in declared}
+    prefixes = {e["prefix"] for e in topics.parse_environments(TOPICS).values() if e["prefix"]}
     for subject in call(url, "/subjects"):
-        if subject not in names:
+        head = subject.split(".", 1)[0]
+        if head not in prefixes:
+            # On the shared registry every subject belongs to an environment (AC-2).
+            drift.append("%s: carries no environment prefix (%s)" % (subject, ", ".join(sorted(prefixes))))
+        elif head == prefix and subject not in names:
             drift.append("%s: registered but not declared in deploy/kafka/schemas.yaml" % subject)
 
     cfg = call(url, "/config").get("compatibilityLevel")
@@ -402,7 +510,7 @@ def diff_action(env):
         for d in drift:
             sys.stderr.write("make: schemas-diff: %s\n" % d)
         die("%d subject(s) drifted from the declaration" % len(drift))
-    print("schemas-diff: %d subject(s) match the registry (env=%s)" % (len(declared), env))
+    print("schemas-diff: %d subject(s) match the registry (env=%s, prefix=%s)" % (len(declared), env, prefix or "(none)"))
 
 
 # --------------------------------------------------------------------------- lookup
@@ -423,15 +531,29 @@ def main():
     ap = argparse.ArgumentParser()
     ap.add_argument("action", choices=["check", "apply", "diff", "subjects-for"])
     ap.add_argument("file", nargs="?")
-    ap.add_argument("--env", default=os.environ.get("ANDARA_ENV", "local"))
+    ap.add_argument("--env", default="")
+    ap.add_argument("--broker", default="", help="local only: compose or cluster (default %s)"
+                    % topics.default_broker())
     args = ap.parse_args()
 
-    if args.action == "check":
+    if args.action in ("apply", "diff"):
+        if not args.env:
+            die("ENV is required: ENV=<local|dev>", 2)
+        if args.env not in ENVS:
+            die("ENV=%s: not one of %s (prod's registry is not on this cluster)" % (args.env, ", ".join(ENVS)), 2)
+        if args.broker and args.broker not in topics.BROKERS:
+            die("--broker is compose or cluster, not '%s'" % args.broker, 2)
+        if args.broker and args.env != "local":
+            die("--broker means something only for local; %s is always the cluster's" % args.env, 2)
+        broker = args.broker or (topics.default_broker() if args.env == "local" else "cluster")
+        url, proc = registry_url(args.env, broker)
+        try:
+            (apply_action if args.action == "apply" else diff_action)(args.env, url)
+        finally:
+            if proc is not None:
+                proc.terminate()
+    elif args.action == "check":
         check()
-    elif args.action == "apply":
-        apply_action(args.env)
-    elif args.action == "diff":
-        diff_action(args.env)
     else:
         if not args.file:
             die("subjects-for needs a .proto path")

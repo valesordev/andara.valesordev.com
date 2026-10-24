@@ -27,9 +27,20 @@ class Real(unittest.TestCase):
         self.assertEqual(kafka_users.check(users_of(REAL), REAL), [])
 
     def test_each_workload_has_a_principal_in_each_environment(self):
-        names = {u["metadata"]["name"] for u in users_of(REAL)}
+        names = {u["metadata"]["name"] for u in users_of(REAL) if not kafka_users.platform(u)}
         self.assertEqual(names, {"andara-server-local", "andara-server-dev",
                                  "andara-projector-state-local", "andara-projector-state-dev"})
+
+    def test_the_registry_is_one_platform_principal_on_schemas_only(self):
+        """AW-INF-057: andara-schema-registry, once for the broker, LITERAL on _schemas and its group."""
+        plat = [u for u in users_of(REAL) if kafka_users.platform(u)]
+        self.assertEqual([u["metadata"]["name"] for u in plat], ["andara-schema-registry"])
+        u = plat[0]
+        self.assertNotIn("andara.valesor/env", u["metadata"]["labels"])
+        self.assertNotIn("quotas", u["spec"])
+        res = {(a["resource"]["type"], a["resource"]["name"], a["resource"]["patternType"])
+               for a in u["spec"]["authorization"]["acls"]}
+        self.assertEqual(res, {("topic", "_schemas", "literal"), ("group", "andara-schema-registry", "literal")})
 
     def test_acls_are_on_the_environments_names(self):
         by = {u["metadata"]["name"]: u for u in users_of(REAL)}
@@ -48,11 +59,61 @@ class Real(unittest.TestCase):
 
     def test_only_local_is_throttled(self):
         for u in users_of(REAL):
+            if kafka_users.platform(u):
+                self.assertNotIn("quotas", u["spec"])
+                continue
             env = u["metadata"]["labels"]["andara.valesor/env"]
             self.assertEqual("quotas" in u["spec"], env == "local", u["metadata"]["name"])
 
     def test_prod_has_no_principal_on_this_cluster(self):
         self.assertNotIn("prod", kafka_users.environments(REAL))
+
+
+class PlatformBreaks(unittest.TestCase):
+    """Each platform rule fails on a render that breaks it, naming the principal."""
+
+    def setUp(self):
+        self.users = users_of(REAL)
+        self.reg = next(u for u in self.users if u["metadata"]["name"] == "andara-schema-registry")
+
+    def acl(self, rtype, name, pattern, ops):
+        self.reg["spec"]["authorization"]["acls"].append(
+            {"resource": {"type": rtype, "name": name, "patternType": pattern}, "operations": ops})
+
+    def assertFails(self, needle):
+        errs = kafka_users.check(self.users, REAL)
+        self.assertTrue([e for e in errs if needle in e], errs)
+
+    def test_an_environment_topic(self):
+        self.acl("topic", "dev.andara.commands.v1", "literal", ["Read"])
+        self.assertFails("andara-schema-registry: topic literal dev.andara.commands.v1 Read: not a declared platform topic")
+
+    def test_a_prefixed_acl(self):
+        self.acl("topic", "_schemas", "prefix", ["Read"])
+        self.assertFails("a platform principal's ACLs are LITERAL")
+
+    def test_a_wildcard(self):
+        self.acl("group", "*", "literal", ["Read"])
+        self.assertFails("andara-schema-registry: group literal * Read: a wildcard name")
+
+    def test_creating_or_deleting_its_topic(self):
+        for op in ("Create", "Delete", "Alter", "AlterConfigs", "All"):
+            with self.subTest(op=op):
+                self.setUp()
+                self.acl("topic", "_schemas", "literal", [op])
+                self.assertFails("%s on a topic is the operator's alone" % op)
+
+    def test_deleting_its_group(self):
+        self.acl("group", "andara-schema-registry", "literal", ["Delete"])
+        self.assertFails("Delete on a group")
+
+    def test_a_cluster_acl(self):
+        self.acl("cluster", "", "literal", ["Describe"])
+        self.assertFails("a platform principal holds no cluster ACL")
+
+    def test_an_environment_principals_name(self):
+        self.reg["metadata"]["name"] = "andara-server"
+        self.assertFails("andara-server: a platform principal can't share an environment principal's name")
 
 
 class Breaks(unittest.TestCase):
