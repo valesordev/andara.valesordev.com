@@ -73,10 +73,15 @@ class FakeRegistry:
             return {"is_compatible": True}
         subject = schemas.urllib.parse.unquote(p[2])
         if method == "DELETE" and len(p) == 5 and p[3] == "versions":
+            version = next(v for v in self.subjects[subject] if v["version"] == int(p[4]))
             if "permanent" not in params:
-                self.subjects[subject] = [v for v in self.subjects[subject] if v["version"] != int(p[4])]
-                if not self.subjects[subject]:
-                    del self.subjects[subject]
+                version["deleted"] = True
+                return {}
+            if not version.get("deleted"):
+                raise RuntimeError("DELETE %s -> HTTP 404 not soft-deleted first" % path)
+            self.subjects[subject].remove(version)
+            if not self.subjects[subject]:
+                del self.subjects[subject]
             return {}
         if path.endswith("/versions/latest"):
             if subject not in self.subjects:
@@ -233,8 +238,7 @@ class Apply(unittest.TestCase):
         self.assertEqual({s: [v["version"] for v in vs] for s, vs in reg.subjects.items()}, before)
         self.assertTrue([c for c in reg.calls if c[0] == "DELETE"])
 
-    def test_a_reference_lookup_that_fails_defers_rather_than_crashes(self):
-        """refs_ready's error branch: a lookup answering 500 is 'not ready', never a traceback."""
+    def flaky_reference(self):
         reg = FakeRegistry(strict=True)
         run(schemas.apply_action, "dev", "http://r", registry=reg)
         real = reg.__call__
@@ -244,10 +248,87 @@ class Apply(unittest.TestCase):
             if method == "POST" and path == ref_path:
                 raise RuntimeError("POST %s -> HTTP 500 boom" % path)
             return real(url, path, method, payload, params)
-        code, out, err = run(schemas.apply_action, "dev", "http://r", registry=flaky)
-        self.assertEqual(code, 0, err)
+        return flaky
+
+    def test_a_reference_lookup_that_fails_is_not_ready(self):
+        """refs_ready's error branch: a lookup answering 500 defers the importer."""
+        flaky = self.flaky_reference()
+        importer = next(r for r in DECL["subjects"] if files_from_protos()[r["file"]]["deps"])
+        with mock.patch.object(schemas, "call", flaky):
+            self.assertFalse(schemas.refs_ready("http://r", files_from_protos(), importer["file"], "dev"))
+
+    def test_a_registry_failing_mid_apply_exits_1_naming_the_subject(self):
+        code, _, err = run(schemas.apply_action, "dev", "http://r", registry=self.flaky_reference())
+        self.assertEqual(code, 1)
         self.assertNotIn("Traceback", err)
-        self.assertIn("0 newly registered", out)
+        self.assertIn("registering dev.andara/content/v1/zone.proto failed: POST", err)
+        self.assertIn("registered by this run: nothing", err)
+
+    def two_references(self):
+        """A declaration with references a.proto and b.proto, imported by subjects sa and sb."""
+        src = {"a.proto": 'syntax = "proto3";\npackage a;\nmessage A { string x = 1; }\n',
+               "b.proto": 'syntax = "proto3";\npackage b;\nmessage B { string x = 1; }\n',
+               "sa.proto": 'syntax = "proto3";\nimport "a.proto";\npackage sa;\nmessage SA { a.A a = 1; }\n',
+               "sb.proto": 'syntax = "proto3";\nimport "b.proto";\npackage sb;\nmessage SB { b.B b = 1; }\n'}
+        doc = {"compatibility": "BACKWARD",
+               "references": [{"file": "a.proto", "subject": "a.proto"}, {"file": "b.proto", "subject": "b.proto"}],
+               "subjects": [{"subject": "sa-value", "file": "sa.proto"}, {"subject": "sb-value", "file": "sb.proto"}]}
+        files = {"a.proto": {"deps": []}, "b.proto": {"deps": []},
+                 "sa.proto": {"deps": ["a.proto"]}, "sb.proto": {"deps": ["b.proto"]}}
+        return src, doc, files
+
+    def run_two(self, reg, src, doc, files):
+        out, err = io.StringIO(), io.StringIO()
+        with mock.patch.object(schemas, "call", reg), mock.patch.object(schemas, "descriptor", lambda: files), \
+                mock.patch.object(schemas, "parse_schema_declaration", lambda p: doc), \
+                mock.patch.object(schemas, "source_of", lambda rel: src[rel]), \
+                contextlib.redirect_stdout(out), contextlib.redirect_stderr(err):
+            try:
+                schemas.apply_action("dev", "http://r")
+                return 0, out.getvalue(), err.getvalue()
+            except SystemExit as e:
+                return e.code, out.getvalue(), err.getvalue()
+
+    def test_a_rollback_never_touches_a_version_this_run_didnt_create(self):
+        """Pre-review round 3 P1: a reference reverted to its v1 source while v2 is latest creates
+        nothing; when another importer is refused, only b's new version is rolled back."""
+        src, doc, files = self.two_references()
+        reg = FakeRegistry(strict=True)
+        self.run_two(reg, src, doc, files)
+        a_payload = reg.subjects["dev.a.proto"][0]["payload"]
+        # a.proto gained a v2 since (someone else's), and the file is back at v1's source.
+        reg.subjects["dev.a.proto"].append({"version": 2, "id": 900, "payload": dict(a_payload, schema="A v2")})
+        # b.proto changed in this commit, and its importer is refused.
+        src["b.proto"] = src["b.proto"].replace("string x = 1;", "string x = 1; string y = 2;")
+        reg.incompatible = {"dev.sb-value"}
+        before = {s: [v["version"] for v in vs] for s, vs in reg.subjects.items()}
+        calls_before = len(reg.calls)
+        code, _, err = self.run_two(reg, src, doc, files)
+        self.assertEqual(code, 1)
+        self.assertIn("nothing was registered (rolled back dev.b.proto@2)", err)
+        self.assertEqual({s: [v["version"] for v in vs] for s, vs in reg.subjects.items()}, before)
+        # Nothing is configured on a refused run.
+        self.assertFalse([c for c in reg.calls[calls_before:] if c[0] == "PUT"])
+        # Soft, then permanent, newest first.
+        deletes = [(c[1], c[2]) for c in reg.calls[calls_before:] if c[0] == "DELETE"]
+        self.assertEqual(len(deletes), 2)
+
+    def test_a_rollback_that_fails_names_what_it_left(self):
+        src, doc, files = self.two_references()
+        reg = FakeRegistry(strict=True)
+        self.run_two(reg, src, doc, files)
+        src["b.proto"] = src["b.proto"].replace("string x = 1;", "string x = 1; string y = 2;")
+        reg.incompatible = {"dev.sb-value"}
+        real = reg.__call__
+
+        def no_delete(url, path, method="GET", payload=None, params=""):
+            if method == "DELETE":
+                raise RuntimeError("DELETE %s -> HTTP 422 references exist" % path)
+            return real(url, path, method, payload, params)
+        code, _, err = self.run_two(no_delete, src, doc, files)
+        self.assertEqual(code, 1)
+        self.assertNotIn("Traceback", err)
+        self.assertIn("refuses dev.sb-value under compatibility BACKWARD; rollback incomplete: still registered dev.b.proto@2", err)
 
     def test_a_failed_question_exits_1_naming_the_subject(self):
         reg = FakeRegistry(["dev." + s for s in DECLARED])
@@ -362,16 +443,23 @@ class PortForward(unittest.TestCase):
 
     def forward(self, proc):
         import kube
+        self.popen_kwargs = {}
+
+        def fake_popen(*a, **k):
+            self.popen_kwargs = k
+            return proc
         with mock.patch.object(kube, "require", lambda *a, **k: "kind-andara"), \
                 mock.patch.object(kube, "kubectl", lambda *a, **k: ["kubectl"] + list(a)), \
                 mock.patch("shutil.which", return_value="/usr/bin/kubectl"), \
-                mock.patch.object(schemas, "popen", lambda *a, **k: proc), \
+                mock.patch.object(schemas, "popen", fake_popen), \
                 mock.patch.object(schemas, "PORT_FORWARD_TIMEOUT", 1):
             return schemas.port_forward()
 
     def test_the_url_comes_from_the_first_line(self):
         proc = self.FakeProc(["Forwarding from 127.0.0.1:41234 -> 8081\n", "Handling connection for 41234\n"])
         self.assertEqual(self.forward(proc), ("http://127.0.0.1:41234", proc))
+        # One drained pipe: kubectl's stderr can't fill an undrained one and stall the forward.
+        self.assertEqual(self.popen_kwargs.get("stderr"), subprocess.STDOUT)
 
     def test_no_forwarding_line_exits_1_at_once_and_kills_it(self):
         # stderr is merged into stdout: kubectl's error is a line, and its exit ends the wait at once.
@@ -421,6 +509,10 @@ class Ascii(unittest.TestCase):
     def test_escaped_quotes_and_single_quotes(self):
         self.assertEqual(schemas.ascii_comments('option x = "a\\"b"; // \u2014'), 'option x = "a\\"b"; // ?')
         self.assertEqual(schemas.ascii_comments("option y = 'x//y'; // \u00e9"), "option y = 'x//y'; // ?")
+        # A // inside single quotes is not a comment: what follows it is code.
+        with contextlib.redirect_stderr(io.StringIO()), self.assertRaises(SystemExit) as e:
+            schemas.ascii_comments("option y = '//\u00e9';")
+        self.assertEqual(e.exception.code, 1)
 
     def test_every_declared_proto_goes_out_ascii(self):
         for r in DECL["references"] + DECL["subjects"]:

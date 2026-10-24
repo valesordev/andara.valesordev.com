@@ -361,6 +361,10 @@ def check():
         if not r.get("file") or not r.get("subject"):
             errors.append("reference entry needs both 'file' and 'subject': %r" % r)
             continue
+        if files.get(r["file"], {}).get("deps"):
+            errors.append("reference '%s' imports %s; a reference must import nothing, so `apply` can "
+                          "ask about it before registering anything" % (r["file"], ", ".join(files[r["file"]]["deps"])))
+            continue
         if r["file"] not in files:
             errors.append("reference '%s': file is not in the protobuf module" % r["file"])
         if r["subject"] != r["file"]:
@@ -401,20 +405,17 @@ def check():
 # --------------------------------------------------------------------------- apply
 
 def register(url, subject, source, refs):
-    """Register one subject. Returns (id, created). Idempotent: an identical schema
-    returns its existing id and adds no version."""
+    """Register one subject. Returns (id, version created or None). A source already registered under
+    the subject, at any version (a reverted file included), is left as it is and creates nothing, so
+    a run only ever records versions it added, and a rollback can only remove those."""
+    found = lookup(url, subject, source, refs)
+    if found is not None:
+        return found.get("id"), None
     payload = {"schemaType": "PROTOBUF", "schema": source}
     if refs:
         payload["references"] = refs
-    existing = None
-    try:
-        existing = call(url, "/subjects/%s/versions/latest" % q(subject))
-    except RuntimeError:
-        pass  # no such subject yet
-
     out = call(url, "/subjects/%s/versions" % q(subject), "POST", payload)
-    created = not existing or existing.get("id") != out.get("id")
-    return out.get("id"), created
+    return out.get("id"), call(url, "/subjects/%s/versions/latest" % q(subject))["version"]
 
 
 def incompatible(url, subject, source, refs, mode):
@@ -511,11 +512,15 @@ def apply_action(env, url):
     def put(r):
         nonlocal made
         subject, rel = env_subject(prefix, r["subject"]), r["file"]
-        sid, created = register(url, subject, source_of(rel), reference_list(url, files, rel, prefix))
-        if created:
-            created_versions.append((subject, call(url, "/subjects/%s/versions/latest" % q(subject))["version"]))
-        made += 1 if created else 0
-        print("schemas: %s %s id=%s run=%s" % (subject, "registered" if created else "unchanged", sid, RUN_ID))
+        try:
+            sid, version = register(url, subject, source_of(rel), reference_list(url, files, rel, prefix))
+        except RuntimeError as e:
+            die("registering %s failed: %s; registered by this run: %s"
+                % (subject, e, ", ".join("%s@%s" % sv for sv in created_versions) or "nothing"))
+        if version is not None:
+            created_versions.append((subject, version))
+        made += 1 if version is not None else 0
+        print("schemas: %s %s id=%s run=%s" % (subject, "unchanged" if version is None else "registered", sid, RUN_ID))
 
     # References first: the registry resolves a reference by subject name, so the imported file has
     # to be there before its importer is asked or registered.
@@ -526,7 +531,10 @@ def apply_action(env, url):
     for r in late:
         refused += ask(url, env_subject(prefix, r["subject"]), r["file"], files, prefix, mode)
     if refused:
-        undone = rollback(url, created_versions)
+        undone, left = rollback(url, created_versions)
+        if left:
+            die("the registry refuses %s under compatibility %s; rollback incomplete: still registered %s%s"
+                % (", ".join(refused), mode, ", ".join(left), "; undone: %s" % ", ".join(undone) if undone else ""))
         die("the registry refuses %s under compatibility %s; nothing was registered%s"
             % (", ".join(refused), mode, " (rolled back %s)" % ", ".join(undone) if undone else ""))
     call(url, "/config", "PUT", {"compatibility": mode})
@@ -542,13 +550,19 @@ def apply_action(env, url):
 
 def rollback(url, created_versions):
     """Delete the versions this run created, newest first, soft then permanently (a Confluent-API
-    registry needs both); the subject@version strings it undid."""
-    undone = []
+    registry needs both). Returns (undone, left) as subject@version strings: a failed delete is
+    reported and the rest still tried, never a traceback."""
+    undone, left = [], []
     for subject, version in reversed(created_versions):
-        call(url, "/subjects/%s/versions/%s" % (q(subject), version), "DELETE")
-        call(url, "/subjects/%s/versions/%s" % (q(subject), version), "DELETE", params="?permanent=true")
-        undone.append("%s@%s" % (subject, version))
-    return undone
+        sv = "%s@%s" % (subject, version)
+        try:
+            call(url, "/subjects/%s/versions/%s" % (q(subject), version), "DELETE")
+            call(url, "/subjects/%s/versions/%s" % (q(subject), version), "DELETE", params="?permanent=true")
+            undone.append(sv)
+        except RuntimeError as e:
+            sys.stderr.write("schemas: error rolling back %s: %s run=%s\n" % (sv, e, RUN_ID))
+            left.append(sv)
+    return undone, left
 
 
 # --------------------------------------------------------------------------- diff
