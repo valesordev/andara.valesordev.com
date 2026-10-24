@@ -115,6 +115,10 @@ class PlatformBreaks(unittest.TestCase):
         self.reg["metadata"]["name"] = "andara-server"
         self.assertFails("andara-server: a platform principal can't share an environment principal's name")
 
+    def test_the_integration_suites_name(self):
+        self.reg["metadata"]["name"] = "andara-it"
+        self.assertFails("andara-it: a platform principal can't share an environment principal's name")
+
 
 class Breaks(unittest.TestCase):
     """Each rule fails on a render that breaks it, naming the KafkaUser."""

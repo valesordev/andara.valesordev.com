@@ -103,8 +103,6 @@ def render(doc):
                 for topic, ops in (p.get("topics") or {}).items()]
         acls += [{"resource": {"type": "group", "name": group, "patternType": "literal"}, "operations": list(ops)}
                  for group, ops in (p.get("groups") or {}).items()]
-        if p.get("cluster"):
-            acls.append({"resource": {"type": "cluster"}, "operations": list(p["cluster"])})
         users.append({
             "apiVersion": API,
             "kind": "KafkaUser",

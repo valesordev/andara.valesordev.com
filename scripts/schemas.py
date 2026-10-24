@@ -39,9 +39,11 @@ Stdlib only. This validates the stack, so it must not need anything the stack in
 import argparse
 import json
 import os
+import queue
 import re
 import subprocess
 import sys
+import threading
 import urllib.error
 import urllib.parse
 import urllib.request
@@ -61,6 +63,8 @@ ACCEPT = "application/vnd.schemaregistry.v1+json"
 ENVS = ("local", "dev")
 REGISTRY_NS = "andara-shared"
 REGISTRY_SERVICE = "svc/andara-schema-registry"
+PORT_FORWARD_TIMEOUT = 20
+popen = subprocess.Popen
 RUN_ID = "%x" % (os.getpid() ^ int.from_bytes(os.urandom(2), "big"))
 STRATEGIES = ("TopicNameStrategy", "TopicRecordNameStrategy")
 
@@ -163,6 +167,24 @@ def descriptor():
     return files
 
 
+def comment_start(line):
+    """The index of the first `//` outside a string literal, or -1 (`"http://…"` is not a comment)."""
+    quote, i = None, 0
+    while i < len(line):
+        c = line[i]
+        if quote:
+            if c == "\\":
+                i += 1
+            elif c == quote:
+                quote = None
+        elif c in "\"'":
+            quote = c
+        elif line.startswith("//", i):
+            return i
+        i += 1
+    return -1
+
+
 def ascii_comments(text, rel="<source>"):
     """The source with every non-ASCII character in a `//` comment replaced by `?`.
 
@@ -173,7 +195,8 @@ def ascii_comments(text, rel="<source>"):
     A non-ASCII character outside a comment would change the schema, so it is refused here."""
     out = []
     for n, line in enumerate(text.split("\n"), start=1):
-        code, sep, comment = line.partition("//")
+        cut = comment_start(line)
+        code, sep, comment = (line, "", "") if cut < 0 else (line[:cut], "//", line[cut + 2:])
         if any(ord(c) > 127 for c in code):
             die("%s:%d: a non-ASCII character outside a // comment; Karapace refuses it, and "
                 "replacing it would change the schema" % (rel, n))
@@ -206,12 +229,25 @@ def port_forward():
     import shutil
     if shutil.which("kubectl") is None:
         die("kubectl not found; the shared registry is on the cluster", 3)
-    proc = subprocess.Popen(kube.kubectl("-n", REGISTRY_NS, "port-forward", REGISTRY_SERVICE, ":8081"),
-                            stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True)
-    m = re.search(r"Forwarding from 127\.0\.0\.1:(\d+)", proc.stdout.readline() or "")
+    proc = popen(kube.kubectl("-n", REGISTRY_NS, "port-forward", REGISTRY_SERVICE, ":8081"),
+                 stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True)
+    lines = queue.Queue()
+
+    def pump():
+        # The first line names the port; kubectl writes one more per connection, so the rest is drained
+        # here, or a long run would fill the pipe and stall the forward.
+        for line in proc.stdout:
+            lines.put(line)
+    threading.Thread(target=pump, daemon=True).start()
+    try:
+        first = lines.get(timeout=PORT_FORWARD_TIMEOUT)
+    except queue.Empty:
+        first = ""
+    m = re.search(r"Forwarding from 127\.0\.0\.1:(\d+)", first)
     if not m:
         proc.kill()
-        die("no port-forward to %s in %s: %s" % (REGISTRY_SERVICE, REGISTRY_NS, proc.stderr.read().strip()[:300]))
+        die("no port-forward to %s in %s within %ds: %s" % (REGISTRY_SERVICE, REGISTRY_NS, PORT_FORWARD_TIMEOUT,
+                                                             (proc.stderr.read() or first).strip()[:300]))
     return "http://127.0.0.1:%s" % m.group(1), proc
 
 
@@ -388,6 +424,30 @@ def incompatible(url, subject, source, refs, mode):
     return None
 
 
+def refs_ready(url, files, rel, prefix):
+    """Whether every import of rel is registered under the prefix with the source declared now."""
+    for d in files.get(rel, {}).get("deps", []):
+        try:
+            refs = reference_list(url, files, d, prefix)
+            if lookup(url, env_subject(prefix, d), source_of(d), refs) is None:
+                return False
+        except RuntimeError:
+            return False
+    return True
+
+
+def ask(url, subject, rel, files, prefix, mode):
+    """[subject] when the registry refuses rel for it (its messages on stderr), else []. A failed
+    question exits 1 naming the subject, never a traceback."""
+    try:
+        msgs = incompatible(url, subject, source_of(rel), reference_list(url, files, rel, prefix), mode)
+    except RuntimeError as e:
+        die("asking the registry about %s failed: %s" % (subject, e))
+    for m in msgs or []:
+        sys.stderr.write("schemas: error %s refused under compatibility %s: %s run=%s\n" % (subject, mode, m, RUN_ID))
+    return [subject] if msgs else []
+
+
 def reference_list(url, files, rel, prefix=""):
     """Reference entries for a file's imports, with concrete versions.
 
@@ -419,16 +479,16 @@ def apply_action(env, url):
     items = doc["references"] + doc["subjects"]
 
     # Every existing subject is asked before any is registered, so a refused change registers
-    # nothing anywhere (AC-4).
-    refused = []
+    # nothing anywhere (AC-4). An importer whose references aren't yet registered as declared (a new
+    # import, or a changed reference) can't be asked yet: the registry can't resolve the import. It is
+    # asked after the references are registered and before it is, so it is never registered unasked.
+    refused, deferred = [], set()
     for r in items:
         subject = env_subject(prefix, r["subject"])
-        msgs = incompatible(url, subject, source_of(r["file"]), reference_list(url, files, r["file"], prefix), mode)
-        if msgs:
-            for m in msgs:
-                sys.stderr.write("schemas: error %s refused under compatibility %s: %s run=%s\n"
-                                 % (subject, mode, m, RUN_ID))
-            refused.append(subject)
+        if not refs_ready(url, files, r["file"], prefix):
+            deferred.add(subject)
+            continue
+        refused += ask(url, subject, r["file"], files, prefix, mode)
     if refused:
         die("the registry refuses %s under compatibility %s; nothing was registered"
             % (", ".join(refused), mode))
@@ -436,11 +496,15 @@ def apply_action(env, url):
     call(url, "/config", "PUT", {"compatibility": mode})
     print("schemas-apply: global compatibility set to %s run=%s" % (mode, RUN_ID))
 
-    made = 0
+    made, done = 0, []
     # References first: the registry resolves a reference by subject name, so the imported
     # file has to already be there when the importer is registered.
     for r in items:
         subject, rel = env_subject(prefix, r["subject"]), r["file"]
+        if subject in deferred and ask(url, subject, rel, files, prefix, mode):
+            die("the registry refuses %s under compatibility %s; registered before it: %s"
+                % (subject, mode, ", ".join(done) or "nothing"))
+        done.append(subject)
         sid, created = register(url, subject, source_of(rel), reference_list(url, files, rel, prefix))
         call(url, "/config/%s" % q(subject), "PUT", {"compatibility": mode})
         made += 1 if created else 0
@@ -498,7 +562,8 @@ def diff_action(env, url):
         head = subject.split(".", 1)[0]
         if head not in prefixes:
             # On the shared registry every subject belongs to an environment (AC-2).
-            drift.append("%s: carries no environment prefix (%s)" % (subject, ", ".join(sorted(prefixes))))
+            drift.append("%s: carries no environment prefix (%s); on a long-lived compose stack these are "
+                         "from before AW-INF-057, cleared by `make down VOLUMES=1`" % (subject, ", ".join(sorted(prefixes))))
         elif head == prefix and subject not in names:
             drift.append("%s: registered but not declared in deploy/kafka/schemas.yaml" % subject)
 

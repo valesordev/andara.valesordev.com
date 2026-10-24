@@ -37,13 +37,24 @@ def files_from_protos():
 
 
 class FakeRegistry:
-    """The Confluent subject API as schemas.py calls it. incompatible: subjects whose compatibility
-    check fails."""
+    """The Confluent subject API as schemas.py calls it, as a registry behaves: an identical schema
+    under a subject returns its existing id and adds no version; a lookup finds a version by its
+    payload. incompatible: subjects whose compatibility check fails. strict: like Karapace, a schema
+    whose import has no reference is a 422, on register and on a compatibility question alike."""
 
-    def __init__(self, subjects=(), incompatible=()):
-        self.subjects = {s: [{"version": 1, "id": 100 + i}] for i, s in enumerate(subjects)}
+    def __init__(self, subjects=(), incompatible=(), strict=False, payloads=None):
+        self.subjects = {s: [{"version": 1, "id": 100 + i, "payload": (payloads or {}).get(s)}]
+                         for i, s in enumerate(subjects)}
         self.incompatible = set(incompatible)
+        self.strict = strict
         self.calls, self.next_id = [], 1
+        self.config = "BACKWARD"
+
+    def unresolved(self, path, payload):
+        imports = set(re.findall(r'^import "([^"]+)";', (payload or {}).get("schema", ""), re.M))
+        named = {r["name"] for r in (payload or {}).get("references", [])}
+        if self.strict and imports - named:
+            raise RuntimeError("POST %s -> HTTP 422 unresolved import %s" % (path, sorted(imports - named)))
 
     def __call__(self, url, path, method="GET", payload=None, params=""):
         self.calls.append((method, path, payload))
@@ -51,8 +62,11 @@ class FakeRegistry:
         if path == "/subjects" and method == "GET":
             return list(self.subjects)
         if path.startswith("/config"):
-            return {"compatibilityLevel": "BACKWARD"} if method == "GET" else {}
+            if method == "PUT" and path == "/config":
+                self.config = payload["compatibility"]
+            return {"compatibilityLevel": self.config} if method == "GET" else {}
         if p[1] == "compatibility":
+            self.unresolved(path, payload)
             subject = schemas.urllib.parse.unquote(p[3])
             if subject in self.incompatible:
                 return {"is_compatible": False, "messages": ["Incompatible modification FIELD_KIND_ALTER"]}
@@ -63,14 +77,19 @@ class FakeRegistry:
                 raise RuntimeError("GET %s -> HTTP 404" % path)
             return dict(self.subjects[subject][-1], subject=subject)
         if path.endswith("/versions") and method == "POST":
-            self.subjects.setdefault(subject, []).append({"version": len(self.subjects.get(subject, [])) + 1,
-                                                          "id": self.next_id, "payload": payload})
+            self.unresolved(path, payload)
+            versions = self.subjects.setdefault(subject, [])
+            same = [v for v in versions if v.get("payload") == payload]
+            if same:
+                return {"id": same[-1]["id"]}
+            versions.append({"version": len(versions) + 1, "id": self.next_id, "payload": payload})
             self.next_id += 1
             return {"id": self.next_id - 1}
         if method == "POST":  # lookup
-            if subject not in self.subjects:
-                raise RuntimeError("POST %s -> HTTP 404" % path)
-            return dict(self.subjects[subject][-1])
+            for v in self.subjects.get(subject, []):
+                if v.get("payload") == payload:
+                    return dict(v)
+            raise RuntimeError("POST %s -> HTTP 404" % path)
         raise AssertionError("unexpected registry call %s %s" % (method, path))
 
 
@@ -170,9 +189,48 @@ class Apply(unittest.TestCase):
     def test_a_second_run_registers_nothing_new(self):
         reg = FakeRegistry()
         run(schemas.apply_action, "dev", "http://r", registry=reg)
-        with mock.patch.object(schemas, "register", lambda url, s, src, refs: (1, False)):
-            code, out, _ = run(schemas.apply_action, "dev", "http://r", registry=reg)
+        versions = {s: len(v) for s, v in reg.subjects.items()}
+        code, out, err = run(schemas.apply_action, "dev", "http://r", registry=reg)
+        self.assertEqual(code, 0, err)
         self.assertIn("0 newly registered", out)
+        self.assertEqual({s: len(v) for s, v in reg.subjects.items()}, versions)
+
+    def test_a_new_import_is_registered_reference_first_not_a_crash(self):
+        """Pre-review P1: the compatibility pre-pass can't ask about an importer whose reference isn't
+        registered yet (the registry can't resolve the import); it asks after the reference is in."""
+        reg = FakeRegistry(strict=True)
+        run(schemas.apply_action, "dev", "http://r", registry=reg)
+        ref = "dev." + DECL["references"][0]["file"]
+        # The reference is lost (or changes): every importer now has an import its registry can't resolve.
+        del reg.subjects[ref]
+        code, out, err = run(schemas.apply_action, "dev", "http://r", registry=reg)
+        self.assertEqual(code, 0, err)
+        self.assertNotIn("Traceback", err)
+        self.assertIn(ref, reg.subjects)
+
+    def test_a_deferred_importer_still_refused_registers_nothing_after_it(self):
+        reg = FakeRegistry(strict=True)
+        run(schemas.apply_action, "dev", "http://r", registry=reg)
+        ref = "dev." + DECL["references"][0]["file"]
+        importer = next(s for s, v in reg.subjects.items() if (v[-1].get("payload") or {}).get("references"))
+        del reg.subjects[ref]
+        reg.incompatible = {importer}
+        code, _, err = run(schemas.apply_action, "dev", "http://r", registry=reg)
+        self.assertEqual(code, 1)
+        self.assertIn("the registry refuses %s under compatibility BACKWARD; registered before it:" % importer, err)
+        self.assertEqual(len(reg.subjects[importer]), 1, "the refused importer gained no version")
+
+    def test_a_failed_question_exits_1_naming_the_subject(self):
+        reg = FakeRegistry(["dev." + s for s in DECLARED])
+        real = reg.__call__
+
+        def failing(url, path, method="GET", payload=None, params=""):
+            if path.startswith("/compatibility/") and "audit" in path:
+                raise RuntimeError("POST %s -> HTTP 500 boom" % path)
+            return real(url, path, method, payload, params)
+        code, _, err = run(schemas.apply_action, "dev", "http://r", registry=failing)
+        self.assertEqual(code, 1)
+        self.assertIn("asking the registry about dev.andara.audit.v1-value failed", err)
 
     def test_an_incompatible_change_registers_nothing_anywhere(self):
         existing = ["dev." + s for s in DECLARED]
@@ -193,7 +251,9 @@ class Apply(unittest.TestCase):
 
 class Diff(unittest.TestCase):
     def test_a_matching_registry_is_clean(self):
-        reg = FakeRegistry(["dev." + s for s in DECLARED] + ["local." + s for s in DECLARED])
+        reg = FakeRegistry()
+        run(schemas.apply_action, "dev", "http://r", registry=reg)
+        run(schemas.apply_action, "local", "http://r", registry=reg)
         code, out, err = run(schemas.diff_action, "dev", "http://r", registry=reg)
         self.assertEqual(code, 0, err)
         self.assertIn("match the registry (env=dev, prefix=dev)", out)
@@ -212,6 +272,96 @@ class Diff(unittest.TestCase):
         self.assertNotIn("local.stray-value", err)
 
 
+class DiffBranches(unittest.TestCase):
+    """Each drift diff exists to catch (pre-review P2)."""
+
+    def applied(self):
+        reg = FakeRegistry()
+        run(schemas.apply_action, "dev", "http://r", registry=reg)
+        return reg
+
+    def test_declared_but_not_registered(self):
+        reg = self.applied()
+        del reg.subjects["dev.andara.audit.v1-value"]
+        code, _, err = run(schemas.diff_action, "dev", "http://r", registry=reg)
+        self.assertEqual(code, 1)
+        self.assertIn("dev.andara.audit.v1-value: declared but not registered", err)
+
+    def test_registered_but_never_with_the_declared_source(self):
+        reg = self.applied()
+        reg.subjects["dev.andara.audit.v1-value"][0]["payload"] = {"schemaType": "PROTOBUF", "schema": "other"}
+        code, _, err = run(schemas.diff_action, "dev", "http://r", registry=reg)
+        self.assertEqual(code, 1)
+        self.assertIn("dev.andara.audit.v1-value: andara/audit/v1/audit.proto is not registered under this subject", err)
+
+    def test_something_registered_after_the_declared_version(self):
+        reg = self.applied()
+        reg.subjects["dev.andara.audit.v1-value"].append({"version": 2, "id": 999, "payload": {"schema": "newer"}})
+        code, _, err = run(schemas.diff_action, "dev", "http://r", registry=reg)
+        self.assertEqual(code, 1)
+        self.assertIn("is registered as version 1 but the latest is 2", err)
+
+    def test_global_compatibility_drift(self):
+        reg = self.applied()
+        reg.config = "NONE"
+        code, _, err = run(schemas.diff_action, "dev", "http://r", registry=reg)
+        self.assertEqual(code, 1)
+        self.assertIn("global compatibility is NONE, declared BACKWARD", err)
+
+    def test_apply_sets_each_subjects_compatibility(self):
+        reg = self.applied()
+        subjects_configured = {schemas.urllib.parse.unquote(c[1].split("/", 2)[2])
+                               for c in reg.calls if c[0] == "PUT" and c[1].startswith("/config/")}
+        self.assertEqual(subjects_configured, {"dev." + s for s in DECLARED})
+
+
+class PortForward(unittest.TestCase):
+    """schemas.py's port-forward: the port from kubectl's first line, a failure that exits 1 and
+    kills it, and the forward ended when the run ends (pre-review P2)."""
+
+    class FakeProc:
+        def __init__(self, lines, stderr=""):
+            self.stdout = iter(lines)
+            self.stderr = io.StringIO(stderr)
+            self.killed = self.terminated = False
+
+        def kill(self):
+            self.killed = True
+
+        def terminate(self):
+            self.terminated = True
+
+    def forward(self, proc):
+        import kube
+        with mock.patch.object(kube, "require", lambda *a, **k: "kind-andara"), \
+                mock.patch.object(kube, "kubectl", lambda *a, **k: ["kubectl"] + list(a)), \
+                mock.patch("shutil.which", return_value="/usr/bin/kubectl"), \
+                mock.patch.object(schemas, "popen", lambda *a, **k: proc), \
+                mock.patch.object(schemas, "PORT_FORWARD_TIMEOUT", 1):
+            return schemas.port_forward()
+
+    def test_the_url_comes_from_the_first_line(self):
+        proc = self.FakeProc(["Forwarding from 127.0.0.1:41234 -> 8081\n", "Handling connection for 41234\n"])
+        self.assertEqual(self.forward(proc), ("http://127.0.0.1:41234", proc))
+
+    def test_no_forwarding_line_exits_1_and_kills_it(self):
+        proc = self.FakeProc([], stderr="error: services \"andara-schema-registry\" not found")
+        with contextlib.redirect_stderr(io.StringIO()) as err, self.assertRaises(SystemExit) as e:
+            self.forward(proc)
+        self.assertEqual(e.exception.code, 1)
+        self.assertTrue(proc.killed)
+        self.assertIn("not found", err.getvalue())
+
+    def test_main_ends_the_forward_even_when_the_action_dies(self):
+        proc = self.FakeProc([])
+        with mock.patch.object(schemas, "registry_url", return_value=("http://127.0.0.1:1", proc)), \
+                mock.patch.object(schemas, "diff_action", side_effect=SystemExit(1)), \
+                mock.patch.object(sys, "argv", ["schemas.py", "diff", "--env", "dev"]):
+            with self.assertRaises(SystemExit):
+                schemas.main()
+        self.assertTrue(proc.terminated)
+
+
 class Ascii(unittest.TestCase):
     """AC-8's new finding: Karapace refuses non-ASCII; schemas.py sends comments as ASCII."""
 
@@ -224,6 +374,12 @@ class Ascii(unittest.TestCase):
             schemas.ascii_comments('option x = "é";', "f.proto")
         self.assertEqual(e.exception.code, 1)
         self.assertIn("f.proto:1: a non-ASCII character outside a // comment", err.getvalue())
+
+    def test_a_double_slash_inside_a_string_is_not_a_comment(self):
+        with contextlib.redirect_stderr(io.StringIO()), self.assertRaises(SystemExit) as e:
+            schemas.ascii_comments('option x = "http://\u00e9";', "f.proto")
+        self.assertEqual(e.exception.code, 1)
+        self.assertEqual(schemas.ascii_comments('option x = "http://a"; // \u2014'), 'option x = "http://a"; // ?')
 
     def test_every_declared_proto_goes_out_ascii(self):
         for r in DECL["references"] + DECL["subjects"]:

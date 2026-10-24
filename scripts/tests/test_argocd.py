@@ -723,6 +723,9 @@ class KafkaOperator(unittest.TestCase):
                                        "pystub scripts/topics.py apply --env dev",
                                        # the schema registry's _schemas, outside both prefixes (AW-INF-057)
                                        "pystub scripts/topics.py apply --platform"])
+        # Then the registry itself, waited on (AW-INF-057).
+        self.assertTrue([c for c in made if "-n andara-shared apply -f deploy/k8s/schema-registry/" in c], made)
+        self.assertTrue([c for c in made if "-n andara-shared rollout status deploy/andara-schema-registry" in c], made)
         self.assertTrue([c for c in made if "-n andara-shared apply -f deploy/k8s/kafka/" in c], made)
 
     def test_bounce_refuses_local_before_any_call(self):

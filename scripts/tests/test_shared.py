@@ -442,6 +442,15 @@ class NetCheck(unittest.TestCase):
                      "a pod not labelled andara in andara-dev: blocked",
                      "a toolbox pod in andara-shared: connected"):
             self.assertIn("ok the schema registry (schema-registry/registry.yaml), %s" % what, out)
+        # The toolbox row of each other listener, as literals: NET_WANTS drives the fake, so the table
+        # itself is pinned here.
+        self.assertIn("ok the Kafka listener (kafka.yaml), a toolbox pod in andara-shared: connected (want connected)", out)
+        self.assertIn("ok the object store (objectstore/shared.yaml), a toolbox pod in andara-shared: blocked (want blocked)", out)
+        self.assertEqual(shared.NET_WANTS, {
+            "kafka":       {"local": "connected", "dev": "connected", "scratch": "blocked", "other": "blocked", "tools": "connected"},
+            "objectstore": {"local": "connected", "dev": "connected", "scratch": "blocked", "other": "blocked", "tools": "blocked"},
+            "registry":    {"local": "blocked", "dev": "blocked", "scratch": "blocked", "other": "blocked", "tools": "connected"},
+        })
 
     def test_an_andara_pod_reaching_the_registry_fails(self):
         # andara-dev's andara probe: admitted by Kafka (5 execs worth) and the object store, and the

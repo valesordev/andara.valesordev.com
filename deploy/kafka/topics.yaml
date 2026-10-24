@@ -251,8 +251,9 @@ platform_topics:
 platform_principals:
   - name: andara-schema-registry
     topics:
-      # Read and Write imply Describe. DescribeConfigs: Karapace checks _schemas's cleanup policy.
-      _schemas: [Read, Write, DescribeConfigs]
+      # Read and Write imply Describe. (Karapace's reader also uses a generated group and sends
+      # CreateTopics at start: routed to architecture on AW-INF-057, 2026-10-24.)
+      _schemas: [Read, Write]
     groups:
       # KARAPACE_GROUP_ID: its leader election and its reader of _schemas.
       andara-schema-registry: [Read]

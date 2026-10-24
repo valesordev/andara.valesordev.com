@@ -540,9 +540,9 @@ class Platform(unittest.TestCase):
         code, out, _ = self.run_platform(b)
         self.assertEqual(code, 0)
         create = [c for c in b.calls if c[:2] == ["topic", "create"]][0]
-        self.assertEqual(create[:7], ["topic", "create", "_schemas", "-p", "1", "-r", "3"])
-        self.assertIn("cleanup.policy=compact", create)
-        self.assertIn("min.insync.replicas=2", create)
+        # Exactly these: a `why: |` line leaking in as a config would show up here.
+        self.assertEqual(create, ["topic", "create", "_schemas", "-p", "1", "-r", "3",
+                                  "-c", "cleanup.policy=compact", "-c", "min.insync.replicas=2"])
         self.assertIn("created _schemas (platform)", out)
 
     def test_a_matching_topic_is_left(self):
