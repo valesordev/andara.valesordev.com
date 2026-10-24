@@ -23,7 +23,8 @@ the telemetry token. So every deploy/terraform/grafana/pipelines/*.alloy must:
   a variable to any attribute, `api_server` included.
 
 Each source's file name is its pipeline's name, and Fleet refuses a name that is not an Alloy
-identifier, so every source is named `<identifier>.alloy`, lower case: `[a-z_][a-z0-9_]*`.
+identifier, so every source is named `<identifier>.alloy`, lower case: `[a-z_][a-z0-9_]*`, and not
+one of Alloy's keywords `true`, `false` or `null`.
 
 And under deploy/terraform/grafana, a `grafana_fleet_management_pipeline` may be declared only in a
 stacks/<root>/pipelines.tf, each reading its contents with exactly
@@ -85,6 +86,8 @@ CONTENTS_FILE = [("ident", "file"), ("punct", "("), ("qopen", '"'), ("iopen", "$
                  ("punct", ")")]
 # A pipeline's name, which Fleet requires to be an Alloy identifier; lower case here.
 PIPELINE_NAME = re.compile(r"[a-z_][a-z0-9_]*")
+# Alloy reads these as literals, so `declare "true" {}` is refused as "not a valid identifier".
+ALLOY_KEYWORDS = ("true", "false", "null")
 CONTENTS_PATH = re.compile(r"/\.\./\.\./pipelines/(%s)\.alloy" % PIPELINE_NAME.pattern)
 
 
@@ -362,8 +365,10 @@ def check(directory, tf_dir, alloy):
         with open(path) as f:
             text = f.read()
         found = sorted(refusals(text, allowed) + alloy_errors(alloy, path, text))
-        if not PIPELINE_NAME.fullmatch(name[:-len(".alloy")]):
-            found.insert(0, (1, "name", "%s is not an Alloy identifier ([a-z_][a-z0-9_]*), which Fleet requires of the "
+        stem = name[:-len(".alloy")]
+        if not PIPELINE_NAME.fullmatch(stem) or stem in ALLOY_KEYWORDS:
+            found.insert(0, (1, "name", "%s is not an Alloy identifier ([a-z_][a-z0-9_]*, not true, false or null), "
+                             "which Fleet requires of the "
                              "pipeline it names" % name[:-len(".alloy")]))
         for line, rule, detail in found:
             print("pipelines-check: refused: %s:%d: %s: %s" % (os.path.relpath(path, REPO), line, rule, detail))
