@@ -447,13 +447,14 @@ def refs_ready(url, files, rel, prefix):
     return True
 
 
-def ask(url, subject, rel, files, prefix, mode):
+def ask(url, subject, rel, files, prefix, mode, undo=None):
     """[subject] when the registry refuses rel for it (its messages on stderr), else []. A failed
-    question exits 1 naming the subject, never a traceback."""
+    question exits 1 naming the subject, never a traceback; `undo`, when given, is called first and
+    what it returns (what it rolled back) goes in the message."""
     try:
         msgs = incompatible(url, subject, source_of(rel), reference_list(url, files, rel, prefix), mode)
     except RuntimeError as e:
-        die("asking the registry about %s failed: %s" % (subject, e))
+        die("asking the registry about %s failed: %s%s" % (subject, e, "; " + undo() if undo else ""))
     for m in msgs or []:
         sys.stderr.write("schemas: error %s refused under compatibility %s: %s run=%s\n" % (subject, mode, m, RUN_ID))
     return [subject] if msgs else []
@@ -527,16 +528,18 @@ def apply_action(env, url):
     for r in doc["references"]:
         put(r)
     late = [r for r in doc["subjects"] if env_subject(prefix, r["subject"]) in deferred]
-    refused = []
-    for r in late:
-        refused += ask(url, env_subject(prefix, r["subject"]), r["file"], files, prefix, mode)
-    if refused:
+
+    def undo():
         undone, left = rollback(url, created_versions)
         if left:
-            die("the registry refuses %s under compatibility %s; rollback incomplete: still registered %s%s"
-                % (", ".join(refused), mode, ", ".join(left), "; undone: %s" % ", ".join(undone) if undone else ""))
-        die("the registry refuses %s under compatibility %s; nothing was registered%s"
-            % (", ".join(refused), mode, " (rolled back %s)" % ", ".join(undone) if undone else ""))
+            return "rollback incomplete: still registered %s%s" % (
+                ", ".join(left), "; undone: %s" % ", ".join(undone) if undone else "")
+        return "nothing was registered%s" % (" (rolled back %s)" % ", ".join(undone) if undone else "")
+    refused = []
+    for r in late:
+        refused += ask(url, env_subject(prefix, r["subject"]), r["file"], files, prefix, mode, undo)
+    if refused:
+        die("the registry refuses %s under compatibility %s; %s" % (", ".join(refused), mode, undo()))
     call(url, "/config", "PUT", {"compatibility": mode})
     print("schemas-apply: global compatibility set to %s run=%s" % (mode, RUN_ID))
     for r in doc["references"]:
@@ -555,13 +558,20 @@ def rollback(url, created_versions):
     undone, left = [], []
     for subject, version in reversed(created_versions):
         sv = "%s@%s" % (subject, version)
+        path = "/subjects/%s/versions/%s" % (q(subject), version)
         try:
-            call(url, "/subjects/%s/versions/%s" % (q(subject), version), "DELETE")
-            call(url, "/subjects/%s/versions/%s" % (q(subject), version), "DELETE", params="?permanent=true")
-            undone.append(sv)
+            call(url, path, "DELETE")
         except RuntimeError as e:
             sys.stderr.write("schemas: error rolling back %s: %s run=%s\n" % (sv, e, RUN_ID))
             left.append(sv)
+            continue
+        try:
+            call(url, path, "DELETE", params="?permanent=true")
+            undone.append(sv)
+        except RuntimeError as e:
+            # Hidden from readers and lookups, but still holding its id: a different recovery.
+            sys.stderr.write("schemas: error purging %s: %s run=%s\n" % (sv, e, RUN_ID))
+            left.append(sv + " (soft-deleted, not purged)")
     return undone, left
 
 

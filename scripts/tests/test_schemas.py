@@ -57,7 +57,7 @@ class FakeRegistry:
             raise RuntimeError("POST %s -> HTTP 422 unresolved import %s" % (path, sorted(imports - named)))
 
     def __call__(self, url, path, method="GET", payload=None, params=""):
-        self.calls.append((method, path, payload))
+        self.calls.append((method, path + params, payload))
         p = path.split("/")
         if path == "/subjects" and method == "GET":
             return list(self.subjects)
@@ -86,11 +86,14 @@ class FakeRegistry:
         if path.endswith("/versions/latest"):
             if subject not in self.subjects:
                 raise RuntimeError("GET %s -> HTTP 404" % path)
-            return dict(self.subjects[subject][-1], subject=subject)
+            live = [v for v in self.subjects[subject] if not v.get("deleted")]
+            if not live:
+                raise RuntimeError("GET %s -> HTTP 404" % path)
+            return dict(live[-1], subject=subject)
         if path.endswith("/versions") and method == "POST":
             self.unresolved(path, payload)
             versions = self.subjects.setdefault(subject, [])
-            same = [v for v in versions if v.get("payload") == payload]
+            same = [v for v in versions if v.get("payload") == payload and not v.get("deleted")]
             if same:
                 return {"id": same[-1]["id"]}
             versions.append({"version": len(versions) + 1, "id": self.next_id, "payload": payload})
@@ -98,7 +101,7 @@ class FakeRegistry:
             return {"id": self.next_id - 1}
         if method == "POST":  # lookup
             for v in self.subjects.get(subject, []):
-                if v.get("payload") == payload:
+                if v.get("payload") == payload and not v.get("deleted"):
                     return dict(v)
             raise RuntimeError("POST %s -> HTTP 404" % path)
         raise AssertionError("unexpected registry call %s %s" % (method, path))
@@ -309,9 +312,9 @@ class Apply(unittest.TestCase):
         self.assertEqual({s: [v["version"] for v in vs] for s, vs in reg.subjects.items()}, before)
         # Nothing is configured on a refused run.
         self.assertFalse([c for c in reg.calls[calls_before:] if c[0] == "PUT"])
-        # Soft, then permanent, newest first.
-        deletes = [(c[1], c[2]) for c in reg.calls[calls_before:] if c[0] == "DELETE"]
-        self.assertEqual(len(deletes), 2)
+        # Soft, then permanent.
+        deletes = [c[1] for c in reg.calls[calls_before:] if c[0] == "DELETE"]
+        self.assertEqual(deletes, ["/subjects/dev.b.proto/versions/2", "/subjects/dev.b.proto/versions/2?permanent=true"])
 
     def test_a_rollback_that_fails_names_what_it_left(self):
         src, doc, files = self.two_references()
@@ -329,6 +332,41 @@ class Apply(unittest.TestCase):
         self.assertEqual(code, 1)
         self.assertNotIn("Traceback", err)
         self.assertIn("refuses dev.sb-value under compatibility BACKWARD; rollback incomplete: still registered dev.b.proto@2", err)
+
+    def test_a_failed_question_about_a_deferred_importer_rolls_back(self):
+        """Pre-review round 4 P2: a registry error (not a refusal) asking a deferred importer undoes
+        the references phase 2 registered, as a refusal does."""
+        src, doc, files = self.two_references()
+        reg = FakeRegistry(strict=True)
+        self.run_two(reg, src, doc, files)
+        src["b.proto"] = src["b.proto"].replace("string x = 1;", "string x = 1; string y = 2;")
+        real = reg.__call__
+
+        def boom(url, path, method="GET", payload=None, params=""):
+            if path.startswith("/compatibility/subjects/dev.sb-value"):
+                raise RuntimeError("POST %s -> HTTP 500 boom" % path)
+            return real(url, path, method, payload, params)
+        code, _, err = self.run_two(boom, src, doc, files)
+        self.assertEqual(code, 1)
+        self.assertIn("asking the registry about dev.sb-value failed: POST", err)
+        self.assertIn("nothing was registered (rolled back dev.b.proto@2)", err)
+        self.assertEqual([v["version"] for v in reg.subjects["dev.b.proto"]], [1])
+
+    def test_a_soft_delete_whose_purge_fails_is_named_as_such(self):
+        src, doc, files = self.two_references()
+        reg = FakeRegistry(strict=True)
+        self.run_two(reg, src, doc, files)
+        src["b.proto"] = src["b.proto"].replace("string x = 1;", "string x = 1; string y = 2;")
+        reg.incompatible = {"dev.sb-value"}
+        real = reg.__call__
+
+        def no_purge(url, path, method="GET", payload=None, params=""):
+            if method == "DELETE" and "permanent" in params:
+                raise RuntimeError("DELETE %s -> HTTP 500 boom" % path)
+            return real(url, path, method, payload, params)
+        code, _, err = self.run_two(no_purge, src, doc, files)
+        self.assertEqual(code, 1)
+        self.assertIn("rollback incomplete: still registered dev.b.proto@2 (soft-deleted, not purged)", err)
 
     def test_a_failed_question_exits_1_naming_the_subject(self):
         reg = FakeRegistry(["dev." + s for s in DECLARED])
@@ -357,6 +395,26 @@ class Apply(unittest.TestCase):
         before = {s: list(v) for s, v in reg.subjects.items()}
         run(schemas.apply_action, "local", "http://r", registry=reg)
         self.assertEqual({s: v for s, v in reg.subjects.items() if s.startswith("dev.")}, before)
+
+
+class Check(unittest.TestCase):
+    # files_from_protos carries no message lists, so check() reports those too; these tests look only
+    # at the line under test, with and without the import that causes it.
+    def errors(self, files):
+        with mock.patch.object(schemas, "descriptor", lambda: files), \
+                contextlib.redirect_stdout(io.StringIO()), contextlib.redirect_stderr(io.StringIO()) as err:
+            try:
+                schemas.check()
+            except SystemExit:
+                pass
+        return err.getvalue()
+
+    def test_a_reference_that_imports_something_is_refused(self):
+        files = files_from_protos()
+        ref = DECL["references"][0]["file"]
+        self.assertNotIn("a reference must import nothing", self.errors(files))
+        files[ref] = dict(files[ref], deps=["x.proto"])
+        self.assertIn("reference '%s' imports x.proto; a reference must import nothing" % ref, self.errors(files))
 
 
 class Diff(unittest.TestCase):
