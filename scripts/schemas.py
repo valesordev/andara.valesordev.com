@@ -270,6 +270,11 @@ def registry_url(env, broker):
     return port_forward()
 
 
+class Unreachable(RuntimeError):
+    """The registry didn't answer at all. A RuntimeError like an HTTP error, so a run that loses the
+    registry part-way still rolls back and names what it registered; main exits 1 on one that escapes."""
+
+
 def call(url, path, method="GET", payload=None, params=""):
     data = json.dumps(payload).encode() if payload is not None else None
     req = urllib.request.Request(
@@ -282,9 +287,9 @@ def call(url, path, method="GET", payload=None, params=""):
         return json.loads(body) if body else {}
     except urllib.error.HTTPError as e:
         raise RuntimeError("%s %s -> HTTP %d %s" % (method, path, e.code, e.read().decode()[:300]))
-    except urllib.error.URLError as e:
-        die("no schema registry at %s (%s). `make up` starts one; override with "
-            "ANDARA_SCHEMA_REGISTRY_URL." % (url, e.reason))
+    except (urllib.error.URLError, OSError) as e:  # refused, reset, or a read timeout
+        raise Unreachable("no schema registry at %s (%s). `make up` starts one; override with "
+                          "ANDARA_SCHEMA_REGISTRY_URL." % (url, getattr(e, "reason", e)))
 
 
 # --------------------------------------------------------------------------- check
@@ -426,6 +431,8 @@ def incompatible(url, subject, source, refs, mode):
         payload["references"] = refs
     try:
         call(url, "/subjects/%s/versions/latest" % q(subject))
+    except Unreachable:
+        raise
     except RuntimeError:
         return None  # a new subject has nothing to be compatible with
     verdict = call(url, "/compatibility/subjects/%s/versions/latest" % q(subject),
@@ -477,6 +484,8 @@ def reference_list(url, files, rel, prefix=""):
         subject = env_subject(prefix, d)
         try:
             latest = call(url, "/subjects/%s/versions/latest" % q(subject))
+        except Unreachable:
+            raise
         except RuntimeError:
             continue  # not registered yet: only the compatibility pass asks before it exists
         refs.append({"name": d, "subject": subject, "version": latest["version"]})
@@ -606,6 +615,8 @@ def diff_action(env, url):
     for subject, rel in sorted(declared):
         try:
             latest = call(url, "/subjects/%s/versions/latest" % q(subject))
+        except Unreachable:
+            raise
         except RuntimeError:
             drift.append("%s: declared but not registered — run `make schemas-apply`" % subject)
             continue
@@ -676,6 +687,8 @@ def main():
         url, proc = registry_url(args.env, broker)
         try:
             (apply_action if args.action == "apply" else diff_action)(args.env, url)
+        except Unreachable as e:
+            die(str(e))
         finally:
             if proc is not None:
                 proc.terminate()

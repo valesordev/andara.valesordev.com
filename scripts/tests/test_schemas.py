@@ -171,13 +171,44 @@ class Url(unittest.TestCase):
             self.assertEqual(schemas.registry_url("dev", "cluster"), ("http://127.0.0.1:5", "p"))
             self.assertEqual(schemas.registry_url("local", "cluster"), ("http://127.0.0.1:5", "p"))
 
-    def test_an_unreachable_registry_exits_1(self):
-        with mock.patch("urllib.request.urlopen", side_effect=urllib.error.URLError("refused")), \
-                contextlib.redirect_stderr(io.StringIO()) as err:
+    def test_an_unreachable_registry_is_an_error_the_run_can_report(self):
+        """Pre-review P2: unreachable raises, so apply's rollback and reporting paths see it, as
+        they see an HTTP error, rather than call() exiting under them."""
+        for failure in (urllib.error.URLError("refused"), TimeoutError("timed out"), ConnectionResetError("reset")):
+            with mock.patch("urllib.request.urlopen", side_effect=failure):
+                with self.assertRaises(schemas.Unreachable) as e:
+                    schemas.call("http://nowhere:1", "/subjects")
+            self.assertIsInstance(e.exception, RuntimeError)
+            self.assertIn("no schema registry at http://nowhere:1", str(e.exception))
+
+    def test_an_unreachable_registry_is_never_read_as_an_absent_subject(self):
+        """A lost registry is not 'declared but not registered', 'new subject' or 'reference not
+        registered yet': each of those reads would act on an answer the registry never gave."""
+        reg = FakeRegistry(strict=True)
+        run(schemas.apply_action, "dev", "http://r", registry=reg)
+
+        def gone(url, path, method="GET", payload=None, params=""):
+            raise schemas.Unreachable("no schema registry at %s (refused)" % url)
+        with mock.patch.object(schemas, "call", gone), mock.patch.object(schemas, "descriptor", files_from_protos), \
+                contextlib.redirect_stdout(io.StringIO()):
+            with self.assertRaises(schemas.Unreachable):
+                schemas.diff_action("dev", "http://r")
+            with self.assertRaises(schemas.Unreachable):
+                schemas.incompatible("http://r", "dev.x", "src", [], "BACKWARD")
+            importer = next(r for r in DECL["subjects"] if files_from_protos()[r["file"]]["deps"])
+            with self.assertRaises(schemas.Unreachable):
+                schemas.reference_list("http://r", files_from_protos(), importer["file"], "dev")
+
+    def test_main_exits_1_on_an_unreachable_registry(self):
+        with mock.patch.object(schemas, "registry_url", return_value=("http://nowhere:1", None)), \
+                mock.patch("urllib.request.urlopen", side_effect=urllib.error.URLError("refused")), \
+                mock.patch.object(sys, "argv", ["schemas.py", "diff", "--env", "dev"]), \
+                contextlib.redirect_stdout(io.StringIO()), contextlib.redirect_stderr(io.StringIO()) as err:
             with self.assertRaises(SystemExit) as e:
-                schemas.call("http://nowhere:1", "/subjects")
+                schemas.main()
         self.assertEqual(e.exception.code, 1)
         self.assertIn("no schema registry at http://nowhere:1", err.getvalue())
+        self.assertNotIn("Traceback", err.getvalue())
 
 
 class Apply(unittest.TestCase):
@@ -349,6 +380,23 @@ class Apply(unittest.TestCase):
         code, _, err = self.run_two(boom, src, doc, files)
         self.assertEqual(code, 1)
         self.assertIn("asking the registry about dev.sb-value failed: POST", err)
+        self.assertIn("nothing was registered (rolled back dev.b.proto@2)", err)
+        self.assertEqual([v["version"] for v in reg.subjects["dev.b.proto"]], [1])
+
+    def test_a_registry_lost_asking_a_deferred_importer_rolls_back(self):
+        src, doc, files = self.two_references()
+        reg = FakeRegistry(strict=True)
+        self.run_two(reg, src, doc, files)
+        src["b.proto"] = src["b.proto"].replace("string x = 1;", "string x = 1; string y = 2;")
+        real = reg.__call__
+
+        def lost(url, path, method="GET", payload=None, params=""):
+            if path.startswith("/compatibility/subjects/dev.sb-value"):
+                raise schemas.Unreachable("no schema registry at %s (timed out)" % url)
+            return real(url, path, method, payload, params)
+        code, _, err = self.run_two(lost, src, doc, files)
+        self.assertEqual(code, 1)
+        self.assertIn("asking the registry about dev.sb-value failed: no schema registry at http://r", err)
         self.assertIn("nothing was registered (rolled back dev.b.proto@2)", err)
         self.assertEqual([v["version"] for v in reg.subjects["dev.b.proto"]], [1])
 
