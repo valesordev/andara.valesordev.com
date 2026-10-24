@@ -61,7 +61,7 @@ HAS_GO := $(shell find . -name '*.go' -not -path './.git/*' -not -path './bin/*'
         proto proto-check adr \
         k8s-dry check-targets clean build build-info goldens \
         values-schema values-schema-check helm-test image image-publish image-check cli-release cli-release-check cli-release-publish kind-load helm-install measure-tick stack-smoke stack-play stack-linkdead stack-recover stack-recover-mismatch \
-        platform-up platform-check kube-context-check cluster-up cluster-down cluster-rebuild stream-soak content-grammar-check observe-check dashboard-check observe-unavailable gcx-config gcx-check gcx-only-check scripts-test kafka-install kafka-broker-bounce shared-up shared-down shared-check kafka-users kafka-users-check \
+        platform-up platform-check kube-context-check cluster-up cluster-down cluster-rebuild stream-soak content-grammar-check observe-check dashboard-check observe-unavailable gcx-config gcx-check gcx-only-check scripts-test kafka-install kafka-broker-bounce shared-up shared-down shared-check shared-netcheck kafka-users kafka-users-check \
         argocd-install promote promote-log argocd-status argocd-ui argocd-recover argocd-uninstall world-reset content-seed env-destroy env-recover \
         objectstore-install projector-stop projector-start projector-rebuild server-stop server-start core-versions-check \
         builder-reference builder-reference-check guide-check \
@@ -418,6 +418,10 @@ shared-up:
 ## shared-down: delete the shared services and their data (every environment's Command history) — CONFIRM=andara-shared (AW-INF-055)
 shared-down:
 	@$(PY) $(SCRIPTS)/shared.py down "$(CONFIRM)"
+
+## shared-netcheck: prove the shared Kafka's NetworkPolicy with throwaway pods — andara pods in andara-local and andara-dev connect, one in an unlabelled namespace and an unlabelled one in andara-dev don't; cleans up (AW-INF-055 AC-5)
+shared-netcheck:
+	@$(PY) $(SCRIPTS)/shared.py netcheck
 
 ## shared-check: each andara-shared PVC's use (exit 1 over 80%) and each broker's bytes per environment prefix (AW-INF-055)
 shared-check:

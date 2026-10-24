@@ -21,7 +21,8 @@ broker (the default while compose exists; its World is `make down VOLUMES=1`), w
 environment; a missing CONFIRM, or a CONFIRM that isn't the target namespace.
 
 Steps, in order, each named on failure:
-  0. Preconditions, before anything changes: the Argo CD Application is readable (only a
+  0. Preconditions, before anything changes: the environment has a server StatefulSet (a
+     namespace `make shared-up` made has none until `make helm-install`), the Argo CD Application is readable (only a
      confirmed NotFound counts as "none"), and the configured snapshot store is `fs` or `s3`.
   1. Argo CD's automated sync on the environment's Application is suspended, or selfHeal would
      scale the server back up mid-reset. It's restored on the way out, whatever happens.
@@ -88,7 +89,15 @@ def kubectl(ns, *args, check=True):
 
 
 def exists(ns, ref):
-    return kubectl(ns, "get", ref, "-o", "name", check=False).returncode == 0
+    """Whether ref is there. Only a confirmed NotFound is "no"; any other error raises, so a
+    Forbidden or a timeout can't skip the steps that ref would need."""
+    p = kubectl(ns, "get", ref, "-o", "name", check=False)
+    if p.returncode == 0:
+        return True
+    err = (p.stderr or p.stdout).strip()
+    if "NotFound" in err:
+        return False
+    raise StepFailed("read %s in %s (only NotFound counts as none): %s" % (ref, ns, err))
 
 
 def replicas(ns, ref):
@@ -199,6 +208,21 @@ def reset_topics(env, run, sleep=time.sleep):
 
 def reset(env, ns, broker="cluster"):
     run = topics.rpk_runner(env, broker)
+    # A namespace shared-up made holds no release until helm-install (or Argo CD) puts one there,
+    # and the config map read next would fail as a bare NotFound.
+    # As argo_policy: only a confirmed NotFound means "no release"; any other error is reported as is.
+    p = kubectl(ns, "get", SERVER, "-o", "name", check=False)
+    if p.returncode != 0:
+        err = (p.stderr or p.stdout).strip()
+        if "NotFound" not in err:
+            raise StepFailed("read %s in %s (only NotFound counts as none): %s; nothing was changed"
+                             % (SERVER, ns, err))
+        install = ("`make helm-install ENV=local`" if env == "local"
+                   else "`make argocd-install ENV=%s`, after `make promote ENV=%s SHA=<main sha>` if the "
+                        "`%s` tag doesn't exist yet" % (env, env, env))
+        raise StepFailed("no server release in %s (%s not found), and world-reset needs one: it scales "
+                         "the server and reads andara-config. Install it first (%s); nothing was changed"
+                         % (ns, SERVER, install))
     argo_policy(ns)
     store = snapshot_store(ns)
     if store not in ("fs", "s3"):

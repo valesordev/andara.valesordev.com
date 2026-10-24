@@ -62,12 +62,18 @@ class Refusals(unittest.TestCase):
 class FailsClosed(unittest.TestCase):
     """Preconditions stop the reset before anything on the cluster changes (Codex on #165)."""
 
-    def fake(self, argo_err=None, store=""):
+    NOT_FOUND = 'Error from server (NotFound): statefulsets.apps "andara" not found'
+
+    def fake(self, argo_err=None, store="", server_err=None, projector_err=None):
         calls = []
 
         def kubectl(ns, *args, check=True):
             calls.append(args)
-            if args[:2] == ("get", "application"):
+            if server_err and args[:2] == ("get", world_reset.SERVER):
+                p = types.SimpleNamespace(returncode=1, stdout="", stderr=server_err)
+            elif projector_err and args[:2] == ("get", world_reset.PROJECTOR):
+                p = types.SimpleNamespace(returncode=1, stdout="", stderr=projector_err)
+            elif args[:2] == ("get", "application"):
                 if argo_err:
                     p = types.SimpleNamespace(returncode=1, stdout="", stderr=argo_err)
                 else:
@@ -82,18 +88,46 @@ class FailsClosed(unittest.TestCase):
             return p
         return calls, kubectl
 
-    def run_reset(self, **kw):
+    def run_reset(self, env="dev", **kw):
         calls, kubectl = self.fake(**kw)
         with mock.patch.object(world_reset, "kubectl", kubectl), \
                 mock.patch.object(world_reset.topics, "rpk_runner", lambda env, broker=None: None):
             with self.assertRaises(world_reset.StepFailed) as e:
-                world_reset.reset("dev", "andara-dev")
+                world_reset.reset(env, "andara-" + env)
         changed = [c for c in calls if c[0] in ("patch", "scale", "delete")]
         return str(e.exception), changed
 
     def test_an_unreadable_application_stops_before_any_change(self):
         msg, changed = self.run_reset(argo_err='Error from server (Forbidden): applications is forbidden')
         self.assertIn("only NotFound counts as none", msg)
+        self.assertEqual(changed, [])
+
+    def test_a_namespace_with_no_release_names_helm_install_before_any_change(self):
+        # Brian on kind-andara, 2026-10-23: right after shared-up, andara-local has no release, and
+        # the reset failed on `kubectl get configmap andara-config` NotFound.
+        msg, changed = self.run_reset(env="local", server_err=self.NOT_FOUND, store="fs")
+        self.assertIn("no server release in andara-local (statefulset/andara not found)", msg)
+        self.assertIn("Install it first (`make helm-install ENV=local`); nothing was changed", msg)
+        self.assertEqual(changed, [])
+        # dev's release is Argo CD's, from the promoted tag; a bare helm-install refuses without TAG=.
+        msg, changed = self.run_reset(server_err=self.NOT_FOUND, store="fs")
+        self.assertIn("`make argocd-install ENV=dev`, after `make promote ENV=dev SHA=<main sha>` if the `dev` tag", msg)
+        self.assertNotIn("helm-install", msg)
+        self.assertEqual(changed, [])
+
+    def test_an_unreadable_projector_stops_before_the_server_scales(self):
+        # Read as "no projector", a Forbidden would skip projector-stop and reset under a live projector.
+        msg, changed = self.run_reset(projector_err="Error from server (Forbidden): deployments.apps is forbidden",
+                                      store="fs")
+        self.assertIn("read %s in andara-dev (only NotFound counts as none)" % world_reset.PROJECTOR, msg)
+        self.assertFalse([c for c in changed if c[0] == "scale"])
+
+    def test_an_unreadable_server_is_reported_as_it_is_not_as_no_release(self):
+        msg, changed = self.run_reset(server_err="Error from server (Forbidden): statefulsets.apps is forbidden",
+                                      store="fs")
+        self.assertIn("only NotFound counts as none", msg)
+        self.assertIn("Forbidden", msg)
+        self.assertNotIn("no server release", msg)
         self.assertEqual(changed, [])
 
     def test_an_unknown_snapshot_store_stops_before_any_change(self):
