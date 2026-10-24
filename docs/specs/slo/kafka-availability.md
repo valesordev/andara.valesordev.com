@@ -59,8 +59,9 @@ log.
 ```
 
 - **Lagging Partition-minutes over observed Partition-minutes** (the shape of ruling 2 in
-  `world-write-availability.md`): one Partition behind for the whole window costs 1/64 of the budget, and the
-  whole log behind costs all of it.
+  `world-write-availability.md`): a lagging Partition-minute weighs 1/64 of a whole-log minute, so
+  one Partition behind for the whole window takes 1/64 (1.6%) off the SLI, and the whole log takes all of it. The
+  budget is a fraction of *observed* minutes, so it shrinks with them.
 - **One series per Partition** (`max by (namespace, partition)`, before the subquery). A pod replacement
   gives a Partition a new `instance` series. Collapsed, the old and new pods' minutes are weighted by how
   long each was observed. Averaged separately, a two-minute lagging pod would weigh as much as its 28-day

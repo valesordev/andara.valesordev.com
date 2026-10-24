@@ -26,8 +26,8 @@ sum by (namespace) (
 Healthy Partition-minutes, divided by every Partition-minute in the window: 64 Partitions × 40,320 minutes.
 
 - **Per Partition-minute, over a fixed denominator.** `andara_ingress_degraded{partition}` is 1 while that Partition refuses
-  writes, with 64 series per environment. One Partition read-only for the whole window costs 1/64 of the
-  budget, and the whole log read-only costs all of it. The page (below) is binary on purpose: one degraded
+  writes, with 64 series per environment. A read-only Partition-minute weighs 1/64 of a whole-log minute:
+  one Partition read-only for the whole window takes 1/64 (1.6%) off the SLI, and the whole log takes all of it. The page (below) is binary on purpose: one degraded
   Partition's players can't act. The page is for responsiveness, and the SLI measures proportion.
 - **`max_over_time(…[1m])` inside** (ruling 3). Under a persistent produce fault the gauge saw-tooths: 1 for
   `ingress.degraded_hold`, then 0 for up to `ingress.produce_deadline` until the next Submit rediscovers the

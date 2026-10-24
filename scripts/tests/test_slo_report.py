@@ -207,7 +207,7 @@ class WriteSLISemantics(unittest.TestCase):
     def test_healthy_throughout_is_one(self):
         self.evaluate("0x22", 1)
 
-    def test_minutes_with_no_sample_count_against_it(self):
+    def test_minutes_with_no_sample(self):
         # Samples at minutes 0-9 and 20 (`_x10` is ten blanks, 10-19): ten empty steps cost ten of the
         # twenty minutes. The old avg-of-what-exists form read 1.0.
         self.evaluate("0x9 _x10 0x1", 0.5)
@@ -234,8 +234,8 @@ class KafkaSLISemantics(WriteSLISemantics):
     def test_healthy_throughout_is_one(self):
         self.evaluate("0x22", 1)
 
-    def test_minutes_with_no_sample_count_against_it(self):
-        # Overrides the write case: here a gap is left out, not charged. Lag 500 at minutes 1 and 2 of the
+    def test_minutes_with_no_sample(self):
+        # Unlike the write SLI, a gap is left out, not charged. Lag 500 at minutes 1 and 2 of the
         # ten observed steps (minutes 1-9 and 20; steps 10-19 have no series).
         self.evaluate("0 500 500 0x6 _x10 0x1", 0.8)
 
@@ -243,6 +243,8 @@ class KafkaSLISemantics(WriteSLISemantics):
         # A short-lived instance that lagged for its two minutes, then its replacement healthy for the
         # rest: two lagging minutes of twenty, not half the window.
         self.evaluate("_x2 0x18", 0.9, more=[("old", "500 500 500 _x19")])
+        # Old and new both lag at minute 2: one lagging minute, not two in the numerator.
+        self.evaluate("_x2 500 0x17", 0.9, more=[("old", "500 500 500 _x19")])
 
     def test_a_degraded_minute_costs_a_minute(self):
         self.evaluate("0 500 0 500 0 500 0x16", 0.85)
