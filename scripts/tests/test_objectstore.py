@@ -170,7 +170,7 @@ class GatewayFindings(unittest.TestCase):
                 self.assertEqual(len(objectstore.gateway_findings(log, BUCKETS)), 1)
 
 
-class Check(unittest.TestCase):
+class CheckFake:
     """The isolation check over a fake gateway: probe outputs per (namespace, phase) and an access log."""
 
     @staticmethod
@@ -214,6 +214,8 @@ class Check(unittest.TestCase):
             except objectstore.Failed as e:
                 return str(e), out.getvalue(), calls
 
+
+class Check(CheckFake, unittest.TestCase):
     def test_separated_stores_pass(self):
         err, out, calls = self.run_check()
         self.assertIsNone(err, err)
@@ -279,8 +281,8 @@ class Check(unittest.TestCase):
         self.assertIn("andara-local DeleteObject on andara-snapshots-dev: no 403 AccessDenied", err)
 
 
-class CheckAndaraItPositive(Check):
-    """AC-3's positive half: andara-it creates its andara-test-* bucket and can delete it again."""
+class CheckItAndCleanup(CheckFake, unittest.TestCase):
+    """AC-3's positive half (andara-it creates its andara-test-* bucket and can delete it), and cleanup after a failed run."""
 
     def test_andara_it_refused_its_own_test_bucket_fails(self):
         lines = [l.replace("200 create andara-test-r1", "403 create andara-test-r1") for l in self.it_lines()]
@@ -303,17 +305,23 @@ class CheckAndaraItPositive(Check):
         self.assertEqual(len(it_cleanups), 1)
 
 
-# A stand-in for curl that the probe scripts call: it answers listings with $FAKE_LIST (and the code in
-# $FAKE_LIST_CODE), a GET of an object with "hello", and anything else with 204, writing -o's file.
+# A stand-in for curl that the probe scripts call. It logs "METHOD URL" to $FAKE_LOG and answers:
+#   the run listing (prefix=check-<run>/) with $FAKE_LIST and $FAKE_LIST_CODE; any other check- or bare
+#   listing with an empty result, so a probe that drops the prefix sees nothing;
+#   the it- listing with $FAKE_IT_LIST and $FAKE_IT_LIST_CODE;
+#   an object GET with $FAKE_BODY and $FAKE_GET_CODE; anything else with 204. It writes -o's file and
+#   exits 0, as curl does without -f.
 FAKE_CURL = r'''#!/bin/sh
 out=""; url=""; meth=GET
 while [ $# -gt 0 ]; do case "$1" in
   -o) out="$2"; shift 2;; -w|--aws-sigv4|--user|-H|--data-binary) shift 2;; -X) meth="$2"; shift 2;;
   -sS) shift;; *) url="$1"; shift;; esac; done
+echo "$meth $url" >> "$FAKE_LOG"
 case "$meth $url" in
-  *"list-type=2&prefix=it-"*) printf '%s' "$FAKE_IT_LIST" > "$out"; printf '%s' "${FAKE_LIST_CODE:-200}";;
-  *list-type=2*) printf '%s' "$FAKE_LIST" > "$out"; printf '%s' "${FAKE_LIST_CODE:-200}";;
-  "GET "*) echo hello > "$out"; printf 200;;
+  *"list-type=2&prefix=it-"*) printf '%s' "$FAKE_IT_LIST" > "$out"; printf '%s' "${FAKE_IT_LIST_CODE:-200}";;
+  *"list-type=2&prefix=check-r1/") printf '%s' "$FAKE_LIST" > "$out"; printf '%s' "${FAKE_LIST_CODE:-200}";;
+  *list-type=2*) printf '<ListBucketResult/>' > "$out"; printf 200;;
+  "GET "*) printf '%s\n' "${FAKE_BODY-hello}" > "$out"; printf '%s' "${FAKE_GET_CODE:-200}";;
   *) : > "$out"; printf 204;;
 esac
 '''
@@ -321,49 +329,81 @@ esac
 
 @unittest.skipUnless(os.path.exists("/bin/sh"), "needs a POSIX sh")
 class ProbeShell(unittest.TestCase):
-    """The probe scripts themselves, run by sh against a fake curl (pre-review round 2: the stray and
-    listing guards live in the shell, which the Python verdict tests never ran)."""
+    """The probe scripts themselves, run by sh against a fake curl (pre-review rounds 2 and 3: the
+    stray, listing and content guards live in the shell, which the Python verdict tests never ran)."""
 
-    def run_probe(self, phase, listing="", it_listing="", list_code="200"):
+    def run_script(self, script, args, **fake):
+        import shutil
         import tempfile
         d = tempfile.mkdtemp()
-        self.addCleanup(__import__("shutil").rmtree, d)
+        self.addCleanup(shutil.rmtree, d)
         with open(os.path.join(d, "curl"), "w") as f:
             f.write(FAKE_CURL)
         os.chmod(os.path.join(d, "curl"), 0o755)
-        env = dict(os.environ, PATH=d + ":" + os.environ["PATH"], FAKE_LIST=listing, FAKE_IT_LIST=it_listing,
-                   FAKE_LIST_CODE=list_code, AWS_ACCESS_KEY_ID="a", AWS_SECRET_ACCESS_KEY="b")
-        script = objectstore.PROBE.replace("/tmp/", d + "/")
-        r = subprocess.run(["sh", "-c", script, "probe", phase, "own", "other", "r1", "http://h"],
+        log = os.path.join(d, "requests")
+        open(log, "w").close()
+        env = dict(os.environ, PATH=d + ":" + os.environ["PATH"], FAKE_LOG=log,
+                   AWS_ACCESS_KEY_ID="a", AWS_SECRET_ACCESS_KEY="b")
+        env.update({k: v for k, v in fake.items()})
+        r = subprocess.run(["sh", "-c", script.replace("/tmp/", d + "/"), "probe"] + args,
                            env=env, capture_output=True, text=True)
-        return objectstore.verdicts(r.stdout)
+        with open(log) as f:
+            return objectstore.verdicts(r.stdout), f.read().splitlines()
+
+    def run_probe(self, phase, **fake):
+        return self.run_script(objectstore.PROBE, [phase, "own", "other", "r1", "http://h"], **fake)
+
+    def final(self, **fake):
+        got, _ = self.run_probe("final", **fake)
+        return got["no stray in own"], got["seed kept in own"]
+
+    SEED = "<Key>check-r1/1/1/0</Key>"
 
     def test_final_clean(self):
-        got = self.run_probe("final", "<Key>check-r1/1/1/0</Key>")
-        self.assertEqual((got["no stray in own"], got["seed kept in own"]), ("200", "200"))
+        self.assertEqual(self.final(FAKE_LIST=self.SEED), ("200", "200"))
 
     def test_final_a_landed_cross_write_is_a_stray(self):
-        got = self.run_probe("final", "<Key>check-r1/1/1/0</Key><Key>check-r1/1/1/9</Key>")
-        self.assertEqual(got["no stray in own"], "000")
+        self.assertEqual(self.final(FAKE_LIST=self.SEED + "<Key>check-r1/1/1/9</Key>")[0], "000")
 
     def test_final_andara_its_landed_write_is_a_stray(self):
-        got = self.run_probe("final", "<Key>check-r1/1/1/0</Key>", it_listing="<Key>it-r1</Key>")
-        self.assertEqual(got["no stray in own"], "000")
+        self.assertEqual(self.final(FAKE_LIST=self.SEED, FAKE_IT_LIST="<Key>it-r1</Key>")[0], "000")
         # it-r10 is another run's key, not this one's
-        self.assertEqual(self.run_probe("final", "<Key>check-r1/1/1/0</Key>",
-                                        it_listing="<Key>it-r10</Key>")["no stray in own"], "200")
+        self.assertEqual(self.final(FAKE_LIST=self.SEED, FAKE_IT_LIST="<Key>it-r10</Key>")[0], "200")
 
-    def test_final_a_failed_listing_proves_nothing(self):
-        got = self.run_probe("final", "<Key>check-r1/1/1/0</Key>", list_code="403")
-        self.assertEqual((got["no stray in own"], got["seed kept in own"]), ("000", "000"))
+    def test_final_either_failed_listing_proves_no_absence(self):
+        # Only the it- listing fails: no stray can't be claimed, the seed still can.
+        self.assertEqual(self.final(FAKE_LIST=self.SEED, FAKE_IT_LIST_CODE="403"), ("000", "200"))
+        # Only the run listing fails: neither can.
+        self.assertEqual(self.final(FAKE_LIST=self.SEED, FAKE_LIST_CODE="403"), ("000", "000"))
+
+    def test_final_lists_the_run_by_prefix(self):
+        _, requests = self.run_probe("final", FAKE_LIST=self.SEED)
+        self.assertIn("GET http://h/own?list-type=2&prefix=check-r1/", requests)
+        self.assertIn("GET http://h/own?list-type=2&prefix=it-r1", requests)
 
     def test_final_a_missing_seed_is_reported(self):
-        self.assertEqual(self.run_probe("final", "")["seed kept in own"], "000")
+        self.assertEqual(self.final(FAKE_LIST="")[1], "000")
 
-    def test_test_phase_listed_and_content(self):
-        got = self.run_probe("test", "<Key>check-r1/1/1/1</Key>")
-        self.assertEqual((got["listed own"], got["content own"]), ("200", "200"))
-        self.assertEqual(self.run_probe("test", "<Key>check-r1/1/1/2</Key>")["listed own"], "000")
+    def test_test_phase_listed(self):
+        got, _ = self.run_probe("test", FAKE_LIST="<Key>check-r1/1/1/1</Key>")
+        self.assertEqual(got["listed own"], "200")
+        got, _ = self.run_probe("test", FAKE_LIST="<Key>check-r1/1/1/2</Key>")
+        self.assertEqual(got["listed own"], "000")
+
+    def test_test_phase_content(self):
+        self.assertEqual(self.run_probe("test")[0]["content own"], "200")
+        self.assertEqual(self.run_probe("test", FAKE_BODY="other")[0]["content own"], "000")
+        self.assertEqual(self.run_probe("test", FAKE_GET_CODE="403")[0]["content own"], "000")
+
+    def test_cleanup_deletes_everything_a_run_can_leave(self):
+        _, requests = self.run_probe("cleanup")
+        self.assertEqual(sorted(r for r in requests if r.startswith("DELETE")),
+                         sorted("DELETE http://h/own/" + k for k in
+                                ("check-r1/1/1/0", "check-r1/1/1/1", "check-r1/1/1/9", "it-r1")))
+
+    def test_it_cleanup_deletes_the_object_then_the_bucket(self):
+        _, requests = self.run_script(objectstore.IT_CLEANUP, ["r1", "http://h"])
+        self.assertEqual(requests, ["DELETE http://h/andara-test-r1/o", "DELETE http://h/andara-test-r1"])
 
 
 class Install(unittest.TestCase):
