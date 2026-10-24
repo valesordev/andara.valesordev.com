@@ -243,7 +243,9 @@ class AgainstARuler(unittest.TestCase):
         writes = {c[2] for c in Ruler.calls if c[0] in ("POST", "DELETE")}
         self.assertEqual(reads, {"read-key"})
         self.assertEqual(writes, {"write-key"})
-        self.assertIn("wrote 8 created, 0 updated, 0 deleted", r.stdout)
+        with open(os.path.join(REPO, "deploy", "helm", "andara", "files", "alerts.yaml")) as f:
+            groups = len(yaml.safe_load(f)["groups"])
+        self.assertIn("wrote %d created, 0 updated, 0 deleted" % groups, r.stdout)
 
     def test_a_sync_with_no_drift_never_uses_the_write_key(self):
         script("sync", self.env)
