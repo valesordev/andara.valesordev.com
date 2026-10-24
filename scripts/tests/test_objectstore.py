@@ -95,119 +95,185 @@ andara-snapshots-dev    andara-dev
                           ("andara-local", "ListObjects", "andara-snapshots-dev", "403", "AccessDenied")])
 
     def test_verdicts(self):
-        self.assertEqual(objectstore.verdicts("ok write b\nrefused list c\nnoise\ntried create b\n"),
-                         {"write b": "ok", "list c": "refused"})
+        self.assertEqual(objectstore.verdicts("200 write b\n403 list c\nnoise\n000 read d\nok x y\n"),
+                         {"write b": "200", "list c": "403", "read d": "000"})
+
+
+BUCKETS = ["andara-snapshots-local", "andara-snapshots-dev"]
 
 
 class GatewayFindings(unittest.TestCase):
-    def entry(self, requester, op, bucket, status, error):
+    """The access log is the verdict: every refused request must have reached the gateway and been
+    refused there, by op, requester and bucket (pre-review: rclone's HEAD-first hid the real verbs)."""
+
+    @staticmethod
+    def entry(requester, op, bucket, status, error):
         return {"owner": "x", "bucket": bucket, "requester": requester, "op": op,
                 "uri": "/" + bucket, "status": status, "error": error}
 
     def full(self):
-        return [self.entry("andara-it", "CreateBucket", "andara-snapshots-local", "409", "BucketAlreadyExists"),
-                self.entry("andara-it", "CreateBucket", "andara-snapshots-dev", "409", "BucketAlreadyExists"),
-                self.entry("andara-local", "ListObjects", "andara-snapshots-dev", "403", "AccessDenied"),
-                self.entry("andara-dev", "ListObjects", "andara-snapshots-local", "403", "AccessDenied")]
+        log = []
+        for b in BUCKETS:
+            log.append(self.entry("andara-it", "CreateBucket", b, "409", "BucketAlreadyExists"))
+            for op in objectstore.REFUSED_OPS_IT:
+                log.append(self.entry("andara-it", op, b, "403", "AccessDenied"))
+        for env, other in (("andara-local", "andara-snapshots-dev"), ("andara-dev", "andara-snapshots-local")):
+            for op in objectstore.REFUSED_OPS_ENV:
+                log.append(self.entry(env, op, other, "403", "AccessDenied"))
+        return log
+
+    def without(self, requester, op, bucket):
+        return [e for e in self.full() if (e["requester"], e["op"], e["bucket"]) != (requester, op, bucket)]
 
     def test_complete_log_has_no_findings(self):
-        self.assertEqual(objectstore.gateway_findings(self.full(), ["andara-snapshots-local", "andara-snapshots-dev"]), [])
+        self.assertEqual(objectstore.gateway_findings(self.full(), BUCKETS), [])
+
+    def test_every_cross_bucket_verb_must_reach_the_gateway(self):
+        for op in objectstore.REFUSED_OPS_ENV:
+            with self.subTest(op=op):
+                got = objectstore.gateway_findings(self.without("andara-local", op, "andara-snapshots-dev"), BUCKETS)
+                self.assertEqual(got, ["andara-local %s on andara-snapshots-dev: no 403 AccessDenied naming them in "
+                                       "the gateway's access log" % op])
+
+    def test_andara_it_delete_bucket_must_be_refused_as_access_not_as_not_empty(self):
+        log = self.without("andara-it", "DeleteBucket", "andara-snapshots-dev")
+        log.append(self.entry("andara-it", "DeleteBucket", "andara-snapshots-dev", "409", "BucketNotEmpty"))
+        self.assertEqual(objectstore.gateway_findings(log, BUCKETS),
+                         ["andara-it DeleteBucket on andara-snapshots-dev: no 403 AccessDenied naming them in "
+                          "the gateway's access log"])
 
     def test_a_create_that_succeeded_is_a_finding(self):
-        log = self.full()
-        log[0] = self.entry("andara-it", "CreateBucket", "andara-snapshots-local", "200", "-")
-        self.assertEqual(objectstore.gateway_findings(log, ["andara-snapshots-local", "andara-snapshots-dev"]),
+        log = self.without("andara-it", "CreateBucket", "andara-snapshots-local")
+        log.append(self.entry("andara-it", "CreateBucket", "andara-snapshots-local", "200", "-"))
+        self.assertEqual(objectstore.gateway_findings(log, BUCKETS),
                          ["andara-it create andara-snapshots-local: no 409 BucketAlreadyExists in the gateway's access log"])
 
-    def test_a_refusal_not_logged_against_the_user_is_a_finding(self):
-        log = self.full()[:3]
-        self.assertEqual(objectstore.gateway_findings(log, ["andara-snapshots-local", "andara-snapshots-dev"]),
-                         ["andara-dev on andara-snapshots-local: no AccessDenied naming them in the gateway's access log"])
+    def test_a_create_with_the_right_error_but_a_wrong_status_is_a_finding(self):
+        for status, error in (("200", "BucketAlreadyExists"), ("409", "BucketAlreadyOwnedByYou")):
+            with self.subTest(status=status, error=error):
+                log = self.without("andara-it", "CreateBucket", "andara-snapshots-dev")
+                log.append(self.entry("andara-it", "CreateBucket", "andara-snapshots-dev", status, error))
+                self.assertEqual(len(objectstore.gateway_findings(log, BUCKETS)), 1)
+
+    def test_another_users_refusal_does_not_stand_in(self):
+        # andara-it is refused on andara-snapshots-local in the same window; that's not andara-dev's.
+        got = objectstore.gateway_findings(self.without("andara-dev", "ListObjectsV2", "andara-snapshots-local"), BUCKETS)
+        self.assertEqual(got, ["andara-dev ListObjectsV2 on andara-snapshots-local: no 403 AccessDenied naming them in "
+                               "the gateway's access log"])
+
+    def test_an_allowed_request_is_not_a_refusal(self):
+        for status, error in (("200", "-"), ("403", "SignatureDoesNotMatch"), ("200", "AccessDenied")):
+            with self.subTest(status=status, error=error):
+                log = self.without("andara-local", "PutObject", "andara-snapshots-dev")
+                log.append(self.entry("andara-local", "PutObject", "andara-snapshots-dev", status, error))
+                self.assertEqual(len(objectstore.gateway_findings(log, BUCKETS)), 1)
 
 
 class Check(unittest.TestCase):
     """The isolation check over a fake gateway: probe outputs per (namespace, phase) and an access log."""
 
+    @staticmethod
+    def env_lines(env, phase):
+        own, other = "andara-snapshots-" + env, "andara-snapshots-" + ("dev" if env == "local" else "local")
+        return {"seed": ["200 seed " + own],
+                "test": ["200 %s %s" % (v, own) for v in objectstore.VERBS_OWN]
+                + ["403 %s %s" % (v, other) for v in objectstore.VERBS_OTHER],
+                "final": ["200 no stray in " + own, "200 seed kept in " + own, "204 cleanup " + own]}[phase]
+
+    @staticmethod
+    def it_lines():
+        lines = ["200 create andara-test-r1", "200 write andara-test-r1", "204 delete andara-test-r1",
+                 "204 delete-bucket andara-test-r1"]
+        for b in BUCKETS:
+            lines += ["409 create " + b] + ["403 %s %s" % (v, b) for v in objectstore.VERBS_IT]
+        return lines
+
     def run_check(self, override=None, log=None):
         override = override or {}
-        run = "r1"
-
-        def env_out(env, phase):
-            own, other = "andara-snapshots-" + env, "andara-snapshots-" + ("dev" if env == "local" else "local")
-            lines = {"seed": ["ok seed " + own],
-                     "test": ["ok %s %s" % (v, own) for v in objectstore.VERBS_OWN]
-                     + ["refused %s %s" % (v, other) for v in objectstore.VERBS_OTHER],
-                     "final": ["ok no stray in " + own, "ok seed kept in " + own, "ok cleanup " + own]}[phase]
-            return "\n".join(override.get((env, phase), lines))
+        calls = []
 
         def fake_run_pod(ns, image, args, env=(), env_from=(), command=None, **kw):
+            calls.append((ns, image, list(env_from), command))
             if env_from == ["andara-objectstore-it"]:
-                lines = ["ok create andara-test-r1", "ok write andara-test-r1", "ok delete-bucket andara-test-r1"]
-                for b in ("andara-snapshots-local", "andara-snapshots-dev"):
-                    lines += ["refused %s %s" % (v, b) for v in objectstore.VERBS_IT]
-                return True, "\n".join(override.get("it", lines))
-            return True, env_out(ns.replace("andara-", ""), args[1])
+                return True, "\n".join(override.get("it", self.it_lines()))
+            env_ = ns.replace("andara-", "")
+            return True, "\n".join(override.get((env_, args[1]), self.env_lines(env_, args[1])))
 
-        default_log = GatewayFindings().full()
         out = io.StringIO()
         with mock.patch.object(objectstore, "require_shared", lambda cmd: None), \
                 mock.patch.object(objectstore, "exists", lambda ns, kind, name: True), \
                 mock.patch.object(objectstore, "run_pod", fake_run_pod), \
                 mock.patch.object(objectstore, "kubectl", lambda *a, **k: mock.Mock(stdout="")), \
-                mock.patch.object(objectstore, "access_log", lambda text: default_log if log is None else log), \
+                mock.patch.object(objectstore, "access_log",
+                                  lambda text: GatewayFindings().full() if log is None else log), \
                 contextlib.redirect_stdout(out):
             try:
-                objectstore.check(run=run)
-                return None, out.getvalue()
+                objectstore.check(run="r1")
+                return None, out.getvalue(), calls
             except objectstore.Failed as e:
-                return str(e), out.getvalue()
+                return str(e), out.getvalue(), calls
 
     def test_separated_stores_pass(self):
-        err, out = self.run_check()
+        err, out, calls = self.run_check()
         self.assertIsNone(err, err)
         self.assertIn("objectstore-check: ok:", out)
+        # Every probe is curl in the namespace whose own Secret it uses.
+        self.assertEqual({(ns, tuple(ef)) for ns, _, ef, _ in calls},
+                         {("andara-local", ("andara-snapshot-s3",)), ("andara-dev", ("andara-snapshot-s3",)),
+                          ("andara-shared", ("andara-objectstore-it",))})
+        self.assertEqual({img for _, img, _, _ in calls}, {objectstore.CURL})
 
     def test_a_cross_environment_read_that_succeeds_fails(self):
-        lines = (["ok %s andara-snapshots-local" % v for v in objectstore.VERBS_OWN]
-                 + ["refused list andara-snapshots-dev", "ok read andara-snapshots-dev",
-                    "refused write andara-snapshots-dev", "refused delete andara-snapshots-dev"])
-        err, _ = self.run_check({("local", "test"): lines})
-        self.assertIn("andara-local read andara-snapshots-dev: got ok, want refused", err)
+        lines = [l.replace("403 read", "200 read") for l in self.env_lines("local", "test")]
+        err, _, _ = self.run_check({("local", "test"): lines})
+        self.assertIn("andara-local read andara-snapshots-dev: got 200, want 403", err)
+
+    def test_a_refusal_for_another_reason_is_not_a_refusal(self):
+        lines = [l.replace("403 write", "404 write") for l in self.env_lines("dev", "test")]
+        err, _, _ = self.run_check({("dev", "test"): lines})
+        self.assertIn("andara-dev write andara-snapshots-local: got 404, want 403", err)
 
     def test_an_own_verb_that_is_refused_fails(self):
-        lines = (["ok write andara-snapshots-dev", "ok list andara-snapshots-dev", "ok read andara-snapshots-dev",
-                  "refused delete andara-snapshots-dev"]
-                 + ["refused %s andara-snapshots-local" % v for v in objectstore.VERBS_OTHER])
-        err, _ = self.run_check({("dev", "test"): lines})
-        self.assertIn("andara-dev delete andara-snapshots-dev: got refused, want ok", err)
+        lines = [l.replace("200 delete", "403 delete") for l in self.env_lines("dev", "test")]
+        err, _, _ = self.run_check({("dev", "test"): lines})
+        self.assertIn("andara-dev delete andara-snapshots-dev: got 403, want 2xx", err)
 
-    def test_a_stray_write_that_landed_fails_even_if_the_client_said_refused(self):
-        err, _ = self.run_check({("dev", "final"): ["refused no stray in andara-snapshots-dev",
-                                                   "ok seed kept in andara-snapshots-dev",
-                                                   "ok cleanup andara-snapshots-dev"]})
-        self.assertIn("andara-dev no stray in andara-snapshots-dev: got refused, want ok", err)
+    def test_a_listing_without_the_written_key_fails(self):
+        lines = [l.replace("200 listed", "000 listed") for l in self.env_lines("local", "test")]
+        err, _, _ = self.run_check({("local", "test"): lines})
+        self.assertIn("andara-local listed andara-snapshots-local: got 000, want 2xx", err)
+
+    def test_a_stray_write_that_landed_fails(self):
+        lines = [l.replace("200 no stray", "000 no stray") for l in self.env_lines("dev", "final")]
+        err, _, _ = self.run_check({("dev", "final"): lines})
+        self.assertIn("andara-dev no stray in andara-snapshots-dev: got 000, want 2xx", err)
 
     def test_andara_it_deleting_an_environment_bucket_fails(self):
-        lines = ["ok create andara-test-r1", "ok write andara-test-r1", "ok delete-bucket andara-test-r1"]
-        for b in ("andara-snapshots-local", "andara-snapshots-dev"):
-            lines += ["refused %s %s" % (v, b) for v in objectstore.VERBS_IT if v != "delete-bucket"]
-            lines += ["ok delete-bucket %s" % b if b.endswith("dev") else "refused delete-bucket %s" % b]
-        err, _ = self.run_check({"it": lines})
-        self.assertIn("andara-it delete-bucket andara-snapshots-dev: got ok, want refused", err)
+        lines = [l.replace("403 delete-bucket andara-snapshots-dev", "204 delete-bucket andara-snapshots-dev")
+                 for l in self.it_lines()]
+        err, _, _ = self.run_check({"it": lines})
+        self.assertIn("andara-it delete-bucket andara-snapshots-dev: got 204, want 403", err)
+
+    def test_andara_it_taking_an_existing_name_fails(self):
+        lines = [l.replace("409 create andara-snapshots-local", "200 create andara-snapshots-local")
+                 for l in self.it_lines()]
+        err, _, _ = self.run_check({"it": lines})
+        self.assertIn("andara-it create andara-snapshots-local: got 200, want 409", err)
 
     def test_a_missing_probe_line_is_a_failure_not_a_pass(self):
-        lines = ["ok %s andara-snapshots-local" % v for v in objectstore.VERBS_OWN]  # no cross lines at all
-        err, _ = self.run_check({("local", "test"): lines})
-        self.assertIn("andara-local list andara-snapshots-dev: got missing, want refused", err)
+        lines = [l for l in self.env_lines("local", "test") if "andara-snapshots-dev" not in l]
+        err, _, _ = self.run_check({("local", "test"): lines})
+        self.assertIn("andara-local list andara-snapshots-dev: got missing, want 403", err)
 
     def test_a_failed_seed_stops_before_the_tests(self):
-        err, out = self.run_check({("local", "seed"): ["refused seed andara-snapshots-local"]})
+        err, out, _ = self.run_check({("local", "seed"): ["403 seed andara-snapshots-local"]})
         self.assertIn("seeding failed", err)
         self.assertNotIn("four verbs", out)
 
     def test_the_gateway_log_is_part_of_the_verdict(self):
-        err, _ = self.run_check(log=GatewayFindings().full()[1:])
-        self.assertIn("andara-it create andara-snapshots-local: no 409 BucketAlreadyExists", err)
+        log = GatewayFindings().without("andara-local", "DeleteObject", "andara-snapshots-dev")
+        err, _, _ = self.run_check(log=log)
+        self.assertIn("andara-local DeleteObject on andara-snapshots-dev: no 403 AccessDenied", err)
 
 
 class Install(unittest.TestCase):

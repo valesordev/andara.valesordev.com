@@ -23,17 +23,19 @@ claim's. A PVC that no running pod mounts is printed as unmeasured, and doesn't 
 mounted one that can't be measured (a crash-looping broker, which is what a full disk looks like)
 is printed with the reason, the rest are still reported, and the check fails naming it.
 
-`netcheck` proves the listener's NetworkPolicy (AC-5) with four throwaway pods running the toolbox's
-image: an `app.kubernetes.io/name: andara` pod in andara-local and one in andara-dev must reach the
-bootstrap, and one in a fresh unlabelled namespace, and a pod without that label in andara-dev,
-must not. A refusal counts only from a probe that resolved the bootstrap and reached kube-dns, so
+`netcheck` proves the shared services' NetworkPolicies (AW-INF-055 AC-5, AW-INF-058 AC-5) with four
+throwaway pods running the toolbox's image: an `app.kubernetes.io/name: andara` pod in andara-local
+and one in andara-dev must reach the Kafka bootstrap and the object store's port 9000, and one in a
+fresh unlabelled namespace, and a pod without that label in andara-dev, must reach neither. When
+the object store isn't installed, it says so and checks the listener alone. A refusal counts only from a probe that resolved the bootstrap and reached kube-dns, so
 a pod with broken DNS or egress can't pass for a policy. The pods carry no `app: andara`, so no
 Service or controller of the chart selects them.
 Everything it creates is deleted on the way out, pass or fail. Exit 1 names each case that
 didn't hold.
 
 `down` removes the Kafka `andara-log`, its toolbox and its PVCs, which are the environments'
-Command history, with no way back. It refuses with exit 2, removing nothing, unless CONFIRM
+Command history, and the shared object store with its PVC, which holds every environment's
+snapshots, and its operator-only Secrets, with no way back. It refuses with exit 2, removing nothing, unless CONFIRM
 is the namespace. The namespace itself stays: `make platform-up` creates it for Strimzi.
 Resetting or destroying andara-local or andara-dev never reaches it.
 
@@ -317,6 +319,8 @@ def netcheck(ns=None, run=subprocess.run, sleep=None, clock=None, suffix=None, i
     if run(kube.kubectl("-n", ns, "get", "service", OBJECTSTORE_SERVICE, "-o", "name"),
            capture_output=True, text=True).returncode == 0:
         targets.append(("the object store (objectstore/shared.yaml)", OBJECTSTORE_HOST % ns, OBJECTSTORE_PORT))
+    else:
+        say("netcheck: no object store in %s (`make objectstore-up`); its policy is not checked" % ns)
     suffix = suffix or os.urandom(3).hex()
     image = image or tools_image()
     for env in ("local", "dev"):

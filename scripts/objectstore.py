@@ -25,17 +25,18 @@ user's name, so the gateway's access log names the user.
 andara-snapshot-s3 (deploy/k8s/objectstore/objectstore.yaml).
 
 Every gateway operation runs in a one-shot pod labelled andara-objectstore-tools, which the
-NetworkPolicy admits: versitygw's admin CLI in andara-shared with the root Secret, rclone in the
-namespace whose Secret it uses. A pair moves only from Secret to Secret, through kubectl's stdin:
+NetworkPolicy admits: versitygw's admin CLI in andara-shared with the root Secret, rclone (install,
+empty) or curl (check) in the namespace whose Secret it uses. A pair moves only from Secret to Secret, through kubectl's stdin:
 never an argument, never printed. Every step prints `objectstore-<cmd>: <step>`.
 
-`check` proves the separation on the live gateway: each environment's credential does all four
-verbs (write, list, read, delete) on its own bucket under the snapshot key layout and is refused
-all four on the other's; andara-it creates, writes and deletes an andara-test-* bucket, is refused
-every verb on both environment buckets including deleting them, and is refused taking an existing
-name (the gateway's 409 BucketAlreadyExists, read from its access log, since rclone reports that
-as success). The other environment's bucket is listed before and after, so a write that got
-through is caught even if the client reported a refusal.
+`check` proves the separation on the live gateway with curl's SigV4 signing, one request per verb:
+each environment's credential does all four verbs (write, list, read, delete) on its own bucket
+under the snapshot key layout and is refused all four (403) on the other's; andara-it creates,
+writes and deletes an andara-test-* bucket, is refused (403) every verb on both environment
+buckets including deleting them, and is refused (409) taking an existing name. The gateway's
+access log then has to show each refused request arriving and being refused, by user, operation
+and bucket, so a refusal the client invented can't pass; and each environment lists its own
+bucket last, so a write that landed is caught.
 
 Exit codes: 0 done; 1 a step or an assertion failed, naming it; 2 usage; 3 the cluster context,
 kubectl, the namespace andara-shared or the root Secret is missing.
@@ -304,6 +305,17 @@ def install_shared(env, cmd="install"):
     ensure_bucket(env, cmd)
     state = copy_pair(SHARED_NS, user_secret(env), env_ns(env), SECRET)
     say(cmd, "Secret %s/%s %s (andara-%s's pair only)" % (env_ns(env), SECRET, state, env))
+    if state == "updated":
+        # envFrom is read at container start: a running server or projector keeps the old pair, and
+        # its snapshot writes are refused until it restarts.
+        if env == "dev":
+            how = ("run `make server-stop ENV=dev && make server-start ENV=dev` and "
+                   "`make projector-stop ENV=dev && make projector-start ENV=dev`")
+        else:
+            # server-stop/-start and projector-stop/-start take dev and prod only (AW-INF-037, AW-INF-025).
+            how = "restart them: `kubectl -n andara-local rollout restart statefulset/andara` (no local target yet)"
+        say(cmd, "the pair changed: a running server and projector in %s keep the old one until restarted; %s"
+            % (env_ns(env), how))
     rclone(env_ns(env), "lsf", "s3:" + bucket(env), endpoint=SHARED_ENDPOINT, check_bucket=False)
     say(cmd, "bucket %s reachable from %s with its own pair" % (bucket(env), env_ns(env)))
 
@@ -353,61 +365,81 @@ def empty(env):
 
 # --- check: the isolation test (AC-2, AC-3, AC-6) ----------------------------------------------
 
-# Run in an rclone pod as `sh -c PROBE probe <phase> <own bucket> <other bucket> <run>`. One line per
-# operation: "ok <label>" or "refused <label>". Keys follow the snapshot layout
-# {zone}/{tick}/{state_version}/{offset}, so AC-6's put and get are the server's shape.
-PROBE = r'''
-phase="$1"; own="$2"; other="$3"; run="$4"
-seed="check-$run/1/1/0"; mine="check-$run/1/1/1"; stray="check-$run/1/1/9"
+CURL = "curlimages/curl:8.10.1@sha256:d9b4541e214bcd85196d6e92e2753ac6d0ea699f0af5741f8c6cccbfcf00ef4b"
+
+# The probes speak S3 with curl's SigV4 signing: exactly one request per verb, as the gateway logs
+# it. (rclone checks before it acts, a HEAD before a read, a write or a delete, so a 403 on the
+# HEAD failed it without the verb ever reaching the gateway: pre-review round 1.) Each line is
+# "<http status> <label>"; 000 is a request that didn't complete. The pair comes from the pod's
+# envFrom, so it is never in this process.
+S3_FN = r'''
 echo hello > /tmp/o
-t() { label="$1"; shift; if "$@" >/tmp/out 2>&1; then echo "ok $label"; else echo "refused $label"; fi; }
+s3() { label="$1"; shift
+  CODE=$(curl -sS -o /tmp/body -w '%{http_code}' --aws-sigv4 "aws:amz:us-east-1:s3" \
+    --user "$AWS_ACCESS_KEY_ID:$AWS_SECRET_ACCESS_KEY" -H "x-amz-content-sha256: UNSIGNED-PAYLOAD" "$@") || CODE=000
+  echo "$CODE $label"; }
+has() { [ "$CODE" = 200 ] && grep -q "<Key>$1</Key>" /tmp/body; }
+'''
+
+# `sh -c PROBE probe <phase> <own bucket> <other bucket> <run> <endpoint>`. Keys follow the snapshot
+# layout {zone}/{tick}/{state_version}/{offset}, so AC-6's put and get are the server's shape.
+PROBE = S3_FN + r'''
+phase="$1"; own="$2"; other="$3"; run="$4"; H="$5"
+seed="check-$run/1/1/0"; mine="check-$run/1/1/1"; stray="check-$run/1/1/9"
 case "$phase" in
-seed)  t "seed $own" rclone copyto /tmp/o "s3:$own/$seed" ;;
-test)  t "write $own" rclone copyto /tmp/o "s3:$own/$mine"
-       t "list $own" sh -c "rclone lsf -R 's3:$own/check-$run' | grep -qx '1/1/1'"
-       t "read $own" sh -c "rclone cat 's3:$own/$mine' | grep -qx hello"
-       t "delete $own" rclone deletefile "s3:$own/$mine"
-       t "list $other" rclone lsf "s3:$other"
-       t "read $other" rclone cat "s3:$other/$seed"
-       t "write $other" rclone copyto /tmp/o "s3:$other/$stray"
-       t "delete $other" rclone deletefile "s3:$other/$seed" ;;
-final) t "no stray in $own" sh -c "! rclone lsf -R 's3:$own' | grep -q '^check-$run/1/1/9$'"
-       t "seed kept in $own" sh -c "rclone lsf -R 's3:$own' | grep -qx '$seed'"
-       t "cleanup $own" rclone purge "s3:$own/check-$run" ;;
+seed)  s3 "seed $own" -X PUT --data-binary @/tmp/o "$H/$own/$seed" ;;
+test)  s3 "write $own" -X PUT --data-binary @/tmp/o "$H/$own/$mine"
+       s3 "list $own" "$H/$own?list-type=2&prefix=check-$run/"
+       if has "$mine"; then echo "200 listed $own"; else echo "000 listed $own"; fi
+       s3 "read $own" "$H/$own/$mine"
+       if [ "$CODE" = 200 ] && grep -qx hello /tmp/body; then echo "200 content $own"; else echo "000 content $own"; fi
+       s3 "delete $own" -X DELETE "$H/$own/$mine"
+       s3 "list $other" "$H/$other?list-type=2"
+       s3 "read $other" "$H/$other/$seed"
+       s3 "write $other" -X PUT --data-binary @/tmp/o "$H/$other/$stray"
+       s3 "delete $other" -X DELETE "$H/$other/$seed" ;;
+final) s3 "list $own" "$H/$own?list-type=2"
+       # A listing that failed proves nothing: both verdicts need its 200.
+       if [ "$CODE" = 200 ] && ! grep -qE "<Key>(check-$run/1/1/9|it-$run)</Key>" /tmp/body; then
+         echo "200 no stray in $own"; else echo "000 no stray in $own"; fi
+       if has "$seed"; then echo "200 seed kept in $own"; else echo "000 seed kept in $own"; fi
+       s3 "cleanup $own" -X DELETE "$H/$own/$seed" ;;
 esac
 '''
 
-# andara-it, in andara-shared with its own pair: `sh -c IT_PROBE probe <run> <bucket>...`. Bucket
-# checks stay on, so `rclone mkdir` really sends CreateBucket.
-IT_PROBE = r'''
-run="$1"; shift; seed="check-$run/1/1/0"
-echo hello > /tmp/o
-t() { label="$1"; shift; if "$@" >/tmp/out 2>&1; then echo "ok $label"; else echo "refused $label"; fi; }
-t "create andara-test-$run" rclone mkdir "s3:andara-test-$run"
-t "write andara-test-$run" rclone copyto /tmp/o "s3:andara-test-$run/o"
-t "delete-bucket andara-test-$run" rclone purge "s3:andara-test-$run"
+# andara-it, in andara-shared with its own pair: `sh -c IT_PROBE probe <run> <endpoint> <bucket>...`.
+IT_PROBE = S3_FN + r'''
+run="$1"; H="$2"; shift 2; seed="check-$run/1/1/0"; tb="andara-test-$run"
+s3 "create $tb" -X PUT "$H/$tb"
+s3 "write $tb" -X PUT --data-binary @/tmp/o "$H/$tb/o"
+s3 "delete $tb" -X DELETE "$H/$tb/o"
+s3 "delete-bucket $tb" -X DELETE "$H/$tb"
 for b in "$@"; do
-  rclone mkdir "s3:$b" >/dev/null 2>&1; echo "tried create $b"
-  t "list $b" rclone lsf "s3:$b"
-  t "read $b" rclone cat "s3:$b/$seed"
-  t "write $b" rclone copyto /tmp/o "s3:$b/it-$run"
-  t "delete $b" rclone deletefile "s3:$b/$seed"
-  t "delete-bucket $b" rclone rmdir "s3:$b"
+  s3 "create $b" -X PUT "$H/$b"
+  s3 "list $b" "$H/$b?list-type=2"
+  s3 "read $b" "$H/$b/$seed"
+  s3 "write $b" -X PUT --data-binary @/tmp/o "$H/$b/it-$run"
+  s3 "delete $b" -X DELETE "$H/$b/$seed"
+  s3 "delete-bucket $b" -X DELETE "$H/$b"
 done
 '''
 
-VERBS_OWN = ("write", "list", "read", "delete")
+VERBS_OWN = ("write", "list", "listed", "read", "content", "delete")
 VERBS_OTHER = ("list", "read", "write", "delete")
 VERBS_IT = ("list", "read", "write", "delete", "delete-bucket")
+# The S3 operations each refused verb reaches the gateway as (its access-log names).
+REFUSED_OPS_ENV = ("ListObjectsV2", "GetObject", "PutObject", "DeleteObject")
+REFUSED_OPS_IT = REFUSED_OPS_ENV + ("DeleteBucket",)
+OK, DENIED, EXISTS = "2xx", "403", "409"
 
 
 def verdicts(logs):
-    """{label: "ok"|"refused"} from a probe's output."""
+    """{label: http status} from a probe's output."""
     out = {}
     for line in logs.splitlines():
-        word, _, label = line.strip().partition(" ")
-        if word in ("ok", "refused") and label:
-            out[label] = word
+        code, _, label = line.strip().partition(" ")
+        if len(code) == 3 and code.isdigit() and label:
+            out[label] = code
     return out
 
 
@@ -424,10 +456,14 @@ def access_log(lines):
     return out
 
 
+def _matches(code, want):
+    return code.startswith("2") if want == OK else code == want
+
+
 def expect(got, want, who):
-    """'who label: got X, want Y' for every label in want whose verdict isn't the one wanted."""
+    """'who label: got X, want Y' for every label in want whose status isn't the one wanted."""
     return ["%s %s: got %s, want %s" % (who, label, got.get(label, "missing"), w)
-            for label, w in want.items() if got.get(label, "missing") != w]
+            for label, w in want.items() if not _matches(got.get(label, "missing"), w)]
 
 
 def other_env(env):
@@ -435,27 +471,38 @@ def other_env(env):
 
 
 def env_probe(env, phase, run):
-    ns, endpoint, check_bucket = store_args(env)
-    ok, logs = run_pod(ns, RCLONE, ["probe", phase, bucket(env), bucket(other_env(env)), run],
-                       env=rclone_env(endpoint, check_bucket), env_from=[SECRET], command=["sh", "-c", PROBE])
+    ns = env_ns(env)
+    ok, logs = run_pod(ns, CURL, ["probe", phase, bucket(env), bucket(other_env(env)), run, SHARED_ENDPOINT],
+                       env_from=[SECRET], command=["sh", "-c", PROBE])
     if not ok:
         raise Failed("probe %s %s in %s did not run: %s" % (phase, env, ns, logs.strip()[-300:]))
     return verdicts(logs)
 
 
+def _refused(entries, requester, op, b):
+    return any(e["requester"] == requester and e["op"] == op and e["bucket"] == b
+               and e["status"] == "403" and e["error"] == "AccessDenied" for e in entries)
+
+
 def gateway_findings(entries, env_buckets):
-    """What the gateway's access log must show: andara-it refused 409 BucketAlreadyExists on each
-    existing name, and each environment refused AccessDenied on the other's bucket, by name."""
+    """What the gateway's access log must show, request by request, so a refusal the client invented
+    (or a request the client never sent) can't pass: each environment refused 403 AccessDenied on
+    every verb against the other's bucket; andara-it refused every verb on both environment buckets,
+    deleting them included, and 409 BucketAlreadyExists on taking either name."""
     bad = []
+    for env in SHARED_ENVS:
+        other = bucket(other_env(env))
+        for op in REFUSED_OPS_ENV:
+            if not _refused(entries, user(env), op, other):
+                bad.append("%s %s on %s: no 403 AccessDenied naming them in the gateway's access log"
+                           % (user(env), op, other))
     for b in env_buckets:
         if not any(e["requester"] == IT_USER and e["op"] == "CreateBucket" and e["uri"] == "/" + b
                    and e["status"] == "409" and e["error"] == "BucketAlreadyExists" for e in entries):
             bad.append("andara-it create %s: no 409 BucketAlreadyExists in the gateway's access log" % b)
-    for env in SHARED_ENVS:
-        other = bucket(other_env(env))
-        if not any(e["requester"] == user(env) and e["bucket"] == other and e["error"] == "AccessDenied"
-                   for e in entries):
-            bad.append("%s on %s: no AccessDenied naming them in the gateway's access log" % (user(env), other))
+        for op in REFUSED_OPS_IT:
+            if not _refused(entries, IT_USER, op, b):
+                bad.append("andara-it %s on %s: no 403 AccessDenied naming them in the gateway's access log" % (op, b))
     return bad
 
 
@@ -471,39 +518,39 @@ def check(cmd="check", run=None, now=time.time):
     since = time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime(now() - 5))
     bad = []
     for env in SHARED_ENVS:
-        bad += expect(env_probe(env, "seed", run), {"seed " + bucket(env): "ok"}, user(env))
+        bad += expect(env_probe(env, "seed", run), {"seed " + bucket(env): OK}, user(env))
     if bad:
         raise Failed("seeding failed, so nothing after it would mean anything: " + "; ".join(bad))
     for env in SHARED_ENVS:
         own, other = bucket(env), bucket(other_env(env))
-        want = {"%s %s" % (v, own): "ok" for v in VERBS_OWN}
-        want.update({"%s %s" % (v, other): "refused" for v in VERBS_OTHER})
+        want = {"%s %s" % (v, own): OK for v in VERBS_OWN}
+        want.update({"%s %s" % (v, other): DENIED for v in VERBS_OTHER})
         wrong = expect(env_probe(env, "test", run), want, user(env))
         bad += wrong
-        say(cmd, "%s: four verbs on %s, refused all four on %s: %s"
+        say(cmd, "%s: four verbs on %s, all four refused on %s: %s"
             % (user(env), own, other, "ok" if not wrong else "FAIL (%d)" % len(wrong)))
     env_buckets = [bucket(e) for e in SHARED_ENVS]
-    ok, logs = run_pod(SHARED_NS, RCLONE, ["probe", run] + env_buckets,
-                       env=rclone_env("http://%s:9000" % SERVICE), env_from=[IT_SECRET],
-                       command=["sh", "-c", IT_PROBE])
+    ok, logs = run_pod(SHARED_NS, CURL, ["probe", run, "http://%s:9000" % SERVICE] + env_buckets,
+                       env_from=[IT_SECRET], command=["sh", "-c", IT_PROBE])
     if not ok:
         raise Failed("andara-it's probe did not run: %s" % logs.strip()[-300:])
-    test_bucket = "andara-test-" + run
-    want = {"create " + test_bucket: "ok", "write " + test_bucket: "ok", "delete-bucket " + test_bucket: "ok"}
+    tb = "andara-test-" + run
+    want = {"create " + tb: OK, "write " + tb: OK, "delete " + tb: OK, "delete-bucket " + tb: OK}
     for b in env_buckets:
-        want.update({"%s %s" % (v, b): "refused" for v in VERBS_IT})
+        want["create " + b] = EXISTS
+        want.update({"%s %s" % (v, b): DENIED for v in VERBS_IT})
     wrong = expect(verdicts(logs), want, IT_USER)
     bad += wrong
-    say(cmd, "andara-it: %s created, written and deleted; every verb on %s refused: %s"
-        % (test_bucket, " and ".join(env_buckets), "ok" if not wrong else "FAIL (%d)" % len(wrong)))
+    say(cmd, "andara-it: %s created, written and deleted; both existing names 409, every verb on %s 403: %s"
+        % (tb, " and ".join(env_buckets), "ok" if not wrong else "FAIL (%d)" % len(wrong)))
     for env in SHARED_ENVS:
         bad += expect(env_probe(env, "final", run),
-                      {"no stray in " + bucket(env): "ok", "seed kept in " + bucket(env): "ok",
-                       "cleanup " + bucket(env): "ok"}, user(env))
+                      {"no stray in " + bucket(env): OK, "seed kept in " + bucket(env): OK,
+                       "cleanup " + bucket(env): OK}, user(env))
     entries = access_log(kubectl(SHARED_NS, "logs", DEPLOYMENT, "--since-time=" + since, check=False).stdout)
     wrong = gateway_findings(entries, env_buckets)
     bad += wrong
-    say(cmd, "gateway access log: 409 on both existing names, AccessDenied naming each user: %s"
+    say(cmd, "gateway access log: every refused request reached it and was refused, by user and bucket: %s"
         % ("ok" if not wrong else "FAIL (%d)" % len(wrong)))
     if bad:
         raise Failed("the object store does not separate the environments as AW-INF-058 requires: "
