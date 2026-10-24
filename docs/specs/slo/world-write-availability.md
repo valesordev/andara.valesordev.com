@@ -16,10 +16,12 @@ This SLO is about the one thing players cannot do in that state: act.
 **Definition:** the fraction of Partition-time each environment accepts Commands (`AW-INF-039` ruling 2).
 
 ```promql
-1 - avg by (namespace) (
-      avg_over_time(max_over_time(andara_ingress_degraded{cluster!="ci"}[1m])[28d:1m])
-    )
+sum by (namespace) (
+  sum_over_time((1 - max_over_time(andara_ingress_degraded{cluster!="ci"}[1m]))[28d:1m])
+) / (64 * 40320)
 ```
+
+Healthy Partition-minutes, divided by every Partition-minute in the window: 64 Partitions × 40,320 minutes.
 
 - **Per Partition, then averaged.** `andara_ingress_degraded{partition}` is 1 while that Partition refuses
   writes, with 64 series per environment. One Partition read-only for the whole window costs 1/64 of the
@@ -28,6 +30,12 @@ This SLO is about the one thing players cannot do in that state: act.
 - **`max_over_time(…[1m])` inside** (ruling 3). Under a persistent produce fault the gauge saw-tooths: 1 for
   `ingress.degraded_hold`, then 0 for up to `ingress.produce_deadline` until the next Submit rediscovers the
   fault. Taking each minute's max means the gap never reads as health.
+- **A minute with no sample counts against the budget.** While the server is down, restarting or
+  recovering it has no Ready pod, so nothing is scraped. An average over the samples that exist would read
+  that time as available and hide exactly the deploy cost this document is about. The fixed denominator
+  charges it. The cost: a namespace younger than 28 days reads low until it has a full window, which is the
+  safe direction. The measurement table notes it for a new namespace. `scripts/tests/test_slo_report.py`
+  evaluates this expression over a gap with `promtool`.
 - **`cluster!="ci"`**: CI ships to `solo7dev` as `namespace="andara-local"` on cluster `ci` (`ADR-0014`
   A3). Its short runs aren't `local`'s availability. Compose series carry no `cluster` label and still match.
 - **Per `namespace`** (ruling 4). `local` and `dev` share brokers but not budgets. Once `AW-INF-047`'s edit
@@ -122,7 +130,7 @@ broker failure.
 2. If the burn is deploy-driven rather than incident-driven, ADR-0001's sharding activation is evaluated
    at that point — with the deploy-cadence data as the argument, not tick duration.
 3. If the burn is incident-driven, the broker contract is re-verified before anything else
-   (`make broker-assert ENV=<env>`, `AW-INF-038`), because `acks=all` with `min.insync.replicas=2` should
+   (`make broker-assert ENV=<env>` once `AW-INF-038` lands; until then `make shared-check` and Strimzi's `Ready` on `kafka/andara-log`), because `acks=all` with `min.insync.replicas=2` should
    make broker-caused read-only rare.
 4. A budget exhausted only by drill minutes is recorded in the table with the windows named and doesn't
    trigger 1–3 (Brian's decision, `AW-INF-039` ruling 5). Until AW-INF-081 lands, the windows come from the

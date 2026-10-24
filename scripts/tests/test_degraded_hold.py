@@ -62,6 +62,16 @@ class Floor(unittest.TestCase):
         self.assertEqual(errors, ["keys.yaml's ingress.degraded_hold default is 150s, "
                                   "the server's DefaultIngressDegradedHold 120s"])
 
+    def test_the_ingress_pair_is_held_too(self):
+        ingress = "const MinDegradedHold = %d * time.Second\nconst DefaultDegradedHold = %d * time.Second\n"
+        self.assertEqual(degraded_hold.check(ALERTS % "30s", CONFIG % (120, 90), KEYS % "120s",
+                                             ingress % (90, 120)), [])
+        errors = degraded_hold.check(ALERTS % "30s", CONFIG % (120, 90), KEYS % "120s", ingress % (60, 120))
+        self.assertEqual(errors, [
+            "MinDegradedHold is 60s, below 2 x WorldReadOnly's for: (30s) + 30 = 90s; raise them together "
+            "(docs/specs/kafka/client-contract.md)",
+            "config's MinIngressDegradedHold (90s) and ingress's MinDegradedHold (60s) disagree"])
+
     def test_minute_durations(self):
         self.assertEqual(degraded_hold.seconds("2m"), 120)
         self.assertEqual(degraded_hold.seconds("1m30s"), 90)

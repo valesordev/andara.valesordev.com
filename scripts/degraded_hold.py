@@ -8,9 +8,11 @@ The client contract's hold floor assumes the rule's `for:`: a Partition a produc
 stays degraded for the hold, and the page must fire inside it and not resolve in the sawtooth's
 gap, so `degraded_hold >= 2 * for + 30 s` (docs/specs/kafka/client-contract.md). `check` reads
 the rule's `for:` from files/alerts.yaml, the server's DefaultIngressDegradedHold and
-MinIngressDegradedHold from server/config/config.go, and keys.yaml's default, and returns one
-line per violation. Both server values are held to the floor: the minimum is what an operator
-can set, so it must clear it too. `make helm-test` runs it.
+MinIngressDegradedHold from server/config/config.go, the ingress package's own DefaultDegradedHold
+and MinDegradedHold (server/ingress/partitions.go, which the producer enforces), and keys.yaml's
+default, and returns one line per violation. Every server value is held to the floor: a minimum is
+what an operator can set, so it must clear it too. The two packages' pairs must agree. `make
+helm-test` runs it.
 """
 import os
 import re
@@ -20,6 +22,7 @@ import yaml
 REPO = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 ALERTS = os.path.join(REPO, "deploy", "helm", "andara", "files", "alerts.yaml")
 CONFIG_GO = os.path.join(REPO, "server", "config", "config.go")
+INGRESS_GO = os.path.join(REPO, "server", "ingress", "partitions.go")
 KEYS = os.path.join(REPO, "deploy", "helm", "andara", "keys.yaml")
 RULE = "WorldReadOnly"
 KEY = "ingress.degraded_hold"
@@ -56,15 +59,24 @@ def keys_default(keys_text, key=KEY):
     raise ValueError("no %s in keys.yaml" % key)
 
 
-def check(alerts_text, config_text, keys_text):
+def check(alerts_text, config_text, keys_text, ingress_text=None):
     f = rule_for(alerts_text)
     floor = 2 * f + 30
     errors = []
-    for const in ("DefaultIngressDegradedHold", "MinIngressDegradedHold"):
-        v = go_seconds(config_text, const)
+    consts = [(config_text, c) for c in ("DefaultIngressDegradedHold", "MinIngressDegradedHold")]
+    if ingress_text is not None:
+        consts += [(ingress_text, c) for c in ("DefaultDegradedHold", "MinDegradedHold")]
+    for text, const in consts:
+        v = go_seconds(text, const)
         if v < floor:
             errors.append("%s is %ds, below 2 x %s's for: (%ds) + 30 = %ds; raise them together "
                           "(docs/specs/kafka/client-contract.md)" % (const, v, RULE, f, floor))
+    if ingress_text is not None:
+        for cfg, ing in (("DefaultIngressDegradedHold", "DefaultDegradedHold"),
+                         ("MinIngressDegradedHold", "MinDegradedHold")):
+            a, b = go_seconds(config_text, cfg), go_seconds(ingress_text, ing)
+            if a != b:
+                errors.append("config's %s (%ds) and ingress's %s (%ds) disagree" % (cfg, a, ing, b))
     default = go_seconds(config_text, "DefaultIngressDegradedHold")
     kd = keys_default(keys_text)
     if kd != default:
@@ -74,5 +86,5 @@ def check(alerts_text, config_text, keys_text):
 
 
 def check_repo():
-    with open(ALERTS) as a, open(CONFIG_GO) as c, open(KEYS) as k:
-        return check(a.read(), c.read(), k.read())
+    with open(ALERTS) as a, open(CONFIG_GO) as c, open(KEYS) as k, open(INGRESS_GO) as i:
+        return check(a.read(), c.read(), k.read(), i.read())

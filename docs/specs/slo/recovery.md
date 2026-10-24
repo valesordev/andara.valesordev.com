@@ -101,7 +101,8 @@ the recovery path, not a cache in front of it:
   Records its replay needs have aged out. That is a data-loss incident, and no restart fixes it.
 
 `local` is outside this invariant (broker-contract.md, decided 2026-10-21): its events are kept 7 days, and a
-`local` World past that is reset with `make world-reset ENV=local`, not recovered.
+`local` World past that is reset with `make world-reset ENV=local CONFIRM=andara-local BROKER=cluster`, not
+recovered.
 
 Losing the snapshot store therefore costs more than RTO. `SnapshotStale` is a ticket because one missed
 round costs time; a store that is gone is the escalation in `server-unavailable.md`.

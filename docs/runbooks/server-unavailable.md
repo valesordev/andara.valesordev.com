@@ -55,7 +55,7 @@ The fastest safe action depends on what `describe` says:
    from the log's start, which is correct and slow (ADR-0002); set `recovery.require_snapshot=false` for one
    boot if prod has it `true`. A World older than its events retention with no complete round left in the
    object store or on the PVC **cannot be recovered** from the log: escalate before changing anything
-   (`recovery.md`). On `local` that World is reset instead (`make world-reset ENV=local`).
+   (`recovery.md`). On `local` that World is reset instead (`make world-reset ENV=local CONFIRM=andara-local BROKER=cluster`).
 4. `kubectl --context kind-andara -n andara-<env> get events --sort-by=.lastTimestamp | tail -20`.
 5. Image: `kubectl --context kind-andara -n andara-<env> get pod andara-0 -o jsonpath='{.spec.containers[0].image}'` — does the
    tag exist in the registry? A `make deploy` with an unpublished tag lands here.

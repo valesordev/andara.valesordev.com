@@ -17,7 +17,7 @@ sum by (namespace) (andara_ingress_degraded{namespace="andara-<env>"})
 
 | Count | What it is | First mitigation |
 |---|---|---|
-| **64** (every Partition) | **The log is unreachable** from this server: brokers down, the bootstrap Service unreachable, or two of three brokers gone. Every player in the environment is read-only. | Bring the brokers back (*How to confirm* and the mitigation table below). Then `make broker-assert ENV=<env>` once they're up, to confirm the contract still holds. Don't restart the server. |
+| **64** (every Partition) | **The log is unreachable** from this server: brokers down, the bootstrap Service unreachable, or two of three brokers gone. Every player in the environment is read-only. | Bring the brokers back (*How to confirm* and the mitigation table below). Once they're up, confirm the contract still holds: `make broker-assert ENV=<env>` once `AW-INF-038` lands, and until then `make shared-check` and Strimzi's `Ready` on `kafka/andara-log`. Don't restart the server. |
 | **a few** (1–63) | **A Partition fault.** The rest of the log is fine, and only players in those Partitions' Zones can't act. Usually an under-replicated Partition whose ISR fell below `min.insync.replicas`, or a leader election that didn't settle. | Find the Partitions (`andara_ingress_degraded == 1` by `partition`), then their ISR: `kafka-topics.sh --describe --under-replicated-partitions` from a broker (below). Bring the lagging replica's broker back, or wait out the election. A `NOT_ENOUGH_REPLICAS` produce error clears after `ingress.degraded_hold` (120 s) and a healthy probe. |
 
 If `local` and `dev` page together, it's the shared brokers (`andara-shared`). Treat it as the 64 case

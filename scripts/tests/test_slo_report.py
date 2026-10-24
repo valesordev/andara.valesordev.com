@@ -9,6 +9,7 @@ import io
 import os
 import re
 import shutil
+import subprocess
 import sys
 import tempfile
 import unittest
@@ -158,6 +159,55 @@ class Documents(unittest.TestCase):
     def test_not_on_the_gcx_exception_list(self):
         with open(os.path.join(slo_report.REPO, "scripts", "gcx_only_exceptions.txt")) as f:
             self.assertNotIn("scripts/slo_report.py", f.read())
+
+
+PROMTOOL = os.path.join(slo_report.REPO, "bin", "promtool")
+
+
+def scaled(expr):
+    """The 28-day expression over a 20-minute window and one Partition, so promtool can evaluate it."""
+    return expr.replace("[28d:1m]", "[20m:1m]").replace("(64 * 40320)", "(1 * 20)")
+
+
+@unittest.skipUnless(os.access(PROMTOOL, os.X_OK), "no bin/promtool; run `make bootstrap`")
+class WriteSLISemantics(unittest.TestCase):
+    """The write SLI counts a minute with no sample as unavailable: a server that is down or restarting
+    (no Ready pod, so no scrape) spends the budget, as the document's deploy tension says it must."""
+
+    def evaluate(self, values, want):
+        expr = scaled(slo_report.DOCS[0]["expr"])
+        d = tempfile.mkdtemp()
+        self.addCleanup(shutil.rmtree, d)
+        with open(os.path.join(d, "rules.yaml"), "w") as f:
+            f.write("groups: []\n")
+        test = {
+            "rule_files": ["rules.yaml"],
+            "evaluation_interval": "1m",
+            "tests": [{
+                "interval": "1m",
+                "input_series": [{"series": 'andara_ingress_degraded{namespace="andara-dev",partition="0"}',
+                                  "values": values}],
+                "promql_expr_test": [{"expr": expr, "eval_time": "20m",
+                                      "exp_samples": [{"labels": '{namespace="andara-dev"}', "value": want}]}],
+            }],
+        }
+        import yaml
+        with open(os.path.join(d, "t.yaml"), "w") as f:
+            yaml.safe_dump(test, f)
+        p = subprocess.run([PROMTOOL, "test", "rules", "t.yaml"], cwd=d, capture_output=True, text=True)
+        self.assertEqual(p.returncode, 0, p.stdout + p.stderr)
+
+    def test_healthy_throughout_is_one(self):
+        self.evaluate("0x22", 1)
+
+    def test_minutes_with_no_sample_count_against_it(self):
+        # Samples at minutes 0-9 and 20, none at 10-19. Step 10's window still holds minute 9's sample, so
+        # the gap costs nine of the twenty steps (0.55), not ten; the old avg-of-what-exists form read 1.0.
+        self.evaluate("0x9 _x9 0x2", 0.55)
+
+    def test_a_degraded_minute_costs_a_minute(self):
+        # Degraded samples at minutes 1, 3 and 5: three of the twenty steps.
+        self.evaluate("0 1 0 1 0 1 0x16", 0.85)
 
 
 if __name__ == "__main__":

@@ -103,7 +103,7 @@ _Includes drill minutes; drill exclusion not yet applied (AW-INF-081)._
 ## Error budget exhaustion policy
 
 1. Deploys pause except for fixes to whatever exhausted the budget.
-2. The broker contract is re-verified first (`make broker-assert ENV=<env>`, `AW-INF-038`): a fetch-side
+2. The broker contract is re-verified first (`make broker-assert ENV=<env>` once `AW-INF-038` lands; until then `make shared-check` and Strimzi's `Ready` on `kafka/andara-log`): a fetch-side
    regression after a broker setting drifted is the cheapest cause to rule out.
 3. If the lag is load, not broker, meaning the loop applies at `sim.max_per_tick` every tick and still falls
    behind, that is ADR-0001's sharding signal, with this measurement as the argument.

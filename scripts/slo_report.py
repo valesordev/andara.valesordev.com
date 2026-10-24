@@ -40,8 +40,10 @@ DOCS = [
     {
         "file": "world-write-availability.md",
         "target": 0.995,  # the pre-launch target in force; the document's table says which
-        "expr": '1 - avg by (namespace) ('
-                'avg_over_time(max_over_time(andara_ingress_degraded{cluster!="ci"}[1m])[28d:1m]))',
+        # Healthy Partition-minutes over a fixed denominator: a minute with no sample (the server down or
+        # restarting, so no Ready pod to scrape) counts against the budget, as a deploy must.
+        "expr": 'sum by (namespace) (sum_over_time('
+                '(1 - max_over_time(andara_ingress_degraded{cluster!="ci"}[1m]))[28d:1m])) / (64 * 40320)',
     },
     {
         "file": "kafka-availability.md",
