@@ -23,6 +23,8 @@ Commands:
   role owners <path>…          print each path's owner: role names, `generated`, or `unowned`
   role reviewed                record HEAD as reviewed by /pre-pr
   role reviewed --show         report whether HEAD has been reviewed
+  role app-token <root>        (the session's git credential helper) the repo's GitHub App token
+  role gh-exec <root> [args…]  (the session's `gh`) gh as the repo's GitHub App in a role session
   role hook-session-start      (stdin: SessionStart hook JSON)
   role hook-pre-tool-use       (stdin: PreToolUse hook JSON; file tools)
   role hook-pre-bash           (stdin: PreToolUse hook JSON; Bash)
@@ -38,13 +40,25 @@ Every PR a role opens carries the label `role:<role>`; hook-pre-bash denies a
 `gh pr create` without it.
 
 hook-pre-bash also denies, in every mode, `git add -A`/`.`, `git commit -a`,
-`pkill -f`, and restore/checkout/reset --hard/switch -f over uncommitted changes.
+`pkill -f`, restore/checkout/reset --hard/switch -f over uncommitted changes,
+rm/mv/git clean/`>` on untracked local env files (.envrc, .env, .env.*, .netrc,
+.tool-versions), and the check command (`role check-cmd`, `make check`, `make test`)
+piped into a reader (tail, head, grep, …) without `set -o pipefail` or PIPESTATUS.
 
 Story guard: in a repo with `project:` in _repo.md, hook-pre-bash denies raw
 `gh issue edit/close/reopen/delete/transfer` on story issues, non-read `gh project`
 commands, and `gh api` writes to Projects, story issues, sub-issues, or
 dependencies, and GraphQL mutations. Stories change through bin/story, which
 applies the role's `transitions:` and `story_edits:`. It asks under /role none.
+
+GitHub identity: where a lane app is set up (bin/ghapp) and _repo.md names `github_repo`,
+SessionStart puts shims for `gh`, `git` and git's credential helper first on the session's PATH
+(<git-common-dir>/claude-roles/.identity/bin). In a role session (not `none`, not a lane), they
+push and call gh for that repo as the app, so the owner can approve its PRs; `gh pr create` asks
+the owner to review. Reads of another repo go as the owner; writes to one are refused.
+hook-pre-bash denies a push of a workflow change (the app has no Workflows permission) and a
+command that sets VALESOR_IDENTITY. The owner starts a session with VALESOR_IDENTITY=person
+to act as themselves.
 
 Review gate: in a role session, hook-pre-bash denies `git push` unless every
 commit it sends was recorded by `role reviewed` (the last step of /pre-pr) or is
@@ -55,12 +69,15 @@ asks instead. Markers live in <git-common-dir>/claude-roles/.reviewed/<sha>.
 from __future__ import annotations
 
 import fnmatch
+import glob
 import json
 import os
 import re
 import shlex
+import shutil
 import subprocess
 import sys
+import time
 from pathlib import Path, PurePosixPath
 
 UNRESTRICTED = "none"
@@ -86,7 +103,15 @@ GIT_BUILTINS = set("""add am apply archive bisect blame branch bundle cat-file c
 PUSH_OPTS_WITH_VALUE = {"-o", "--push-option", "--repo", "--receive-pack", "--exec"}
 GH_OPTS_WITH_VALUE = {"-R", "--repo"}
 # Git and shell guards: denied in every mode, because they lose work or hit other sessions.
-GUARDED_GIT = {"add", "commit", "restore", "checkout", "reset", "switch"}
+GUARDED_GIT = {"add", "commit", "restore", "checkout", "reset", "switch", "clean"}
+GUARD_KINDS = {"pkill", "rm", "mv", "redirect", "piped check"}
+# Machine-local config, often secrets: git can't restore them when they're untracked.
+ENV_FILES = {".envrc", ".env", ".netrc", ".tool-versions"}
+ENV_WALK_PRUNE = {".git", "node_modules"}
+ENV_WALK_MAX = 20000   # entries looked at under one directory before giving up (allow)
+REMOVERS = {"rm", "unlink", "mv"}
+PIPE_READERS = {"tail", "head", "grep", "egrep", "fgrep", "rg", "less", "more", "tee"}
+MV_OPTS_WITH_VALUE = {"-t", "--target-directory", "-S", "--suffix"}
 ADD_OPTS_WITH_VALUE = {"--chmod", "--pathspec-from-file"}
 ADD_EVERYTHING = {".", "./", ":/", ":", "*"}
 COMMIT_OPTS_WITH_VALUE = {"-m", "--message", "-F", "--file", "-C", "--reuse-message", "-c",
@@ -107,6 +132,7 @@ GUARD_LONGS = {
     "git reset": ["--hard", "--soft", "--mixed", "--merge", "--keep"],
     "git switch": ["--discard-changes", "--force", "--create", "--force-create", "--orphan",
                    "--conflict"],
+    "git clean": ["--force", "--interactive", "--dry-run", "--quiet", "--exclude"],
     "pkill": ["--full", "--pgroup", "--group", "--parent", "--session", "--terminal", "--euid",
               "--uid", "--pidfile", "--signal", "--ns", "--nslist"],
 }
@@ -135,6 +161,11 @@ HEREDOC_RE = re.compile(
 VAR_RE = re.compile(r"^([A-Za-z_][A-Za-z0-9_]*)=(.*)$", re.S)
 SESSION_RE = re.compile(r"^[A-Za-z0-9_.-]{1,128}$")
 REVIEWED = ".reviewed"
+APPROVALS = ("Approvals: when the owner approves or decides something in chat, record it in the doc "
+             "that owns it before acting on it. If this role can't write that doc, say so at once, "
+             "name the role that owns it (`role owners <path>`), and offer to hand off with "
+             "`story comment <ID> --to <role>`, quoting the decision. Don't advance work that rests "
+             "on an approval that exists only in chat.")
 DEFAULT_CHECK = "make check"
 
 
@@ -506,6 +537,7 @@ def charter(roles: Roles, role: str) -> str:
                 *([f"Story moves (.claude/bin/story): {', '.join(meta['transitions'])}"]
                   if meta.get("transitions") else []),
                 "Repo edits are blocked or require the owner's approval.",
+                APPROVALS,
                 "",
                 body.rstrip(),
             ]
@@ -525,6 +557,7 @@ def charter(roles: Roles, role: str) -> str:
             f"Review gate: run /pre-pr before any git push or gh pr create "
             f"(check command: {check_command(roles)}).",
             "Edits outside the writable paths are blocked or require the owner's approval.",
+            APPROVALS,
             "",
             body.rstrip(),
         ]
@@ -596,6 +629,9 @@ def cmd_set(args: list[str]) -> int:
     if prev and prev != role:
         print(f"(role changed: {prev} -> {role})\n")
     print(charter(roles, role))
+    note = identity_note(root, roles, role, args[1])
+    if note:
+        print("\n" + note)
     return 0
 
 
@@ -684,6 +720,281 @@ def cmd_reviewed(args: list[str]) -> int:
     return 0
 
 
+# ---------------------------------------------------------------------- GitHub identity
+
+IDENTITY = ".identity"   # <state dir>/.identity: the session shims, their config, the app's token
+PERSON = "person"        # VALESOR_IDENTITY=person (the owner's, at launch): act as the owner
+GH_AS_YOU = {"auth", "config", "alias", "extension", "completion", "help", "version", "--version",
+             "-h", "--help", "status", "codespace", "gist", "ssh-key", "gpg-key"}
+GH_READ_VERBS = {"view", "list", "diff", "checks", "status", "download", "watch", "clone", "checkout",
+                 "check", "browse"}
+GH_URL_RE = re.compile(r"github\.com[/:]([^/\s]+)/([^/\s#?]+?)(?:\.git)?(?:[/#?]|$)")
+IDENTITY_ENV_RE = re.compile(r"\bVALESOR_IDENTITY\s*=|"
+                             r"\b(?:unset|export|declare|typeset|readonly|env)\b[^;&|\n]*\bVALESOR_IDENTITY\b")
+
+
+def _ghapp():
+    """bin/ghapp, loaded only by the commands that act as the app (a lane's copy of this hook has none)."""
+    mod = sys.modules.get("valesor_ghapp")
+    if mod is None:
+        import importlib.machinery
+        import importlib.util
+        path = Path(__file__).resolve().with_name("ghapp")
+        loader = importlib.machinery.SourceFileLoader("valesor_ghapp", str(path))
+        mod = importlib.util.module_from_spec(importlib.util.spec_from_loader("valesor_ghapp", loader))
+        sys.modules["valesor_ghapp"] = mod
+        sys.dont_write_bytecode = True    # never a __pycache__ in a target's .claude/bin
+        loader.exec_module(mod)
+    return mod
+
+
+def identity_dir(root: Path) -> Path:
+    return state_dir(root) / IDENTITY
+
+
+def _remote_session() -> bool:
+    return os.environ.get("CLAUDE_CODE_REMOTE", "").lower() in ("1", "true", "yes")
+
+
+def identity_active(root: Path, sid: str) -> bool:
+    """Whether a session's pushes and gh calls go out as the repo's GitHub App: a role session (not
+    `none`, not a lane) in a repo where SessionStart installed the shims, unless the owner started
+    it with VALESOR_IDENTITY=person."""
+    if os.environ.get("COORDINATOR_LANE") or os.environ.get("VALESOR_IDENTITY") == PERSON:
+        return False
+    role = hook_role(root, sid)
+    return bool(role) and role != UNRESTRICTED and (identity_dir(root) / "config.json").is_file()
+
+
+def _real_command(name: str, skip: Path) -> str | None:
+    dirs = [d for d in os.environ.get("PATH", "").split(os.pathsep) if d and Path(d) != skip]
+    found = shutil.which(name, path=os.pathsep.join(dirs))
+    return os.path.abspath(found) if found else None   # not resolved: a version manager's shim reads argv[0]
+
+
+def _write_private(f: Path, text: str, mode: int = 0o600) -> None:
+    tmp = f.with_name(f.name + ".new")
+    fd = os.open(tmp, os.O_WRONLY | os.O_CREAT | os.O_TRUNC, mode)
+    with os.fdopen(fd, "w") as out:
+        out.write(text)
+    os.chmod(tmp, mode)
+    os.replace(tmp, f)
+
+
+def install_identity(root: Path, roles: Roles) -> Path | None:
+    """Write the session shims (`gh`, `git`, git's credential helper) for SessionStart to put first on
+    the session's PATH, and return their directory. They decide on each call, so a session that
+    sets a role later gets the app then. None when there's no app to act as."""
+    if os.environ.get("COORDINATOR_LANE") or _remote_session() or os.environ.get("VALESOR_IDENTITY") == PERSON:
+        return None
+    repo = str(roles.repo.get("github_repo") or "")
+    if repo.count("/") != 1 or not _ghapp().config_path().is_file():
+        return None
+    d = identity_dir(root)
+    b = d / "bin"
+    git, gh = _real_command("git", b), _real_command("gh", b)
+    if not (git and gh):
+        return None
+    b.mkdir(parents=True, exist_ok=True)
+    d.chmod(0o700)
+    common = _git(root, "rev-parse", "--path-format=absolute", "--git-common-dir")
+    q = shlex.quote
+    me, py = q(str(Path(__file__).resolve())), q(sys.executable)
+    _write_private(d / "config.json", json.dumps({"repo": repo, "git": git, "gh": gh}) + "\n")
+    _write_private(d / "gitconfig", _ghapp().git_config_text(_ghapp().git_auth(b / "git-credential-app")))
+    shims = {
+        "git": (
+            "#!/bin/sh\n"
+            "# bin/role: a role session's git reaches its own repo's GitHub remote as the repo's app\n"
+            f"real={q(git)}\n"
+            'case "$CLAUDE_SESSION_ID" in ""|*[!A-Za-z0-9_.-]*) exec "$real" "$@" ;; esac\n'
+            f"role={q(str(state_dir(root)))}/$CLAUDE_SESSION_ID\n"
+            'if [ -z "$COORDINATOR_LANE" ] && [ "$VALESOR_IDENTITY" != person ] && [ -f "$role" ] \\\n'
+            '    && [ "$(cat "$role")" != none ] \\\n'
+            f'    && [ "$("$real" rev-parse --path-format=absolute --git-common-dir 2>/dev/null)" = {q(common)} ]; then\n'
+            f"    GIT_CONFIG_COUNT=1 GIT_CONFIG_KEY_0=include.path GIT_CONFIG_VALUE_0={q(str(d / 'gitconfig'))}\n"
+            "    export GIT_CONFIG_COUNT GIT_CONFIG_KEY_0 GIT_CONFIG_VALUE_0\n"
+            "fi\n"
+            'exec "$real" "$@"\n'),
+        "git-credential-app": (
+            "#!/bin/sh\n"
+            "cat >/dev/null\n"
+            '[ "$1" = get ] || exit 0\n'
+            f"tok=$({py} {me} app-token {q(str(main_root(root)))}) || exit 1\n"
+            'printf "username=x-access-token\\npassword=%s\\n" "$tok"\n'),
+        "gh": f'#!/bin/sh\nexec {py} {me} gh-exec {q(str(main_root(root)))} "$@"\n',
+    }
+    for name, text in shims.items():
+        _write_private(b / name, text, 0o700)
+    return b
+
+
+def app_token(root: Path) -> str:
+    """An installation token for the repo, from the cache while it has RENEW_BEFORE left."""
+    ghapp = _ghapp()
+    d = identity_dir(root)
+    try:
+        cached = json.loads((d / "token.json").read_text())
+        if float(cached["expires"]) - time.time() > ghapp.RENEW_BEFORE:
+            return str(cached["token"])
+    except (OSError, ValueError, KeyError, TypeError):
+        pass
+    repo = json.loads((d / "config.json").read_text())["repo"]
+    app = ghapp.lane_app()
+    if app is None:
+        raise ghapp.AppError(f"no app is set up ({ghapp.config_path()} is missing)")
+    inst = ghapp.installation(app, repo)
+    perms = inst.get("permissions") or {}
+    over = ghapp.over_permissions(perms)
+    if over:
+        raise ghapp.AppError(f"the app holds more than it may ({', '.join(over)}): remove those permissions")
+    tok = ghapp.AppToken(app, int(inst["id"]), repo, perms, f"{inst.get('app_slug') or 'the app'}[bot]")
+    tok.mint()
+    _write_private(d / "token.json", json.dumps({"token": tok.token, "expires": tok.expires, "app": tok.name}))
+    return tok.token
+
+
+def cmd_app_token(args: list[str]) -> int:
+    """For the session's credential helper: print the token. Not for agents."""
+    if len(args) != 1:
+        print("usage: role app-token <repo root>", file=sys.stderr)
+        return 2
+    try:
+        print(app_token(Path(args[0])))
+    except Exception as e:  # noqa: BLE001  (git shows this on a failed push)
+        print(f"role: couldn't act as the repo's GitHub App: {e}. To act as the owner instead, the owner "
+              f"starts the session with VALESOR_IDENTITY=person.", file=sys.stderr)
+        return 1
+    return 0
+
+
+def _repo_name(text: str) -> str | None:
+    """owner/repo from `owner/repo`, `host/owner/repo`, or a GitHub URL."""
+    m = GH_URL_RE.search(text)
+    if m:
+        return f"{m.group(1)}/{m.group(2)}"
+    parts = text.strip("/").split("/")
+    return "/".join(parts[-2:]) if len(parts) in (2, 3) and all(parts) else None
+
+
+def gh_target(argv: list[str], home: str, cwd: Path, root: Path) -> str:
+    """The repository a gh command acts on."""
+    for i, a in enumerate(argv):
+        if a in ("-R", "--repo") and i + 1 < len(argv):
+            return _repo_name(argv[i + 1]) or argv[i + 1]
+        if a.startswith("--repo="):
+            return _repo_name(a.split("=", 1)[1]) or a
+    if os.environ.get("GH_REPO"):
+        return _repo_name(os.environ["GH_REPO"]) or os.environ["GH_REPO"]
+    if argv and argv[0] == "api":
+        _, endpoint = _api_method_endpoint(argv[1:])
+        parts = endpoint.split("/")
+        if parts[0] == "repos" and len(parts) >= 3 and "{" not in parts[1] + parts[2]:
+            return f"{parts[1]}/{parts[2]}"
+    else:
+        for a in argv[1:]:
+            if "github.com" in a and (name := _repo_name(a)):
+                return name
+        if argv[:1] == ["repo"] and len(argv) > 2 and not argv[2].startswith("-") and "/" in argv[2]:
+            return _repo_name(argv[2]) or argv[2]
+    here = repo_root(cwd)
+    if here is None or _common(here).resolve() == _common(root).resolve():
+        return home
+    return _origin_repo(here) or "a repository other than this session's"
+
+
+def gh_reads(argv: list[str]) -> bool:
+    if not argv:
+        return True
+    if argv[0] == "api":
+        method, endpoint = _api_method_endpoint(argv[1:])
+        if method == "GET":
+            return True
+        return endpoint == "graphql" and _gh_api_mutation(argv[1:], Path.cwd()) is None
+    return argv[0] in ("search", "browse") or (len(argv) > 1 and argv[1] in GH_READ_VERBS)
+
+
+def _owner_login(root: Path, real: str) -> str | None:
+    """Who the app asks to review: the login your own gh uses (cached)."""
+    f = identity_dir(root) / "owner"
+    if f.is_file() and (login := f.read_text().strip()):
+        return login
+    r = subprocess.run([real, "api", "user", "--jq", ".login"], capture_output=True, text=True)
+    login = r.stdout.strip() if r.returncode == 0 else ""
+    if login:
+        _write_private(f, login + "\n")
+    return login or None
+
+
+def cmd_gh_exec(args: list[str]) -> int:
+    """The session's `gh`: as the repo's app in a role session, otherwise yours unchanged. Reads of
+    another repository go as you; writes to one are refused, since the app's token is this repo's."""
+    if not args:
+        print("usage: role gh-exec <repo root> [gh args…]", file=sys.stderr)
+        return 2
+    root, argv = Path(args[0]), args[1:]
+    cfg = json.loads((identity_dir(root) / "config.json").read_text())
+    real, home = cfg["gh"], cfg["repo"]
+    if not identity_active(root, os.environ.get("CLAUDE_SESSION_ID", "")) or not argv or argv[0] in GH_AS_YOU:
+        os.execv(real, [real, *argv])
+    target = gh_target(argv, home, Path.cwd(), root)
+    if target.lower() != home.lower():
+        if gh_reads(argv):
+            os.execv(real, [real, *argv])
+        print(f"role: this session works in {home} and acts there as the repo's GitHub App; it doesn't "
+              f"write to {target}. Ask the owner to open a role session in a checkout of {target} for that.",
+              file=sys.stderr)
+        return 1
+    try:
+        token = app_token(root)
+    except Exception as e:  # noqa: BLE001
+        print(f"role: couldn't act as the repo's GitHub App: {e}. To act as the owner instead, the owner "
+              f"starts the session with VALESOR_IDENTITY=person.", file=sys.stderr)
+        return 1
+    if argv[:2] in (["pr", "create"], ["pr", "new"]) and not any(
+            a in ("-r", "--reviewer") or a.startswith("--reviewer=") for a in argv):
+        login = _owner_login(root, real)   # the app opens the PR, so it asks you to review
+        if login:
+            argv = [*argv, "--reviewer", login]
+    env = {k: v for k, v in os.environ.items() if k not in ("GH_TOKEN", "GITHUB_TOKEN")}
+    os.execve(real, [real, *argv], {**env, "GH_TOKEN": token})
+    return 1
+
+
+def identity_note(root: Path, roles: Roles, role: str, sid: str) -> str:
+    """What the charter says about whose name the session pushes under."""
+    repo = roles.repo.get("github_repo")
+    if role == UNRESTRICTED or not repo or os.environ.get("COORDINATOR_LANE") or _remote_session():
+        return ""
+    if os.environ.get("VALESOR_IDENTITY") == PERSON:
+        return "GitHub: the owner started this session as themselves, so pushes and PRs go out as the owner."
+    if not identity_active(root, sid):
+        return ("GitHub: no lane app is set up on this machine, so pushes and PRs go out as the owner, "
+                "who then can't approve them.")
+    return (f"GitHub: this session's `git push` and `gh` calls for {repo} go out as the repo's GitHub App, "
+            "so the owner can approve its pull requests; commits stay the owner's, signed with their key. "
+            "The app can't push changes under .github/workflows or .github/actions: when a branch has one, "
+            "stop and ask the owner to push it from their own terminal. It writes to no other repository: "
+            "for that, the owner opens a role session in that repo's checkout.")
+
+
+def identity_push_problem(root: Path, g: Gated) -> str | None:
+    """A push the app would be refused: a branch that changes a workflow (the app has no Workflows
+    permission)."""
+    _, pos = _split_opts(g.args, PUSH_OPTS_WITH_VALUE)
+    specs = [s for s in pos[1:] if not s.startswith(":")] or ["HEAD"]
+    for spec in specs:
+        src = spec.lstrip("+").partition(":")[0]
+        sha = head_sha(g.where) if src == "HEAD" else _commit(g.where, src.removeprefix("refs/heads/"))
+        changed = _changed_since_main(g.where, sha) if sha else []
+        if any(p.startswith(LANE_WORKFLOW_DIRS) for p in changed or []):
+            return (f"git push: {src} changes a GitHub workflow (.github/workflows or .github/actions), and "
+                    "this session pushes as the repo's GitHub App, which has no Workflows permission. Stop and "
+                    "ask the owner to push the branch from their own terminal; that push is theirs, so the PR "
+                    "then merges with --admin.")
+    return None
+
+
 # ---------------------------------------------------------------------- hooks
 
 def _hook_input() -> dict:
@@ -709,6 +1020,14 @@ def hook_session_start(_: list[str]) -> int:
     roles = Roles(root)
     if not roles.roles:
         return 0
+    if env_file:
+        try:   # the shims decide on each call, so this holds for a role set later in the session
+            shims = install_identity(root, roles)
+            if shims:
+                with open(env_file, "a") as f:
+                    f.write(f"export PATH={shlex.quote(str(shims))}:\"$PATH\"\n")
+        except Exception:  # noqa: BLE001  (the session then acts as the owner, as it would without an app)
+            pass
     role = get_role(root, sid) if SESSION_RE.match(sid) else None
     if role:
         # resume / compact / clear with a role already set: re-inject the charter.
@@ -718,6 +1037,9 @@ def hook_session_start(_: list[str]) -> int:
             print(f"This session works in its own worktree: run EnterWorktree with path {wt} before "
                   f"anything else, so the owner's checkout stays theirs.\n")
         print(charter(roles, role))
+        note = identity_note(root, roles, role, sid)
+        if note:
+            print("\n" + note)
     else:
         print(
             "No role is set for this session. Before doing any work, ask the owner which role "
@@ -1011,28 +1333,39 @@ def _tokens(text: str) -> list[str]:
 OPEN, CLOSE = ["\0("], ["\0)"]  # subshell boundaries, kept as sentinel segments
 
 
+class Seg(list):
+    """A simple command's words, with its redirections (operator, target) and whether its
+    output pipes into the next segment."""
+    def __init__(self):
+        super().__init__()
+        self.redirs: list[tuple[str, str]] = []
+        self.piped = False
+
+
 def _segments(tokens: list[str]) -> list[list[str]]:
-    """Simple commands, with redirections (and their targets) removed."""
+    """Simple commands, with redirections (and their targets) removed into Seg.redirs."""
     segs: list[list[str]] = []
-    cur: list[str] = []
-    skip = False
+    cur = Seg()
+    op: str | None = None
     for t in tokens:
-        if skip:
-            skip = False
+        if op is not None:
+            cur.redirs.append((op, t))
+            op = None
             continue
         if t and all(ch in PUNCT for ch in t):
             if "<" in t or ">" in t:
                 if cur and cur[-1].isdigit():
                     cur.pop()  # the fd in `2>`
-                skip = True  # the redirection target
+                op = t  # the next token is the redirection target
                 continue
-            if cur:
+            cur.piped = t in ("|", "|&")
+            if cur or cur.redirs:
                 segs.append(cur)
-            cur = []
+            cur = Seg()
             segs.extend(OPEN if ch == "(" else CLOSE for ch in t if ch in "()")
         else:
             cur.append(t)
-    if cur:
+    if cur or cur.redirs:
         segs.append(cur)
     return segs
 
@@ -1123,7 +1456,34 @@ def _gated_git(rest: list[str], where: Path, depth: int) -> list[Gated]:
     return _gated_git(words + args, where, depth + 1)
 
 
-def gated_commands(command: str, cwd: Path, depth: int = 0) -> list[Gated]:
+def _command_at(seg: list[str], names: set[str]) -> list[str] | None:
+    """The segment's words from the command it runs, if that is one of `names`, reached through
+    assignments, keywords, and wrappers (`sudo rm`, `timeout 600 make`)."""
+    i = 0
+    while i < len(seg) and (VAR_RE.match(seg[i]) or seg[i] in PREFIX_WORDS):
+        i += 1
+    if i < len(seg) and os.path.basename(seg[i]) in WRAPPERS:
+        i = next((k for k in range(i + 1, len(seg)) if os.path.basename(seg[k]) in names), len(seg))
+    return seg[i:] if i < len(seg) and os.path.basename(seg[i]) in names else None
+
+
+def _sets_pipefail(words: list[str]) -> bool | None:
+    """True for `set -o pipefail` / `setopt pipefail`, False for `set +o pipefail`, else None."""
+    if not words or "pipefail" not in words:
+        return None
+    if words[0] == "setopt":
+        return True
+    if words[0] == "set":
+        k = words.index("pipefail")
+        flag = words[k - 1] if k > 0 else ""
+        if flag.startswith("-") and flag.endswith("o"):
+            return True
+        if flag.startswith("+") and flag.endswith("o"):
+            return False
+    return None
+
+
+def gated_commands(command: str, cwd: Path, depth: int = 0, pipefail: bool = False) -> list[Gated]:
     """Every `git push` and `gh pr create` in a shell command, with the dir it runs in."""
     found: list[Gated] = []
     text, nested = _prescan(_strip_heredocs(command))
@@ -1133,13 +1493,32 @@ def gated_commands(command: str, cwd: Path, depth: int = 0) -> list[Gated]:
     scopes: list[Path] = []  # cwd at each open subshell
     dirstack: list[Path] = []
     oldpwd = cwd
-    for seg in _segments(_tokens(text)):
+    pipestatus = re.search(r"pipestatus", command, re.I) is not None
+    segs = _segments(_tokens(text))
+    for k, seg in enumerate(segs):
         if seg is OPEN:
             scopes.append(cwd)
             continue
         if seg is CLOSE:
             cwd = scopes.pop() if scopes else cwd
             continue
+        for op, target in getattr(seg, "redirs", []):
+            dup = op.endswith("&") and (target.isdigit() or target == "-")
+            if ">" in op and ">>" not in op and "<>" not in op and not dup:
+                found.append(Gated("redirect", cwd, [target]))   # truncates the target
+        nxt = segs[k + 1] if k + 1 < len(segs) else []
+        if getattr(seg, "piped", False) and not (pipefail or pipestatus) \
+                and nxt is not OPEN and nxt is not CLOSE:
+            reader = _command_at(nxt, PIPE_READERS)
+            if reader:
+                found.append(Gated("piped check", cwd, [os.path.basename(reader[0]), *seg]))
+        stripped = [t for t in seg if not VAR_RE.match(t) and t not in PREFIX_WORDS]
+        pf = _sets_pipefail(stripped)
+        if pf is not None:
+            pipefail = pf
+        remover = _command_at(seg, REMOVERS)
+        if remover:
+            found.append(Gated(os.path.basename(remover[0]).replace("unlink", "rm"), cwd, remover[1:]))
         where = cwd
         via: list[str] = []
         while seg:
@@ -1179,11 +1558,11 @@ def gated_commands(command: str, cwd: Path, depth: int = 0) -> list[Gated]:
             if dirstack:
                 oldpwd, cwd = cwd, dirstack.pop()
         elif head in SHELLS and depth < 3:
-            flag = next((k for k, t in enumerate(rest) if SHELL_C_RE.match(t)), None)
+            flag = next((j for j, t in enumerate(rest) if SHELL_C_RE.match(t)), None)
             if flag is not None:
                 body = next((t for t in rest[flag + 1:] if not t.startswith("-")), None)
                 if body:
-                    found += gated_commands(body, where, depth + 1)
+                    found += gated_commands(body, where, depth + 1, "pipefail" in rest[:flag])
         elif head in ("eval", "watch") and depth < 3:
             found += gated_commands(" ".join(t for t in rest if not t.startswith("-")),
                                     where, depth + 1)
@@ -1489,6 +1868,118 @@ def _checkout_paths(where: Path, args: list[str]) -> tuple[list[str] | None, boo
     return [p for p in pos if _ref(where, p) is None], False
 
 
+def _is_env_file(name: str) -> bool:
+    return name in ENV_FILES or name.startswith(".env.")
+
+
+def _tracked(path: Path) -> bool:
+    return subprocess.run(["git", "-C", str(path.parent), "ls-files", "--error-unmatch", "--", path.name],
+                          capture_output=True).returncode == 0
+
+
+def _env_files_under(d: Path) -> list[Path]:
+    """Untracked env files anywhere under `d` (pruning .git and node_modules; a huge tree is skipped)."""
+    hits, seen = [], 0
+    for top, dirs, files in os.walk(d):
+        dirs[:] = [x for x in dirs if x not in ENV_WALK_PRUNE]
+        seen += len(dirs) + len(files)
+        if seen > ENV_WALK_MAX:
+            return hits
+        hits += [Path(top) / f for f in files if _is_env_file(f) and not _tracked(Path(top) / f)]
+    return hits
+
+
+def _env_files_hit(where: Path, paths: list[str], recursive: bool) -> list[str]:
+    """The untracked env files these paths name (globs expanded as the shell would), or hold when
+    `recursive` and a path is a directory."""
+    hits: list[str] = []
+    for p in paths:
+        p = os.path.expandvars(p)
+        for m in (sorted(glob.glob(p, root_dir=where)) if glob.has_magic(p) else [p]):
+            full = _path(where, m)
+            if full.is_symlink() or full.is_file():
+                if _is_env_file(full.name) and not _tracked(full):
+                    hits.append(m)
+            elif recursive and full.is_dir():
+                hits += [os.path.join(m, os.path.relpath(h, full)) for h in _env_files_under(full)]
+    return hits
+
+
+def _git_clean_hits(where: Path, args: list[str]) -> list[str]:
+    """Env files `git clean` would remove, from its own dry run (-n) with the same options."""
+    if any(a == "--dry-run" or _short(a, "n", "e") for a in args):
+        return []   # already a dry run
+    dry: list[str] = []
+    for a in args:
+        if a in ("--force", "--interactive", "--quiet"):
+            continue
+        if a.startswith("-") and not a.startswith("--") and a != "-":
+            e = a.find("e")   # -e takes the rest of the cluster as its value
+            flags, value = (a[1:e], a[e:]) if e > 0 else (a[1:], "")
+            a = "-" + "".join(c for c in flags if c not in "fiq") + value
+            if a == "-":
+                continue
+        dry.append(a)
+    r = subprocess.run(["git", "-C", str(where), "clean", "-n", *dry], capture_output=True, text=True)
+    hits: list[str] = []
+    for line in r.stdout.splitlines():
+        rel = line.removeprefix("Would remove ").strip()
+        full = _path(where, rel)
+        if rel.endswith("/"):
+            hits += [os.path.join(rel, os.path.relpath(h, full)) for h in _env_files_under(full)]
+        elif _is_env_file(full.name):
+            hits.append(rel)
+    return hits
+
+
+def _env_file_problem(g: Gated, args: list[str]) -> str | None:
+    if g.kind == "redirect":
+        hits = _env_files_hit(g.where, args, False)
+        what = "a `>` redirect would truncate"
+    elif g.kind == "git clean":
+        hits = _git_clean_hits(g.where, args)
+        what = "git clean would remove"
+    else:
+        with_value = MV_OPTS_WITH_VALUE if g.kind == "mv" else set()
+        opts, pos = _split_opts(args, with_value)
+        recursive = g.kind == "rm" and any(n in ("--recursive",) or _short(n, "r") or _short(n, "R")
+                                           for n, _ in opts)
+        hits = _env_files_hit(g.where, pos, recursive)
+        what = f"{g.kind} would {'move' if g.kind == 'mv' else 'delete'}"
+    if not hits:
+        return None
+    shown = ", ".join(hits[:5]) + (f" (+{len(hits) - 5} more)" if len(hits) > 5 else "")
+    return (f"{what} {shown}: untracked local env files (machine-local config, often secrets) that git "
+            f"can't restore. Stop and ask the owner; nothing in a task calls for touching them.")
+
+
+def _is_check(words: list[str], check: list[str]) -> bool:
+    if any(words[i:i + len(check)] == check for i in range(len(words))):
+        return True
+    make = next((i for i, w in enumerate(words) if os.path.basename(w) == "make"), None)
+    return make is not None and any(w in ("check", "test") for w in words[make + 1:])
+
+
+def _masked_check_problem(g: Gated) -> str | None:
+    reader, words = g.args[0], g.args[1:]
+    root = repo_root(g.where) if g.where.exists() else None
+    check = check_command(Roles(root)) if root else DEFAULT_CHECK
+    try:
+        check_words = shlex.split(check)
+    except ValueError:
+        check_words = check.split()
+    if not check_words or not _is_check(words, check_words):
+        return None
+    if os.environ.get("COORDINATOR_LANE"):   # a lane's allow-list has no `set`, and no redirect to a file
+        return (f"`{' '.join(words)} | {reader}` exits with {reader}'s status, not the check's, so a "
+                f"failing check reads as green. In a lane, run `{check}` on its own, with no pipe or "
+                f"redirect: the Bash tool reports its exit status.")
+    return (f"`{' '.join(words)} | {reader}` exits with {reader}'s status, not the check's, so a failing "
+            f"check reads as green. Start the command with `set -o pipefail;` (`set -o pipefail; {check} "
+            f"2>&1 | tail -50`), or redirect to a file and read it: `{check} > /tmp/check.log 2>&1; "
+            f"echo exit=$?; tail -50 /tmp/check.log`.")
+
+
 def guard_problem(g: Gated) -> str | None:
     """Why a guarded git or shell command is denied, or None if it's safe here."""
     opts_for = {"git add": ADD_OPTS_WITH_VALUE, "git commit": COMMIT_OPTS_WITH_VALUE,
@@ -1496,6 +1987,10 @@ def guard_problem(g: Gated) -> str | None:
                 "git switch": SWITCH_OPTS_WITH_VALUE}
     args = _expand_longs(g.args, GUARD_LONGS.get(g.kind, []))
     forced_to: str | None = None  # the commit a forced switch or hard reset moves to
+    if g.kind in ("rm", "mv", "redirect", "git clean"):
+        return _env_file_problem(g, args)
+    if g.kind == "piped check":
+        return _masked_check_problem(g)
     if g.kind == "pkill":
         opts, _ = _split_opts(args, PKILL_OPTS_WITH_VALUE)
         if any(n == "--full" or _short(n, "f", "gGPstuUF") for n, _ in opts):
@@ -1694,19 +2189,24 @@ def lane_push_problem(g: Gated, sid: str, args: list[str]) -> str | None:
             return f"a {role} lane pushes only branches under {prefix} (this goes to {dst or '?'})"
         srcref = cur if src == "HEAD" else src.removeprefix("refs/heads/")
         sha = _commit(root, srcref)
-        try:
-            # -z: plain output quotes a name with non-ASCII or special characters ("…), which
-            # would slip past the prefix check below
-            changed = [n for n in _git(g.where, "diff", "-z", "--name-only", "--no-renames",
-                                       f"refs/remotes/origin/main...{sha}").split("\0") if n] if sha else None
-        except (subprocess.CalledProcessError, OSError):
-            changed = None
+        changed = _changed_since_main(g.where, sha) if sha else None
         if changed is None:
             return f"can't compare {srcref!r} with origin/main to check what it changes"
         if any(p.startswith(LANE_WORKFLOW_DIRS) for p in changed):
             return ("this push changes a GitHub workflow (.github/workflows or actions), which runs "
                     "with the repo's secrets: a person pushes those")
     return None
+
+
+def _changed_since_main(where: Path, sha: str) -> list[str] | None:
+    """The paths `sha` changes since it left origin/main, or None when git can't tell."""
+    try:
+        # -z: plain output quotes a name with non-ASCII or special characters ("…), which
+        # would slip past a prefix check
+        return [n for n in _git(where, "diff", "-z", "--name-only", "--no-renames",
+                                f"refs/remotes/origin/main...{sha}").split("\0") if n]
+    except (subprocess.CalledProcessError, OSError):
+        return None
 
 
 def _is_head_commit(where: Path, ref: str) -> bool:
@@ -2377,14 +2877,20 @@ def hook_pre_bash(args: list[str]) -> int:
             problem = lane_problem(g, data.get("session_id", ""))
             if problem:
                 return _decision("deny", f"coordinator lane {lane}: {problem}")
+    here = repo_root(cwd) if not lane and IDENTITY_ENV_RE.search(command) else None
+    if here and identity_active(here, data.get("session_id", "")):
+        return _decision("deny", "VALESOR_IDENTITY is the owner's: they start a session with "
+                                 "VALESOR_IDENTITY=person to act as themselves. Don't set it in a command.")
+    # `role reviewed && git push`: the gate judges the whole command before the marker exists
+    chained_review = any(g.kind == "repo tool" and g.args[:2] == ["role", "reviewed"] for g in found)
     found = [g for g in found if g.kind not in LANE_ONLY and g.kind != "prefix"]
-    for g in found:  # guards apply in every mode, with or without a role or a role repo
-        if g.kind == "pkill" or g.kind.removeprefix("git ") in GUARDED_GIT:
-            problem = guard_problem(g)
-            if problem:
-                return _decision("deny", problem)
+    guarded = [g for g in found if g.kind in GUARD_KINDS or g.kind.removeprefix("git ") in GUARDED_GIT]
+    for g in guarded:  # guards apply in every mode, with or without a role or a role repo
+        problem = guard_problem(g)
+        if problem:
+            return _decision("deny", problem)
     for g in found:
-        if g.kind == "pkill" or g.kind.removeprefix("git ") in GUARDED_GIT:
+        if g in guarded:
             continue
         root = repo_root(g.where)
         if root is None:
@@ -2425,10 +2931,19 @@ def hook_pre_bash(args: list[str]) -> int:
                     f"{ref} {sha[:12] if sha else '(no commits)'} hasn't passed /pre-pr"
         else:
             problem = push_problem(root, g.args)
+            if problem is None and not lane and identity_active(root, data.get("session_id", "")):
+                problem = identity_push_problem(root, g)
+                if problem:
+                    return _decision("deny", problem)
         if problem is None:
             continue
-        reason = (f"{g.kind}: {problem}. Run /pre-pr (checks plus the adversarial review) "
-                  f"first; any new commit needs a fresh review.")
+        if chained_review and "hasn't passed /pre-pr" in problem:
+            reason = (f"{g.kind}: `role reviewed` must run as its own Bash call: the gate checks the "
+                      f"whole command before the marker is written. Run `.claude/bin/role reviewed` "
+                      f"alone, then {g.kind} in a separate call.")
+        else:
+            reason = (f"{g.kind}: {problem}. Run /pre-pr (checks plus the adversarial review) "
+                      f"first; any new commit needs a fresh review.")
         if role != UNRESTRICTED:
             return _decision("deny", reason)
         asks.append(reason)
@@ -2460,6 +2975,8 @@ COMMANDS = {
     "check-cmd": cmd_check_cmd,
     "owners": cmd_owners,
     "reviewed": cmd_reviewed,
+    "app-token": cmd_app_token,
+    "gh-exec": cmd_gh_exec,
     "hook-session-start": hook_session_start,
     "hook-pre-tool-use": hook_pre_tool_use,
     "hook-pre-bash": hook_pre_bash,

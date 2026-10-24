@@ -2,7 +2,7 @@
 name: pm-start-sprint
 description: Plan and start the next sprint when no sprint is active, with stories and sprints as GitHub issues. Works for the first sprint, after a sprint was closed without a successor, or to activate a sprint left at planned. If a sprint is still active, it stops and points to /pm-close-sprint, which closes it and plans the next.
 disable-model-invocation: true
-allowed-tools: Bash(.claude/bin/role:*) Bash(.claude/bin/sprint-state:*) Bash(.claude/bin/story list:*) Bash(.claude/bin/story show:*)
+allowed-tools: Bash(.claude/bin/role:*) Bash(.claude/bin/sprint-state:*) Bash(.claude/bin/story list:*) Bash(.claude/bin/story show:*) Bash(.claude/bin/story check:*)
 ---
 
 # PM: start the next sprint
@@ -67,4 +67,5 @@ with NEXT = `next`, CARRYOVER, and DEFECTS from above.
 The board changes take effect when you make them. The PR is only for files
 (roadmap, glossary): open it on `pm/<next-lower>-<slug>` if you changed any,
 and report its URL. Report the sprint issue's URL and `sprint-state`'s
-output. Other roles start when the sprint is active.
+output. Other roles start when the sprint is active: name the readiness scan's
+**Run first** role as the next action.

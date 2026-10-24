@@ -15,7 +15,7 @@ are no story files to edit.
 | Sprint, Plan, Rank | Project fields | PM (`story set <ID> Sprint=N Plan=Current Rank=k`) |
 | Dependencies | GitHub blocked-by links (`story show` prints `Blocked by:`) | PM at `story create --depends`; later, any role with `depends` in `story_edits` (`story depends <ID> --add <ID,…>` / `--remove <ID,…>`) |
 | Feedback and questions | comments on the story: `story comment <ID> --to <role> --body …` | any role |
-| Records (§8, observability review, verification) | comments: `story comment <ID> --record "<name>" --body …` | the role that did the work |
+| Records (§8, observability review, verification) | comments: `story comment <ID> --record "<name>" --body …`. A role's `records:` names the ones a move needs; `story check <ID> <status>` lists what's missing | the role that did the work |
 | Sprint goal and demo goal | the sprint issue `SPRINT-NN — <goal>` | PM (`story sprint plan/activate/close/body`) |
 | Close-out and demo | `docs/sprints/SPRINT-NN-closeout.md`, `docs/sprints/SPRINT-NN-demo.md` | PM, by PR |
 | New work, bugs | a plain GitHub issue (not a story); PM triages it | any role |
@@ -29,6 +29,9 @@ are no story files to edit.
 - `.claude/bin/story list --status review`: the §8 queue.
 - `.claude/bin/story show <ID> --comments 20`: the contract, blockers, and
   the feedback thread.
+- `.claude/bin/story check <ID> <status>`: every record the move still needs,
+  and who owes each. `story status` refuses the move until they're all there.
+  Only records posted since the story entered its current status count.
 
 ## A story's life
 

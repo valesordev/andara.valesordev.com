@@ -2,7 +2,7 @@
 name: sre-start-sprint
 description: Work the active sprint as SRE, with stories as GitHub issues. Observability review of the sprint's drafts first (architecture's contract review waits on it), then instrumentation verification for stories at review, then SRE's own backlog. Run once PM has activated the sprint; it also resumes a sprint already under way.
 disable-model-invocation: true
-allowed-tools: Bash(.claude/bin/role:*) Bash(.claude/bin/sprint-state:*) Bash(.claude/bin/story list:*) Bash(.claude/bin/story show:*)
+allowed-tools: Bash(.claude/bin/role:*) Bash(.claude/bin/sprint-state:*) Bash(.claude/bin/story list:*) Bash(.claude/bin/story show:*) Bash(.claude/bin/story check:*)
 ---
 
 # SRE: work the active sprint

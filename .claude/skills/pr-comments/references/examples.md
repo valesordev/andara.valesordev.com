@@ -19,3 +19,6 @@ It shows the triage table and waits. The owner approves. The agent fixes #1 test
 
 **Prompt:** (run by /pre-pr) "/pr-comments 212 --auto"
 **Behavior:** Codex left two inline comments. The agent prints the triage table and doesn't wait. It reproduces the first (a failing test), fixes it, and commits. The second claims a nil dereference; a test that would fail if the claim were true passes under mutation, so the agent posts a Dispute with that evidence. It runs `/pre-pr --no-codex`, pushes, replies on both threads, and lists the dispute in its report. A comment from the owner on the same PR would have stopped it to ask.
+
+**Prompt:** (SRE role) "Address the runbook comment on #230."
+**Behavior:** The reviewer says `docs/runbooks/deploy.md` names the wrong rollback command. The agent edits the runbook, commits, runs `/pre-pr`, and pushes. Before replying it runs `git show --stat <sha> -- docs/runbooks/deploy.md`: no output, because the edit was never staged. It doesn't reply "fixed". It stages the file, commits, re-runs `/pre-pr`, and pushes. Then `git show --stat` lists the runbook and `git branch -r --contains <sha>` lists `origin/sre/…`, and it replies `**pr-comments:** fixed in <sha>`. Its report gives the PR state from `gh pr view 230 --json state,mergedAt,headRefOid`, run at report time.

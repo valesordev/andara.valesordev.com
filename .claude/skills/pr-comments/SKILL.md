@@ -2,7 +2,7 @@
 name: pr-comments
 description: Work through the review comments on an open PR this role owns (Codex, other bots, architecture, the owner). Verify each claim, then fix it test-first, route it to the role that owns the code, or dispute it with evidence; re-run /pre-pr, push, and reply on every thread. Never merges. `--auto` (what `/pre-pr` runs after Codex reviews) skips the wait for the owner's go-ahead on the triage table. Trigger on "address the review comments on #212", "Codex left comments", "handle the PR feedback", "respond to review", "what's left on this PR". Not for reviewing a branch before its first push (pre-pr), reviewing someone else's PR, or merging.
 argument-hint: "[PR number; default: the current branch's PR] [--auto]"
-allowed-tools: Bash(.claude/bin/role:*) Bash(.claude/bin/codex-review:*) Bash(.claude/bin/story show:*) Bash(gh pr view:*) Bash(gh pr diff:*) Bash(gh pr checks:*) Bash(git add:*) Bash(git commit:*) Bash(git status:*) Bash(git diff:*) Bash(git log:*) Bash(git fetch:*) Bash(git rev-parse:*)
+allowed-tools: Bash(.claude/bin/role:*) Bash(.claude/bin/codex-review:*) Bash(.claude/bin/story show:*) Bash(gh pr view:*) Bash(gh pr diff:*) Bash(gh pr checks:*) Bash(git add:*) Bash(git commit:*) Bash(git status:*) Bash(git diff:*) Bash(git log:*) Bash(git show:*) Bash(git branch -r --contains:*) Bash(git fetch:*) Bash(git rev-parse:*)
 ---
 
 # PR comments
@@ -86,7 +86,17 @@ Comments from the owner themselves are never handled automatically: stop and ask
    fixes. The Codex wait belongs to the caller, so this doesn't recurse.
 3. Push (normal permission prompt; pre-allowed in a target whose
    `settings.json` allows it).
-4. Reply on each thread, in one line starting with the tag:
+4. **Verify each fix before you cite it**, in this turn, for every reply that
+   will say `fixed in <sha>`:
+   - `git show --stat <sha> -- <path>` lists each file the comment is about.
+     No output means the fix isn't in that commit: find the commit that has it,
+     or make the fix, before replying.
+   - `git branch -r --contains <sha>` lists the PR's remote branch, after the
+     push. If it doesn't, push first.
+
+   A thread whose fix fails either check isn't fixed. Fix it, or reply with
+   what's actually true.
+5. Reply on each thread, in one line starting with the tag:
    - inline: `gh api 'repos/{owner}/{repo}/pulls/<N>/comments/<id>/replies' -f body=…`
    - review body or conversation: one `gh pr comment <N> --body-file F`, with
      one line per item it answers, each starting
@@ -103,7 +113,9 @@ Comments from the owner themselves are never handled automatically: stop and ask
 ## 5. Close
 
 Report: counts by disposition, the pushed SHA, and anything the owner must decide
-(disputes they haven't seen, routed items blocking the PR).
+(disputes they haven't seen, routed items blocking the PR). Report the PR's state
+from `gh pr view <N> --json state,mergedAt,headRefOid` run now, at report time,
+never from a read earlier in the session: a PR can merge while you work.
 
 **Checklist candidates.** For each fixed comment that `/pre-pr`'s reviewer
 should have caught, check `.claude/skills/pre-pr/references/checklist.md` (vendored copy; its
@@ -121,6 +133,10 @@ End with one next action, e.g. "Re-request review from Codex on #212" or
 - Don't resolve or hide threads. The reviewer, or the owner, decides a thread is done.
 - Never reply before the fix is pushed. A reply that cites an unpushed SHA is a
   broken citation.
+- Never claim fixed, done, open, or green from memory. Each claim cites a command
+  run in this turn: `git show --stat <sha> -- <path>` for a fix,
+  `git branch -r --contains <sha>` for a push, `gh pr view` for PR state, the check
+  command's exit status for green.
 - A comment that asks for work in another role's paths is routed even when the
   fix looks trivial. A hook denial is not something to route around.
 - Outside `--auto`, never post a disputed reply that the owner hasn't seen in the

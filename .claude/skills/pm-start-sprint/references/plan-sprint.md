@@ -35,10 +35,17 @@ one demoable slice, not everything that's ready.
 
 ## 4. Checkpoint: stop before writing
 
+Run the readiness scan over the stories you're pulling in: follow
+`.claude/skills/readiness-scan/SKILL.md` steps 2 and 3 for NEXT's `ready` and
+`review` stories (CARRYOVER included). New drafts aren't scanned: contract
+review is their check.
+
 Send the owner one message (the calling skill may add to it) containing:
 
 - NEXT's demo goal, why, and what it is not
 - the story list per role (architecture, SRE, implementation), in pickup order
+- the readiness table, grouped by the role that clears each gap, and which
+  role to run first once the sprint is active
 - any game-design questions (up to 3, per repo §6)
 
 Wait for their answer, then write.
@@ -60,7 +67,10 @@ Every step is a board change with `.claude/bin/story`, made after the owner's an
    in the order of step 3 above. Stories groomed for later get `Plan=Next` or
    `Plan=Later` and no Sprint. Stories the last sprint left behind that aren't
    carried over get `Plan=Later` and their Sprint cleared (`Sprint=`).
-4. `story sprint activate <n>`.
-5. Confirm with `.claude/bin/sprint-state`: it must report `state: active`
+4. The readiness marks: readiness-scan step 4 for each `ready` story with a
+   finding the owner kept (`story status <ID> blocked --note …` and a
+   `story comment <ID> --to <role>`).
+5. `story sprint activate <n>`.
+6. Confirm with `.claude/bin/sprint-state`: it must report `state: active`
    and `current: <NEXT>`. Then `story list --sprint <n>` must show every story
    you planned, in order.

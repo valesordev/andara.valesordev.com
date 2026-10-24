@@ -16,6 +16,7 @@ block GraphQL.
                  --body-file F [--epic EPIC-NN] [--depends ID,ID]
     story start <ID>                      ready -> in-progress (the story's lane)
     story status <ID> <status> [--note TEXT]
+    story check <ID> <status>             read-only: the records that move still needs
     story set <ID> Field=value [...]      e.g. Sprint=SPRINT-05 Plan=Current Rank=3, or Cycle=2
     story body <ID> --body-file F         replace the issue body (the contract)
     story depends <ID> [--add ID,ID] [--remove ID,ID] [--note TEXT]
@@ -39,6 +40,12 @@ Who may do what comes from the session's role file (.claude/roles/<role>.md):
     on_merge: [in-progress>review@lane]
         moves only `story merged` makes, when a PR labeled role:<role> merges.
         A session can't make them, so `review` means the work is on main.
+    records: [draft>ready: Observability review, review>done: §8 instrumentation]
+        records this role owes before a move: a `**<name> (<role>):**` comment
+        (`story comment <ID> --record <name>`) posted since the story last entered
+        the move's from-status. `story status` and `story merged` refuse a move
+        with any missing, listing all of them; /role none moves anyway, with a
+        warning. `story check` lists them without moving.
 
 Sprints (with `sprints: project` in _repo.md) are issues titled
 `SPRINT-NN — <goal>`, labeled `sprint` and `sprint:planned` or `sprint:active`;
@@ -90,6 +97,7 @@ _loader.exec_module(role)
 STATUSES = ["draft", "ready", "in-progress", "review", "done", "blocked"]
 COMP_CODES = ["SRV", "CLI", "INF", "CLT"]  # default; a repo sets story_components
 SETTABLE = ["Sprint", "Cycle", "Plan", "Rank", "Lane", "Size", "Risk", "Component"]
+STATUS_LINE = re.compile(r"^\*\*Status \([^)]*\):\*\* (\S+) → ([a-z-]+)")
 HEADING = re.compile(r"^\*\*(For [a-z-]+|§8 \([a-z-]+\)|[A-Za-z0-9 §()-]+ \([a-z-]+\)):\*\*")
 
 
@@ -292,6 +300,42 @@ def session_role(root: Path, sid: str | None) -> Who:
     return Who(name, roles.roles.get(name, ({}, ""))[0])
 
 
+def required_records(roles, frm: str, to: str) -> list[tuple[str, str]]:
+    """(record, role) pairs the roles' `records:` require before a frm → to move."""
+    out = []
+    for name, (meta, _) in roles.roles.items():
+        for entry in meta.get("records", []):
+            move, sep, record = entry.partition(":")
+            a, _, b = move.strip().partition(">")
+            if not sep or not record.strip() or not a or not b:
+                raise StoryError(f"role {name}: records entry {entry!r} isn't `from>to: Record name`")
+            if (a, b) == (frm, to):
+                out.append((record.strip(), name))
+    return out
+
+
+def missing_records(b: Board, it: dict, frm: str, to: str) -> list[tuple[str, str]]:
+    """Required records with no comment since the story last entered `frm` (a record from an
+    earlier round doesn't count). The owner's record (`/role none`) stands in for any role's."""
+    need = required_records(b.roles, frm, to)
+    if not need:
+        return []
+    bodies = [(c.get("body") or "") for c in b.comments(it["number"], it["repo"])]
+    since = max((i for i, t in enumerate(bodies)
+                 if (m := STATUS_LINE.match(t)) and m.group(2) == frm), default=-1)
+    have = {t.split(":**", 1)[0] for t in bodies[since + 1:] if t.startswith("**")}
+    return [(r, n) for r, n in need if f"**{r} ({n})" not in have and f"**{r} (owner)" not in have]
+
+
+def _gaps(sid: str, missing: list[tuple[str, str]]) -> str:
+    return "\n".join(f"  {r} ({n})" for r, n in missing) + (
+        f"\nEach role named records it with `story comment {sid} --record NAME`; then retry.")
+
+
+class Unmet(StoryError):
+    """`story check` found gaps: printed to stdout, exit 1."""
+
+
 # ----------------------------------------------------------------- commands
 
 def _text(a) -> str:
@@ -429,6 +473,9 @@ def _move(b: Board, who: Who, sid: str, to: str, note: str | None, merge: bool =
     if not who.can_move(frm, to, it["fields"].get("Lane"), merge):
         raise StoryError(f"role {who.name} can't move {sid} {frm} → {to} "
                          f"(lane {it['fields'].get('Lane') or '-'}); see CLAUDE.md §2")
+    missing = missing_records(b, it, frm, to)
+    if missing and not who.unrestricted:
+        raise StoryError(f"{sid} can't move {frm} → {to}; missing:\n{_gaps(sid, missing)}")
     b.set_fields(it, {"Status": to})
     if to == "done" and it.get("state") != "closed":
         b.gh.api("PATCH", f"/repos/{b.repo}/issues/{it['number']}", {"state": "closed",
@@ -436,7 +483,27 @@ def _move(b: Board, who: Who, sid: str, to: str, note: str | None, merge: bool =
     elif frm == "done" and it.get("state") == "closed":
         b.gh.api("PATCH", f"/repos/{b.repo}/issues/{it['number']}", {"state": "open"})
     b.comment(it["number"], f"**Status ({who.name}):** {frm} → {to}" + (f". {note}" if note else ""))
+    if missing:
+        return (f"{sid}: {frm} → {to}\nwarning: moved without "
+                f"{', '.join(f'{r} ({n})' for r, n in missing)} (/role none)")
     return f"{sid}: {frm} → {to}"
+
+
+def cmd_check(b: Board, who: Who, a) -> str:
+    if a.to not in STATUSES:
+        raise StoryError(f"status must be one of {', '.join(STATUSES)}")
+    it = b.find(a.id)
+    frm = it["fields"].get("Status") or "draft"
+    if frm == a.to:
+        return f"{a.id} is already {a.to}"
+    lane = it["fields"].get("Lane")
+    can = who.can_move(frm, a.to, lane) if who.name else False
+    by = (f"{who.name} may make this move" if can else
+          f"{who.name or 'no role'} can't make this move (lane {lane or '-'})")
+    missing = missing_records(b, it, frm, a.to)
+    if missing:
+        raise Unmet(f"{a.id} {frm} → {a.to} is missing:\n{_gaps(a.id, missing)}\n{by}")
+    return f"{a.id} {frm} → {a.to}: records complete; {by}"
 
 
 def cmd_start(b: Board, who: Who, a) -> str:
@@ -524,7 +591,9 @@ def post(b: Board, sid: str, head: str, text: str, author: str) -> str:
 def cmd_comment(b: Board, who: Who, a) -> str:
     who.require(comment=True)
     if bool(a.to) == bool(a.record):
-        raise StoryError("give exactly one of --to ROLE or --record NAME")
+        raise StoryError("give exactly one of --to ROLE or --record NAME. To record and hand off, "
+                         f"record it with `story comment {a.id} --record NAME`, then hand off with a "
+                         f"second `story comment {a.id} --to ROLE`")
     me = who.name if not who.unrestricted else "owner"
     to = a.to
     if to:  # an alias (`design`, `impl`) is written as the role it names, or readers never match it
@@ -575,7 +644,10 @@ def cmd_merged(b: Board, who: Who, a) -> str:
         if lane != name or st in ("review", "done"):
             out.append(f"{sid}: {st}, unchanged ({'lane ' + str(lane) if lane != name else 'already ' + st})")
         elif st == "in-progress" and actor.can_move(st, "review", lane, merge=True):
-            out.append(_move(b, actor, sid, "review", note, merge=True))
+            try:
+                out.append(_move(b, actor, sid, "review", note, merge=True))
+            except StoryError as e:
+                bad.append(str(e))
         else:
             bad.append(f"{sid} is {st} in lane {lane}; {name} can't move it to review on merge")
     for sid in done:
@@ -584,7 +656,10 @@ def cmd_merged(b: Board, who: Who, a) -> str:
         if st == "done":
             out.append(f"{sid}: already done")
         elif st == "review" and actor.can_move("review", "done", it["fields"].get("Lane"), merge=True):
-            out.append(_move(b, actor, sid, "done", note, merge=True))
+            try:
+                out.append(_move(b, actor, sid, "done", note, merge=True))
+            except StoryError as e:
+                bad.append(str(e))
         else:
             bad.append(f"{sid} is {st}; {name} can't close it with Story-Done")
     if bad:
@@ -667,9 +742,9 @@ def cmd_sprint(b: Board, who: Who, a) -> str:
     return f"{key}: body updated"
 
 
-READS = {"show", "list"}
+READS = {"show", "list", "check"}
 COMMANDS = {"show": cmd_show, "list": cmd_list, "create": cmd_create, "start": cmd_start,
-            "status": cmd_status, "set": cmd_set, "body": cmd_body, "comment": cmd_comment,
+            "status": cmd_status, "check": cmd_check, "set": cmd_set, "body": cmd_body, "comment": cmd_comment,
             "depends": cmd_depends, "merged": cmd_merged, "sprint": cmd_sprint}
 
 
@@ -687,6 +762,7 @@ def parser() -> argparse.ArgumentParser:
     s.add_argument("--epic"); s.add_argument("--depends")
     s = sub.add_parser("start"); s.add_argument("id"); s.add_argument("--note")
     s = sub.add_parser("status"); s.add_argument("id"); s.add_argument("to"); s.add_argument("--note")
+    s = sub.add_parser("check"); s.add_argument("id"); s.add_argument("to")
     s = sub.add_parser("set"); s.add_argument("id"); s.add_argument("pairs", nargs="+")
     s = sub.add_parser("body"); s.add_argument("id"); s.add_argument("--body-file", required=True)
     s.add_argument("--note")
@@ -732,7 +808,11 @@ def main(argv: list[str], gh=None) -> int:
         b = Board(gh or GH(), repo, cfg["project"], cfg.get("story_prefix", ""),
                   comps if isinstance(comps, list) else None)
         b.cfg = cfg
+        b.roles = role.Roles(root)
         print(COMMANDS[a.cmd](b, who, a))
+    except Unmet as e:
+        print(e)
+        return 1
     except StoryError as e:
         print(f"story: {e}", file=sys.stderr)
         return 1

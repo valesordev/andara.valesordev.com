@@ -2,7 +2,7 @@
 name: pm-close-sprint
 description: Close out the active sprint and plan the next one, with stories and sprints as GitHub issues. Records final story status, writes and runs the demo, triages issues and comments addressed to PM, closes the sprint issue, then plans SPRINT-NN+1 with the shared planning procedure. Run it once the architecture, SRE, and implementation roles have stopped and reported. If no sprint is active, it stops and points to /pm-start-sprint.
 disable-model-invocation: true
-allowed-tools: Bash(.claude/bin/role:*) Bash(.claude/bin/sprint-state:*) Bash(.claude/bin/story list:*) Bash(.claude/bin/story show:*)
+allowed-tools: Bash(.claude/bin/role:*) Bash(.claude/bin/sprint-state:*) Bash(.claude/bin/story list:*) Bash(.claude/bin/story show:*) Bash(.claude/bin/story check:*)
 ---
 
 # PM: close out the active sprint and plan the next
