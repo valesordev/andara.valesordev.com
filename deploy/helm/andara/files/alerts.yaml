@@ -129,11 +129,55 @@ groups:
         annotations:
           summary: "The simulation is more than 500 ms behind schedule — the World is responding late"
           runbook: docs/runbooks/simulation-lagging.md
+  - name: andara-kafka
+    # The Command log (ADR-0002) underneath the World, both directions (AW-INF-039). Writes:
+    # WorldReadOnly, tied to docs/specs/slo/world-write-availability.md. Reads:
+    # SimulationConsumerLagging, tied to docs/specs/slo/kafka-availability.md. Both gauges are
+    # per Partition (64 series per environment, bounded by deploy/kafka/topics.yaml); each rule
+    # takes the max per namespace and never pages per Partition.
+    rules:
+      - alert: WorldReadOnly
+        # One degraded Partition pages: its Zones' players cannot act (AW-INF-039 ruling 2).
+        # for: is 30 s, and ingress.degraded_hold (default 120 s, floor 90 s) must be at least
+        # 2 x for + 30 s; `make helm-test` fails if this for: and the key's default disagree.
+        # Raise them together (docs/specs/kafka/client-contract.md).
+        #
+        # Under a persistent produce fault the gauge saw-tooths: 1 for the hold, then 0 until
+        # the next Submit rediscovers the fault, up to ingress.produce_deadline (2 s). That gap
+        # is not recovery (ruling 3). keep_firing_for bridges it, plus the scrape and evaluation
+        # that might see it, so the page neither resolves nor re-fires. The cost is a resolve
+        # 2 m after a real recovery.
+        expr: |
+          max by (namespace) (andara_ingress_degraded) == 1
+        for: 30s
+        keep_firing_for: 2m
+        labels:
+          severity: page
+          slo: world-write-availability
+        annotations:
+          summary: "The World is read-only: at least one Partition of the Command log refuses writes, and its players cannot act"
+          runbook: docs/runbooks/world-read-only.md
+      - alert: SimulationConsumerLagging
+        # Offsets, not time: andara_consumer_lag is the broker's end offset minus the loop's
+        # next-to-read. 400 offsets is 2.5 s (sim.tick_budget_ms x 50) at a Partition's fair
+        # share of sim.max_per_tick; the derivation, and the one place to change it, is
+        # docs/specs/slo/kafka-availability.md. Not SimulationLagging: the tick can run on time
+        # while the Commands it applies arrive late, and the runbook tells the two apart first.
+        expr: |
+          max by (namespace) (andara_consumer_lag) > 400
+        for: 2m
+        labels:
+          severity: page
+          slo: kafka-availability
+        annotations:
+          summary: "The simulation is more than 400 offsets behind the Command log on a Partition for 2 minutes — players' Commands are applied late"
+          runbook: docs/runbooks/simulation-consumer-lagging.md
   - name: andara-snapshots
     # Zone snapshots (AW-SRV-006). One alert, and deliberately a ticket rather than a page:
-    # a stale snapshot costs recovery *time*, not data. Kafka is the ordering authority and
-    # replay from offset zero is always correct, so RPO is unaffected and no player is
-    # experiencing anything. What it threatens is the RTO target
+    # a stale snapshot costs recovery *time*, not data. Kafka is the ordering authority and an
+    # older round replays correctly, so RPO is unaffected and no player is experiencing
+    # anything. (Losing *every* round is different: past andara.events.v1's 30-day retention
+    # that World cannot be recovered at all, docs/specs/slo/recovery.md.) What it threatens is the RTO target
     # (docs/specs/slo/recovery.md) and AW-INF-007's rollback window, which is measured in
     # snapshot rounds — which is why it blocks a deploy even though it does not page.
     #

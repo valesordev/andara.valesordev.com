@@ -87,6 +87,25 @@ The important observation for anyone about to optimize this: **tail replay is th
 The dominant costs are Kubernetes failure detection and pod startup. Optimizing recovery therefore means
 tuning probes and pre-pulling images (`AW-INF-003`), not making the simulation faster.
 
+### Snapshots are the only recovery start
+
+Recovery does not replay "from the log" on its own. It starts from a Snapshot round and replays the
+Commands after that round's offsets, reading the Tick Boundary Records on `andara.events.v1` as it goes.
+`andara.commands.v1` is kept forever on `dev` and prod, but `andara.events.v1` is kept for **30 days**
+(`docs/specs/kafka/broker-contract.md`, Retention). So the object store or PVC holding the rounds is part of
+the recovery path, not a cache in front of it:
+
+- A World younger than 30 days with no round left can still replay from the start of the log: slow, and
+  correct.
+- A World older than 30 days that has lost **every complete round** is **unrecoverable**: the Boundary
+  Records its replay needs have aged out. That is a data-loss incident, and no restart fixes it.
+
+`local` is outside this invariant (broker-contract.md, decided 2026-10-21): its events are kept 7 days, and a
+`local` World past that is reset with `make world-reset ENV=local`, not recovered.
+
+Losing the snapshot store therefore costs more than RTO. `SnapshotStale` is a ticket because one missed
+round costs time; a store that is gone is the escalation in `server-unavailable.md`.
+
 ### Derived: snapshot cadence
 
 **Recommended: a snapshot every 60 seconds of wall time, per Zone.**

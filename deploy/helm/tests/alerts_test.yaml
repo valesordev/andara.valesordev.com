@@ -629,3 +629,138 @@ tests:
             exp_annotations:
               summary: "A recovery did not reproduce the recorded World state — the server refused to take traffic"
               runbook: docs/runbooks/recovery-state-mismatch.md
+
+  # WorldReadOnly (AW-INF-039). One degraded Partition in one environment pages that
+  # environment, once, with no partition label: the rule takes the max per namespace.
+  - name: cluster — one degraded Partition in dev pages WorldReadOnly as dev only
+    interval: 1m
+    input_series:
+      - series: 'andara_ingress_degraded{job="andara-server", namespace="andara-dev", partition="0"}'
+        values: '0x10'
+      - series: 'andara_ingress_degraded{job="andara-server", namespace="andara-dev", partition="7"}'
+        values: '0 1x9'
+      - series: 'andara_ingress_degraded{job="andara-server", namespace="andara-prod", partition="7"}'
+        values: '0x10'
+    alert_rule_test:
+      - eval_time: 1m
+        alertname: WorldReadOnly
+        exp_alerts: []
+      - eval_time: 2m
+        alertname: WorldReadOnly
+        exp_alerts:
+          - exp_labels: {namespace: andara-dev, severity: page, slo: world-write-availability}
+            exp_annotations:
+              summary: "The World is read-only: at least one Partition of the Command log refuses writes, and its players cannot act"
+              runbook: docs/runbooks/world-read-only.md
+
+  - name: compose — WorldReadOnly fires with no namespace
+    interval: 1m
+    input_series:
+      - series: 'andara_ingress_degraded{job="andara-server", instance="andara-server:8080", partition="0"}'
+        values: '1x5'
+    alert_rule_test:
+      - eval_time: 2m
+        alertname: WorldReadOnly
+        exp_alerts:
+          - exp_labels: {severity: page, slo: world-write-availability}
+            exp_annotations:
+              summary: "The World is read-only: at least one Partition of the Command log refuses writes, and its players cannot act"
+              runbook: docs/runbooks/world-read-only.md
+
+  # Ruling 3's sawtooth, at one-second resolution: under a persistent produce fault the gauge
+  # reads 1 for the 120 s hold, then 0 for up to ingress.produce_deadline (2 s) until a Submit
+  # rediscovers the fault, and repeats. The 2 m evaluation lands on the first gap (t=120 s reads
+  # 0): without keep_firing_for the page would resolve there and re-fire a minute later.
+  - name: cluster — the degraded-hold sawtooth keeps WorldReadOnly firing
+    interval: 1s
+    input_series:
+      - series: 'andara_ingress_degraded{job="andara-server", namespace="andara-dev", partition="7"}'
+        values: '1x119 0 0 1x119 0 0 1x119 0 0 1x119 0 0'
+    alert_rule_test:
+      - eval_time: 1m
+        alertname: WorldReadOnly
+        exp_alerts:
+          - exp_labels: {namespace: andara-dev, severity: page, slo: world-write-availability}
+            exp_annotations:
+              summary: "The World is read-only: at least one Partition of the Command log refuses writes, and its players cannot act"
+              runbook: docs/runbooks/world-read-only.md
+      - eval_time: 2m
+        alertname: WorldReadOnly
+        exp_alerts:
+          - exp_labels: {namespace: andara-dev, severity: page, slo: world-write-availability}
+            exp_annotations:
+              summary: "The World is read-only: at least one Partition of the Command log refuses writes, and its players cannot act"
+              runbook: docs/runbooks/world-read-only.md
+      - eval_time: 8m
+        alertname: WorldReadOnly
+        exp_alerts:
+          - exp_labels: {namespace: andara-dev, severity: page, slo: world-write-availability}
+            exp_annotations:
+              summary: "The World is read-only: at least one Partition of the Command log refuses writes, and its players cannot act"
+              runbook: docs/runbooks/world-read-only.md
+
+  # A real recovery: the gauge goes to 0 and stays there. The page is held for keep_firing_for
+  # (2 m from the first 0 at 3m) and then resolves.
+  - name: cluster — WorldReadOnly resolves 2 m after the log is back
+    interval: 1m
+    input_series:
+      - series: 'andara_ingress_degraded{job="andara-server", namespace="andara-dev", partition="7"}'
+        values: '1 1 1 0x7'
+    alert_rule_test:
+      - eval_time: 4m
+        alertname: WorldReadOnly
+        exp_alerts:
+          - exp_labels: {namespace: andara-dev, severity: page, slo: world-write-availability}
+            exp_annotations:
+              summary: "The World is read-only: at least one Partition of the Command log refuses writes, and its players cannot act"
+              runbook: docs/runbooks/world-read-only.md
+      - eval_time: 6m
+        alertname: WorldReadOnly
+        exp_alerts: []
+
+  # A blip shorter than for: (30 s) is pending, never a page.
+  - name: cluster — a degraded blip shorter than for does not page
+    interval: 1m
+    input_series:
+      - series: 'andara_ingress_degraded{job="andara-server", namespace="andara-dev", partition="7"}'
+        values: '0 1 0x5'
+    alert_rule_test:
+      - eval_time: 1m
+        alertname: WorldReadOnly
+        exp_alerts: []
+      - eval_time: 5m
+        alertname: WorldReadOnly
+        exp_alerts: []
+
+  # SimulationConsumerLagging (AW-INF-039): above 400 offsets on any one Partition for 2 m.
+  # Exactly 400 is not above; prod's lag is dev's business only if prod lags too.
+  - name: cluster — consumer lag above 400 offsets for 2 m pages as dev only
+    interval: 1m
+    input_series:
+      - series: 'andara_consumer_lag{job="andara-server", namespace="andara-dev", partition="0"}'
+        values: '400x10'
+      - series: 'andara_consumer_lag{job="andara-server", namespace="andara-dev", partition="9"}'
+        values: '0 401x9'
+      - series: 'andara_consumer_lag{job="andara-server", namespace="andara-prod", partition="9"}'
+        values: '400x10'
+    alert_rule_test:
+      - eval_time: 2m
+        alertname: SimulationConsumerLagging
+        exp_alerts: []
+      - eval_time: 3m
+        alertname: SimulationConsumerLagging
+        exp_alerts:
+          - exp_labels: {namespace: andara-dev, severity: page, slo: kafka-availability}
+            exp_annotations:
+              summary: "The simulation is more than 400 offsets behind the Command log on a Partition for 2 minutes — players' Commands are applied late"
+              runbook: docs/runbooks/simulation-consumer-lagging.md
+
+  - name: cluster — consumer lag at the threshold does not page
+    interval: 1m
+    input_series:
+      - series: 'andara_consumer_lag{job="andara-server", namespace="andara-dev", partition="0"}'
+        values: '400x10'
+    alert_rule_test:
+      - eval_time: 10m
+        alertname: SimulationConsumerLagging
+        exp_alerts: []

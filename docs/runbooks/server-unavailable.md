@@ -48,9 +48,14 @@ The fastest safe action depends on what `describe` says:
    ordinal and Partition set.
 2. `kubectl --context kind-andara -n andara-<env> logs andara-0 -c server --previous` — the last exit reason and code
    (`server-crashlooping.md`'s exit table; `2` is a Go panic, not a recovery refusal).
-3. `kubectl --context kind-andara -n andara-<env> get pvc snapshots-andara-0` — `Bound`? If `Lost`, the PV is gone; recovery
-   will replay from the log, which is correct and slow (ADR-0002). Set `recovery.require_snapshot=false`
-   for one boot if prod has it `true`.
+3. `kubectl --context kind-andara -n andara-<env> get pvc snapshots-andara-0` — `Bound`? If `Lost`, the PV
+   is gone, and with it every Snapshot round it held. Snapshots are the only start a recovery has: replay runs
+   from a round's offsets and reads the Tick Boundary Records on `andara.events.v1`, which is kept for 30 days
+   (7 on `local`; `docs/specs/kafka/broker-contract.md`, Retention). A World younger than that can replay
+   from the log's start, which is correct and slow (ADR-0002); set `recovery.require_snapshot=false` for one
+   boot if prod has it `true`. A World older than its events retention with no complete round left in the
+   object store or on the PVC **cannot be recovered** from the log: escalate before changing anything
+   (`recovery.md`). On `local` that World is reset instead (`make world-reset ENV=local`).
 4. `kubectl --context kind-andara -n andara-<env> get events --sort-by=.lastTimestamp | tail -20`.
 5. Image: `kubectl --context kind-andara -n andara-<env> get pod andara-0 -o jsonpath='{.spec.containers[0].image}'` — does the
    tag exist in the registry? A `make deploy` with an unpublished tag lands here.
