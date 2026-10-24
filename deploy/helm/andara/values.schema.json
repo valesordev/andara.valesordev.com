@@ -488,6 +488,7 @@
             },
             "image_tag": {
               "type": "string",
+              "pattern": "^[A-Za-z0-9._@+-]{1,200}$",
               "description": "ANDARA_DEPLOY_IMAGE_TAG (AW-SRV-054). Default when unset: 'dev'."
             },
             "control_socket": {
@@ -506,6 +507,7 @@
             },
             "topic_prefix": {
               "type": "string",
+              "pattern": "^[a-z0-9]*$",
               "description": "ANDARA_KAFKA_TOPIC_PREFIX (AW-SRV-058). Default when unset: ''."
             },
             "sasl_username": {

@@ -110,6 +110,9 @@ def test_schema_rejects(env):
         # example here is AW-SRV-009's, which is still pending.
         ("server.agent.lease_ttl=45s", "/server"),
         ("snapshots.size=20GB", "/snapshots/size"),
+        # A string key's `pattern` is the server's own validation (AW-SRV-054, AW-SRV-058).
+        ("server.deploy.image_tag=v1@sha256:0123", "/server/deploy/image_tag"),
+        ("server.kafka.topic_prefix=dev.", "/server/kafka/topic_prefix"),
         ("nonsense=1", "additional properties"),
     ]
     for setting, needle in cases:
