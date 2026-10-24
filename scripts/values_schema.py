@@ -89,6 +89,8 @@ def prop_for(k):
     desc = "%s (%s). Default when unset: %r." % (k["env"], k["story"], k.get("default"))
     if t == "string":
         p = {"type": "string"}
+        if "pattern" in k:
+            p["pattern"] = k["pattern"]
     elif t in ("int", "number"):
         p = {"type": "integer" if t == "int" else "number"}
         if "min" in k:

@@ -38,6 +38,10 @@ class Real(unittest.TestCase):
         self.assertEqual(acl(by["andara-server-dev"], "andara-sim-dev")["resource"]["patternType"], "prefix")
         self.assertEqual(acl(by["andara-projector-state-local"], "andara-projector-state-local")["operations"],
                          ["Read", "Delete"])
+        # The ingress probe reads min.insync.replicas on the commands topic (AW-SRV-044 §8).
+        for env in ("local", "dev"):
+            self.assertIn("DescribeConfigs",
+                          acl(by["andara-server-" + env], env + ".andara.commands.v1")["operations"])
         # Only the projector writes the state topic (AW-SRV-019 AC-9).
         self.assertFalse([a for a in by["andara-server-dev"]["spec"]["authorization"]["acls"]
                           if a["resource"].get("name") == "dev.andara.state.v1"])

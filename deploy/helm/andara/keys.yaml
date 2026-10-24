@@ -11,8 +11,9 @@
 #     key is groomed, not built, and stays out of the schema until it lands.
 #
 # The env name is recorded rather than derived because the existing names are not
-# rule-derivable (ANDARA_STRICT_ORPHANS, ANDARA_ENV). Types: string | int | bool |
-# duration | enum (with `values`). `default` is what the server uses when unset; the
+# rule-derivable (ANDARA_STRICT_ORPHANS, ANDARA_ENV). Types: string (with an optional
+# `pattern`, the server's own validation regex, so helm refuses what the server would) | int |
+# bool | duration | enum (with `values`). `default` is what the server uses when unset; the
 # chart never re-states it.
 
 ignore_env:
@@ -110,7 +111,9 @@ keys:
   # from image.tag with the digest stripped, and mounts an emptyDir at control_socket's directory
   # (AW-INF-042).
   - {key: deploy.admit_wait,         env: ANDARA_DEPLOY_ADMIT_WAIT,       type: duration, default: 5s, story: AW-SRV-054}
-  - {key: deploy.image_tag,          env: ANDARA_DEPLOY_IMAGE_TAG,        type: string, default: dev, story: AW-SRV-054}
+  # The pattern is validateDeploy's (server/config/config.go): an unstripped @sha256:… digest
+  # fails helm here instead of crash-looping the pod.
+  - {key: deploy.image_tag,          env: ANDARA_DEPLOY_IMAGE_TAG,        type: string, pattern: "^[A-Za-z0-9._@+-]{1,200}$", default: dev, story: AW-SRV-054}
   - {key: deploy.control_socket,     env: ANDARA_DEPLOY_CONTROL_SOCKET,   type: string, default: /run/andara/control.sock, story: AW-SRV-054}
 
   # --- AW-SRV-008 / AW-SRV-014 / AW-SRV-015: identity and sessions ---
@@ -121,7 +124,7 @@ keys:
   # server joins it as <prefix>.andara.<name>.v<n> and refuses anything else at startup (exit 1).
   # Empty is prod's value; outside prod it is a startup warn until the follow-on story makes it
   # fatal (ADR-0013 Amendment 16). The chart's values and required check are AW-INF-055's.
-  - {key: kafka.topic_prefix,        env: ANDARA_KAFKA_TOPIC_PREFIX,      type: string, default: "", story: AW-SRV-058}
+  - {key: kafka.topic_prefix,        env: ANDARA_KAFKA_TOPIC_PREFIX,      type: string, pattern: "^[a-z0-9]*$", default: "", story: AW-SRV-058}
   # The SASL principal; empty means no SASL, which is how everything runs today. The password
   # is a file, re-read on each new connection and only when a username is set: the `password`
   # key of the Strimzi KafkaUser Secret, mounted whole by secrets.kafkaCreds. Every projector

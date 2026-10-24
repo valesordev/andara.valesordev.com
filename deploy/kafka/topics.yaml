@@ -191,7 +191,10 @@ consumer_groups:
 principals:
   - name: andara-server
     topics:
-      andara.commands.v1: [Read, Write]
+      # DescribeConfigs: the ingress probe reads min.insync.replicas (MinISR), and Read/Write
+      # imply Describe only. Without it the read is refused and AW-SRV-052's ISR-below-min
+      # mark stays off at the fallback of 1 (AW-SRV-044 §8).
+      andara.commands.v1: [Read, Write, DescribeConfigs]
       andara.events.v1: [Read, Write]
       andara.accounts.v1: [Read, Write]
       andara.audit.v1: [Read, Write]
