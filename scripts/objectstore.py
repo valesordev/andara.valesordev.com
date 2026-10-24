@@ -246,23 +246,46 @@ def require_shared(cmd):
         raise Missing("namespace %s is missing; `make platform-up` creates it" % SHARED_NS)
 
 
+# One signed ListBuckets with a user's pair: 200 when the gateway accepts it.
+AUTH_PROBE_SCRIPT = 's3 "auth" "http://%s:9000/"' % SERVICE
+
+
+def pair_works(secret_name):
+    """Whether the gateway accepts the pair in andara-shared/secret_name (a curl pod with that Secret)."""
+    ok, logs = run_pod(SHARED_NS, CURL, ["probe"], env_from=[secret_name],
+                       command=["sh", "-c", S3_FN + AUTH_PROBE_SCRIPT])
+    return ok and verdicts(logs).get("auth") == "200"
+
+
 def ensure_user(name, secret_name, role, cmd):
-    """The gateway user `name` with the pair in andara-shared/secret_name; created, or its secret
-    reset when the pair was just generated (a recreated Secret), else left."""
-    made = ensure_pair(SHARED_NS, secret_name, access_key=name)
+    """The gateway user `name` with the pair in andara-shared/secret_name. It converges on what the
+    gateway accepts, not on what this run created: a rotation that died between a new Secret and
+    update-user is repaired by the next run, because the pair is probed, not assumed."""
+    ensure_pair(SHARED_NS, secret_name, access_key=name)
     key = [("USER_SECRET", secret_name, "AWS_SECRET_ACCESS_KEY")]
     users = {r[0]: r[1] for r in table(admin("list-users")) if len(r) >= 2}
     if name not in users:
         admin("create-user", "--access", name, "--secret", "$(USER_SECRET)", "--role", role, secret_keys=key)
-        say(cmd, "user %s created (role %s)" % (name, role))
-    elif made:
-        admin("update-user", "--access", name, "--secret", "$(USER_SECRET)", secret_keys=key)
-        say(cmd, "user %s: pair regenerated, gateway updated" % name)
+        did = "created (role %s)" % role
     elif users[name] != role:
         raise Failed("user %s has role %s, not %s; fix it by hand with versitygw admin update-user"
                      % (name, users[name], role))
-    else:
+    elif pair_works(secret_name):
         say(cmd, "user %s exists (role %s); unchanged" % (name, role))
+        return
+    else:
+        admin("update-user", "--access", name, "--secret", "$(USER_SECRET)", secret_keys=key)
+        did = "out of step with %s/%s; gateway updated" % (SHARED_NS, secret_name)
+    if not pair_works(secret_name):
+        raise Failed("%s: the gateway refuses the pair in %s/%s after it was %s"
+                     % (name, SHARED_NS, secret_name, "created" if did.startswith("created") else "updated"))
+    say(cmd, "user %s %s" % (name, did))
+
+
+# The gateway reads the root pair at start (envFrom), so its pod template carries the root Secret's
+# uid: a recreated Secret changes the template and rolls the gateway onto the new pair, and a run
+# interrupted before the roll converges on the next one (Codex on #648).
+ROOT_UID_ANNOTATION = "andara.valesor/root-secret-uid"
 
 
 def up(cmd="up"):
@@ -270,6 +293,13 @@ def up(cmd="up"):
     made = ensure_pair(SHARED_NS, ROOT_SECRET, keys=("ROOT_ACCESS_KEY", "ROOT_SECRET_KEY"))
     say(cmd, "root Secret %s/%s %s" % (SHARED_NS, ROOT_SECRET, "created" if made else "exists; unchanged"))
     kubectl(SHARED_NS, "apply", "-f", SHARED_MANIFEST)
+    uid = kubectl(SHARED_NS, "get", "secret", ROOT_SECRET, "-o", "jsonpath={.metadata.uid}").stdout.strip()
+    running = kubectl(SHARED_NS, "get", "deployment", SERVICE, "-o",
+                      "jsonpath={.spec.template.metadata.annotations.andara\\.valesor/root-secret-uid}").stdout.strip()
+    if running != uid:
+        patch = {"spec": {"template": {"metadata": {"annotations": {ROOT_UID_ANNOTATION: uid}}}}}
+        kubectl(SHARED_NS, "patch", DEPLOYMENT, "--type", "merge", "-p", json.dumps(patch))
+        say(cmd, "versitygw restarted onto the root Secret (uid %s)" % uid)
     kubectl(SHARED_NS, "rollout", "status", DEPLOYMENT, "--timeout=" + READY_TIMEOUT)
     say(cmd, "versitygw Ready at %s" % SHARED_ENDPOINT)
     ensure_user(IT_USER, IT_SECRET, "userplus", cmd)

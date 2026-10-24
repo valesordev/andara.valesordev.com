@@ -407,36 +407,93 @@ class ProbeShell(unittest.TestCase):
 
 
 class Install(unittest.TestCase):
-    """The user step: create when absent, reset when the pair was regenerated, else leave it."""
+    """The user step converges on what the gateway accepts, not on what this run created (Codex on
+    #648: a rotation interrupted between the new Secret and update-user left the pair out of step, and
+    a re-run skipped the update because it hadn't made the Secret)."""
 
-    def run_ensure(self, users_table, made):
-        admin_calls = []
+    def run_ensure(self, users_table, works):
+        """works: the answers pair_works gives, in order (the probe before and after any change)."""
+        admin_calls, answers = [], list(works)
 
         def fake_admin(*args, secret_keys=()):
             admin_calls.append((args, list(secret_keys)))
             return users_table if args[0] == "list-users" else ""
-        with mock.patch.object(objectstore, "ensure_pair", lambda *a, **k: made), \
+        with mock.patch.object(objectstore, "ensure_pair", lambda *a, **k: False), \
                 mock.patch.object(objectstore, "admin", fake_admin), \
+                mock.patch.object(objectstore, "pair_works", lambda secret: answers.pop(0)), \
                 contextlib.redirect_stdout(io.StringIO()):
             objectstore.ensure_user("andara-dev", "andara-objectstore-dev", "user", "install")
-        return [a for a, _ in admin_calls], [k for _, k in admin_calls]
+        return [a for a, _ in admin_calls], [k for _, k in admin_calls], answers
 
-    def test_absent_user_is_created_with_the_secret_by_reference(self):
-        calls, keys = self.run_ensure(Parsing.USERS.replace("andara-dev    user      0       0        0\n", ""), True)
+    ABSENT = Parsing.USERS.replace("andara-dev    user      0       0        0\n", "")
+
+    def test_absent_user_is_created_with_the_secret_by_reference_then_verified(self):
+        calls, keys, left = self.run_ensure(self.ABSENT, [True])
         self.assertEqual(calls[1][:6], ("create-user", "--access", "andara-dev", "--secret", "$(USER_SECRET)", "--role"))
         self.assertEqual(keys[1], [("USER_SECRET", "andara-objectstore-dev", "AWS_SECRET_ACCESS_KEY")])
+        self.assertEqual(left, [], "the new user's pair is probed")
 
-    def test_existing_user_with_a_kept_pair_is_left(self):
-        calls, _ = self.run_ensure(Parsing.USERS, False)
+    def test_existing_user_whose_pair_works_is_left(self):
+        calls, _, _ = self.run_ensure(Parsing.USERS, [True])
         self.assertEqual([c[0] for c in calls], ["list-users"])
 
-    def test_existing_user_with_a_regenerated_pair_is_updated(self):
-        calls, _ = self.run_ensure(Parsing.USERS, True)
-        self.assertEqual(calls[1][0], "update-user")
+    def test_existing_user_whose_pair_the_gateway_refuses_is_updated_whoever_made_the_secret(self):
+        # ensure_pair says the Secret already existed: an earlier run made it and died before update-user.
+        calls, keys, left = self.run_ensure(Parsing.USERS, [False, True])
+        self.assertEqual([c[0] for c in calls], ["list-users", "update-user"])
+        self.assertEqual(keys[1], [("USER_SECRET", "andara-objectstore-dev", "AWS_SECRET_ACCESS_KEY")])
+        self.assertEqual(left, [])
+
+    def test_a_pair_still_refused_after_the_update_fails(self):
+        with self.assertRaisesRegex(objectstore.Failed, "andara-dev: the gateway refuses the pair in "
+                                                        "andara-shared/andara-objectstore-dev"):
+            self.run_ensure(Parsing.USERS, [False, False])
 
     def test_a_user_with_the_wrong_role_fails(self):
         with self.assertRaisesRegex(objectstore.Failed, "has role userplus, not user"):
-            self.run_ensure(Parsing.USERS.replace("andara-dev    user ", "andara-dev    userplus "), False)
+            self.run_ensure(Parsing.USERS.replace("andara-dev    user ", "andara-dev    userplus "), [True])
+
+
+class Up(unittest.TestCase):
+    """The gateway reads the root pair at start, so its pod template carries the root Secret's uid:
+    a recreated root Secret rolls the gateway onto it, and an interrupted run converges on the next
+    (Codex on #648)."""
+
+    def run_up(self, annotation, uid="uid-new"):
+        calls = []
+
+        def fake_kubectl(ns, *args, check=True, input=None):
+            calls.append(list(args))
+            out = ""
+            if args[:2] == ("get", "secret"):
+                out = uid
+            elif args[:2] == ("get", "deployment"):
+                out = annotation
+            return mock.Mock(returncode=0, stdout=out, stderr="")
+        with mock.patch.object(objectstore, "require_shared", lambda cmd: None), \
+                mock.patch.object(objectstore, "ensure_pair", lambda *a, **k: False), \
+                mock.patch.object(objectstore, "ensure_user", lambda *a: None), \
+                mock.patch.object(objectstore, "kubectl", fake_kubectl), \
+                contextlib.redirect_stdout(io.StringIO()) as out:
+            objectstore.up()
+        return calls, out.getvalue()
+
+    def test_a_gateway_on_the_current_root_secret_is_left(self):
+        calls, _ = self.run_up("uid-new")
+        self.assertFalse([c for c in calls if c[0] == "patch"])
+
+    def test_a_gateway_on_another_root_secret_is_rolled_onto_it_before_any_admin_call(self):
+        for annotation in ("uid-old", ""):  # a recreated Secret, or a gateway applied before the annotation
+            with self.subTest(annotation=annotation):
+                calls, out = self.run_up(annotation)
+                patches = [c for c in calls if c[0] == "patch"]
+                self.assertEqual(len(patches), 1)
+                self.assertIn(objectstore.ROOT_UID_ANNOTATION, patches[0][-1])
+                self.assertIn("uid-new", patches[0][-1])
+                # the rollout is waited on after the patch, so the admin pods meet the new root
+                self.assertGreater(max(i for i, c in enumerate(calls) if c[0] == "rollout"),
+                                   calls.index(patches[0]))
+                self.assertIn("restarted onto the root Secret", out)
 
 
 class PairChanged(unittest.TestCase):
