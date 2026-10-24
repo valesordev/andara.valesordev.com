@@ -56,7 +56,8 @@ kubeconform -strict -summary -kubernetes-version "$KUBE_VERSION" \
 kubeconform -strict -summary -kubernetes-version "$KUBE_VERSION" \
   -schema-location default -schema-location "$CRD_SCHEMAS" \
   deploy/k8s/kafka/*.yaml | sed "s/^/k8s-dry [kafka]: /"
-# The snapshot object store `make objectstore-install` applies per namespace (AW-INF-025).
+# The snapshot object stores: the shared one `make objectstore-up` applies in andara-shared (AW-INF-058),
+# and prod's own that `make objectstore-install ENV=prod` applies in andara-prod (AW-INF-025).
 kubeconform -strict -summary -kubernetes-version "$KUBE_VERSION" \
   deploy/k8s/objectstore/*.yaml | sed "s/^/k8s-dry [objectstore]: /"
 # dev follows the tag `dev` (AW-INF-019, AW-INF-059): the Application from the catalog's Argo CD schema.

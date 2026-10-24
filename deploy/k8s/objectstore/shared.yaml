@@ -1,0 +1,156 @@
+# The shared snapshot object store (AW-INF-058, ADR-0013 decision 4): one versitygw in
+# andara-shared serving local and dev, a bucket and a credential per environment. Applied by
+# `make objectstore-up` (which `make shared-up` calls) into andara-shared; prod keeps its own
+# per-namespace store (objectstore.yaml, ADR-0013 decision 10).
+#
+# The gateway runs its internal IAM (--iam-dir) on the PVC beside the buckets. Its root pair,
+# in the Secret andara-objectstore-root, is the operator's alone: objectstore.py's targets use
+# it to create the users andara-local, andara-dev and andara-it and the two buckets each
+# environment owns. The gateway enforces ownership (verified on v1.8.0, 2026-10-24): a `user`
+# sees and writes only its own bucket and creates none, and `andara-it` (`userplus`) creates
+# andara-test-* buckets but is refused every environment bucket and any name that exists.
+#
+# The access log goes to stdout: time, requester (the access key, which is the user's name),
+# bucket, operation, status and error code, never a secret. Per-environment attribution is by
+# bucket and user; the gateway exposes no Prometheus endpoint (only StatsD/DogStatsD sinks,
+# none wired).
+#
+# NetworkPolicy: port 9000 admits the andara pods (server and projector) and the bucket tool
+# pods in the application namespaces (andara.valesor/env in {local, dev}), and the tool pods
+# in andara-shared, nothing else.
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: andara-objectstore
+  labels:
+    app.kubernetes.io/name: andara-objectstore
+spec:
+  accessModes: [ReadWriteOnce]
+  storageClassName: standard
+  resources:
+    requests:
+      storage: 10Gi
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: andara-objectstore
+  labels:
+    app.kubernetes.io/name: andara-objectstore
+spec:
+  replicas: 1
+  # One writer on an RWO volume.
+  strategy:
+    type: Recreate
+  selector:
+    matchLabels:
+      app.kubernetes.io/name: andara-objectstore
+  template:
+    metadata:
+      labels:
+        app.kubernetes.io/name: andara-objectstore
+    spec:
+      automountServiceAccountToken: false
+      securityContext:
+        runAsNonRoot: true
+        runAsUser: 10001
+        runAsGroup: 10001
+        fsGroup: 10001
+        seccompProfile:
+          type: RuntimeDefault
+      initContainers:
+        # The IAM directory and the posix root are siblings, so the IAM files are never a bucket.
+        - name: dirs
+          image: versity/versitygw:v1.8.0@sha256:30292fc2eeacc67a36993b01f7a7a5e3361a19cced0e80c1d71cfa2a4b0a2499
+          command: [sh, -c, "mkdir -p /data/iam /data/buckets"]
+          securityContext:
+            allowPrivilegeEscalation: false
+            readOnlyRootFilesystem: true
+            capabilities:
+              drop: [ALL]
+          volumeMounts:
+            - name: data
+              mountPath: /data
+      containers:
+        - name: versitygw
+          image: versity/versitygw:v1.8.0@sha256:30292fc2eeacc67a36993b01f7a7a5e3361a19cced0e80c1d71cfa2a4b0a2499
+          args:
+            - --access=$(ROOT_ACCESS_KEY)
+            - --secret=$(ROOT_SECRET_KEY)
+            - --port=:9000
+            - --health=/health
+            - --iam-dir=/data/iam
+            - --access-log=stdout
+            - posix
+            - /data/buckets
+          envFrom:
+            - secretRef:
+                name: andara-objectstore-root
+          ports:
+            - name: s3
+              containerPort: 9000
+          readinessProbe:
+            httpGet: {path: /health, port: s3}
+            periodSeconds: 5
+          livenessProbe:
+            httpGet: {path: /health, port: s3}
+            periodSeconds: 10
+          resources:
+            requests: {cpu: 50m, memory: 64Mi}
+            limits: {memory: 256Mi}
+          securityContext:
+            allowPrivilegeEscalation: false
+            readOnlyRootFilesystem: true
+            capabilities:
+              drop: [ALL]
+          volumeMounts:
+            - name: data
+              mountPath: /data
+      volumes:
+        - name: data
+          persistentVolumeClaim:
+            claimName: andara-objectstore
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: andara-objectstore
+  labels:
+    app.kubernetes.io/name: andara-objectstore
+spec:
+  selector:
+    app.kubernetes.io/name: andara-objectstore
+  ports:
+    - name: s3
+      port: 9000
+      targetPort: s3
+---
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: andara-objectstore
+  labels:
+    app.kubernetes.io/name: andara-objectstore
+spec:
+  podSelector:
+    matchLabels:
+      app.kubernetes.io/name: andara-objectstore
+  policyTypes: [Ingress]
+  ingress:
+    - from:
+        - namespaceSelector:
+            matchExpressions:
+              - key: andara.valesor/env
+                operator: In
+                values: [local, dev]
+          podSelector:
+            matchExpressions:
+              - key: app.kubernetes.io/name
+                operator: In
+                values: [andara, andara-objectstore-tools]
+        - podSelector:
+            matchLabels:
+              app.kubernetes.io/name: andara-objectstore-tools
+      ports:
+        - port: s3
+          protocol: TCP

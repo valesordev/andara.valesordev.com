@@ -137,10 +137,12 @@ observability:
 release:
   rolled_back_to: ""
 
-# The in-cluster snapshot object store (AW-INF-025). server.snapshot.s3_endpoint names this
-# Service where server.snapshot.store is s3; helm-test holds the two together.
+# The in-cluster snapshot object store: the shared gateway in andara-shared for local and dev
+# (AW-INF-058), so its Service by FQDN. server.snapshot.s3_endpoint names this host where
+# server.snapshot.store is s3; helm-test holds the two together. prod's own per-namespace store
+# (AW-INF-025) would set its in-namespace name here; prod.yaml doesn't use s3 yet (AW-INF-078).
 objectstore:
-  service: andara-objectstore
+  service: andara-objectstore.andara-shared.svc
 
 # `state` has a binary (AW-SRV-019: `andara-projector state`, in the server image). It runs on
 # an environment once its snapshot store is s3 (so it reads the rounds the server writes) and

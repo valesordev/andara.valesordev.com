@@ -17,6 +17,7 @@ on:
   push:
     branches: [main]
     paths:
+      - "scripts/objectstore.py"
       - "deploy/argocd/**"
       - "scripts/argocd.py"
       - "deploy/helm/**"
@@ -36,6 +37,7 @@ on:
       - ".github/workflows/kind.yaml"
   pull_request:
     paths:
+      - "scripts/objectstore.py"
       - "deploy/argocd/**"
       - "scripts/argocd.py"
       - "deploy/helm/**"
@@ -268,6 +270,17 @@ jobs:
             echo "::error::a pod in another namespace reached the server's http port"; exit 1
           fi
           kubectl --context "$ANDARA_KUBE_CONTEXT" delete ns andara-probe --wait=false
+      # AW-INF-058 AC-2, AC-3: the shared object store separates the environments on the pinned
+      # versitygw. PROFILE=ci has no andara-shared (platform-up's on the box), so the step makes it.
+      - name: shared object store keeps each environment to its own bucket (AW-INF-058 AC-2, AC-3)
+        run: |
+          set -euo pipefail
+          kubectl --context "$ANDARA_KUBE_CONTEXT" create namespace andara-shared --dry-run=client -o yaml \
+            | kubectl --context "$ANDARA_KUBE_CONTEXT" apply -f -
+          make objectstore-up
+          make objectstore-install ENV=local
+          make objectstore-install ENV=dev
+          make objectstore-check
       - name: stream soak through the edge, renewal mid-stream (AC-1, AC-3)
         run: make stream-soak ENV=local SOAK=${{ github.event_name == 'schedule' && '60m' || '5m' }}
       # AW-INF-019, the install and render half. A promotion needs `publish` and a signing

@@ -962,7 +962,7 @@
     "objectstore": {
       "type": "object",
       "additionalProperties": false,
-      "description": "The in-cluster snapshot object store `make objectstore-install` puts in the namespace (AW-INF-025).",
+      "description": "The in-cluster snapshot object store's Service host. local and dev use the shared gateway in andara-shared (AW-INF-058); prod's is in its namespace (AW-INF-025).",
       "properties": {
         "service": {
           "type": "string",

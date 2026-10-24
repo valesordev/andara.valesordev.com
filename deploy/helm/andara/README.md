@@ -54,7 +54,9 @@ chart, and one `Deployment` per projector. Story: [AW-INF-003](https://github.co
 | `make argocd-ui` | the UI on `localhost:8090` (`ARGOCD_UI_PORT=`) by port-forward, and where the admin password is |
 | `make argocd-recover ENV=dev` | Kubernetes' forced rollback: delete an `andara` pod stuck on a build that never became Ready, once the StatefulSet's `updateRevision` is the Application's current image; refuses otherwise |
 | `make argocd-uninstall ENV=dev` | remove the Application without cascading and give its resources Helm's ownership metadata, so `make helm-install ENV=dev TAG=<sha-…@sha256:…>` takes them back |
-| `make objectstore-install ENV=<dev\|prod>` | the snapshot object store in `andara-<env>` (`deploy/k8s/objectstore/`): versitygw on its own PVC, the Secret `andara-snapshot-s3` (generated once, never rewritten), and the bucket `andara-snapshots-<env>`; idempotent (AW-INF-025) |
+| `make objectstore-up` | the shared snapshot object store in `andara-shared` (`deploy/k8s/objectstore/shared.yaml`): versitygw with its IAM on a 10Gi PVC, the operator-only root Secret, the `andara-it` user; `make shared-up` runs it; idempotent (AW-INF-058) |
+| `make objectstore-install ENV=<local\|dev\|prod>` | `local`/`dev`: the user `andara-<env>`, its bucket `andara-snapshots-<env>` on the shared gateway, and its pair copied into `andara-<env>/andara-snapshot-s3`. `prod`: its own versitygw in `andara-prod` (AW-INF-025, unchanged). Idempotent (`deploy/k8s/objectstore/README.md`) |
+| `make objectstore-check` | the shared store's isolation test: each pair against both buckets, `andara-it` against both and its own `andara-test-*` one, confirmed from the gateway's access log (AW-INF-058) |
 | `make projector-stop ENV=<env>` | scale the state projector to 0 and wait for its pods to go and its consumer group to empty (`PROJECTOR_STOP_TIMEOUT`, 120s) |
 | `make projector-start ENV=<env>` | scale it to 1 and wait for Ready (`PROJECTOR_START_TIMEOUT`, 300s) |
 | `make projector-rebuild ENV=<env>` | refuse while a rebuild Job runs; `projector-stop`; the Job `andara-projector-state-rebuild` (`--rebuild`, from the Deployment's pod template, unscraped) until it logs `caught up`; delete it; `projector-start` (`PROJECTOR_REBUILD_TIMEOUT`, 30m) |
@@ -111,8 +113,10 @@ The cluster's side of the contract with the workstation `nginx` (ADR-0013 decisi
 - **Snapshot store.** `server.snapshot.store` is `fs` (the `snapshots` claim) or `s3`. On `s3`,
   `secrets.snapshotS3.secretName` (`andara-snapshot-s3`) goes into the server and every projector
   by `envFrom`, so both read the rounds the server writes, and `server.snapshot.s3_endpoint` names
-  `objectstore.service` (`andara-objectstore`), which `helm-test` holds together. `dev` is on `s3`
-  (AW-INF-025). The claim stays on the StatefulSet, unused there, until AW-INF-007 retires it.
+  `objectstore.service` (`andara-objectstore.andara-shared.svc`, the shared gateway of AW-INF-058),
+  which `helm-test` holds together. `dev` is on `s3`, in its own bucket `andara-snapshots-dev`
+  with its own pair (`deploy/k8s/objectstore/README.md`). The claim stays on the StatefulSet,
+  unused there, until AW-INF-007 retires it.
 - **Edge (AW-INF-006).** Two `Ingress` on `host` (class `traefik`, entrypoint `websecure`): `/` for
   Game, `/andara.admin.v1.Admin/` behind a `Middleware` `ipAllowList` of `admin.allowedCIDRs`
   (403 at the edge; the server never sees it). TLS ends at Traefik with `andara-edge-tls` and is
