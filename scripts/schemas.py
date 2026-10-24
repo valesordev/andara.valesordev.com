@@ -229,8 +229,10 @@ def port_forward():
     import shutil
     if shutil.which("kubectl") is None:
         die("kubectl not found; the shared registry is on the cluster", 3)
+    # stderr merged into stdout: one pipe, drained below, so kubectl's per-connection errors can't fill
+    # an undrained pipe and stall the forward.
     proc = popen(kube.kubectl("-n", REGISTRY_NS, "port-forward", REGISTRY_SERVICE, ":8081"),
-                 stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True)
+                 stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True)
     lines = queue.Queue()
 
     def pump():
@@ -238,16 +240,24 @@ def port_forward():
         # here, or a long run would fill the pipe and stall the forward.
         for line in proc.stdout:
             lines.put(line)
+        lines.put(None)  # kubectl ended: the wait below fails at once, not at the deadline
     threading.Thread(target=pump, daemon=True).start()
+    seen = []
     try:
-        first = lines.get(timeout=PORT_FORWARD_TIMEOUT)
+        while True:
+            line = lines.get(timeout=PORT_FORWARD_TIMEOUT)
+            if line is None:
+                break
+            seen.append(line)
+            if "Forwarding from 127.0.0.1:" in line:
+                break
     except queue.Empty:
-        first = ""
-    m = re.search(r"Forwarding from 127\.0\.0\.1:(\d+)", first)
+        pass
+    m = re.search(r"Forwarding from 127\.0\.0\.1:(\d+)", "".join(seen))
     if not m:
         proc.kill()
-        die("no port-forward to %s in %s within %ds: %s" % (REGISTRY_SERVICE, REGISTRY_NS, PORT_FORWARD_TIMEOUT,
-                                                             (proc.stderr.read() or first).strip()[:300]))
+        die("no port-forward to %s in %s: %s" % (REGISTRY_SERVICE, REGISTRY_NS,
+                                                 "".join(seen).strip()[:300] or "no output within %ds" % PORT_FORWARD_TIMEOUT))
     return "http://127.0.0.1:%s" % m.group(1), proc
 
 
@@ -478,10 +488,13 @@ def apply_action(env, url):
     mode = doc["compatibility"]
     items = doc["references"] + doc["subjects"]
 
-    # Every existing subject is asked before any is registered, so a refused change registers
-    # nothing anywhere (AC-4). An importer whose references aren't yet registered as declared (a new
-    # import, or a changed reference) can't be asked yet: the registry can't resolve the import. It is
-    # asked after the references are registered and before it is, so it is never registered unasked.
+    # A refused change registers nothing anywhere (AC-4), in phases:
+    #   1. every subject whose references are registered as declared is asked;
+    #   2. the references are registered (an importer can't be asked until they are: the registry
+    #      can't resolve its import), each version this run creates recorded;
+    #   3. every importer that had to wait is asked; one refused rolls back the versions of phase 2,
+    #      so the run leaves the registry as it found it;
+    #   4. only then is any other subject registered.
     refused, deferred = [], set()
     for r in items:
         subject = env_subject(prefix, r["subject"])
@@ -493,24 +506,49 @@ def apply_action(env, url):
         die("the registry refuses %s under compatibility %s; nothing was registered"
             % (", ".join(refused), mode))
 
-    call(url, "/config", "PUT", {"compatibility": mode})
-    print("schemas-apply: global compatibility set to %s run=%s" % (mode, RUN_ID))
+    made, created_versions = 0, []
 
-    made, done = 0, []
-    # References first: the registry resolves a reference by subject name, so the imported
-    # file has to already be there when the importer is registered.
-    for r in items:
+    def put(r):
+        nonlocal made
         subject, rel = env_subject(prefix, r["subject"]), r["file"]
-        if subject in deferred and ask(url, subject, rel, files, prefix, mode):
-            die("the registry refuses %s under compatibility %s; registered before it: %s"
-                % (subject, mode, ", ".join(done) or "nothing"))
-        done.append(subject)
         sid, created = register(url, subject, source_of(rel), reference_list(url, files, rel, prefix))
-        call(url, "/config/%s" % q(subject), "PUT", {"compatibility": mode})
+        if created:
+            created_versions.append((subject, call(url, "/subjects/%s/versions/latest" % q(subject))["version"]))
         made += 1 if created else 0
         print("schemas: %s %s id=%s run=%s" % (subject, "registered" if created else "unchanged", sid, RUN_ID))
+
+    # References first: the registry resolves a reference by subject name, so the imported file has
+    # to be there before its importer is asked or registered.
+    for r in doc["references"]:
+        put(r)
+    late = [r for r in doc["subjects"] if env_subject(prefix, r["subject"]) in deferred]
+    refused = []
+    for r in late:
+        refused += ask(url, env_subject(prefix, r["subject"]), r["file"], files, prefix, mode)
+    if refused:
+        undone = rollback(url, created_versions)
+        die("the registry refuses %s under compatibility %s; nothing was registered%s"
+            % (", ".join(refused), mode, " (rolled back %s)" % ", ".join(undone) if undone else ""))
+    call(url, "/config", "PUT", {"compatibility": mode})
+    print("schemas-apply: global compatibility set to %s run=%s" % (mode, RUN_ID))
+    for r in doc["references"]:
+        call(url, "/config/%s" % q(env_subject(prefix, r["subject"])), "PUT", {"compatibility": mode})
+    for r in doc["subjects"]:
+        put(r)
+        call(url, "/config/%s" % q(env_subject(prefix, r["subject"])), "PUT", {"compatibility": mode})
     print("schemas-apply: %d subject(s), %d newly registered (env=%s, prefix=%s)"
           % (len(items), made, env, prefix or "(none)"))
+
+
+def rollback(url, created_versions):
+    """Delete the versions this run created, newest first, soft then permanently (a Confluent-API
+    registry needs both); the subject@version strings it undid."""
+    undone = []
+    for subject, version in reversed(created_versions):
+        call(url, "/subjects/%s/versions/%s" % (q(subject), version), "DELETE")
+        call(url, "/subjects/%s/versions/%s" % (q(subject), version), "DELETE", params="?permanent=true")
+        undone.append("%s@%s" % (subject, version))
+    return undone
 
 
 # --------------------------------------------------------------------------- diff

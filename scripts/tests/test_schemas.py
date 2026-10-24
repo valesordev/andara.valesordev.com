@@ -72,6 +72,12 @@ class FakeRegistry:
                 return {"is_compatible": False, "messages": ["Incompatible modification FIELD_KIND_ALTER"]}
             return {"is_compatible": True}
         subject = schemas.urllib.parse.unquote(p[2])
+        if method == "DELETE" and len(p) == 5 and p[3] == "versions":
+            if "permanent" not in params:
+                self.subjects[subject] = [v for v in self.subjects[subject] if v["version"] != int(p[4])]
+                if not self.subjects[subject]:
+                    del self.subjects[subject]
+            return {}
         if path.endswith("/versions/latest"):
             if subject not in self.subjects:
                 raise RuntimeError("GET %s -> HTTP 404" % path)
@@ -208,17 +214,40 @@ class Apply(unittest.TestCase):
         self.assertNotIn("Traceback", err)
         self.assertIn(ref, reg.subjects)
 
-    def test_a_deferred_importer_still_refused_registers_nothing_after_it(self):
+    def test_a_deferred_importer_refused_leaves_the_registry_as_it_was(self):
+        """Pre-review round 2 P1: a reference and its importer changed together. The reference has to
+        be registered before the importer can be asked; the importer is refused; the reference's new
+        version is rolled back, so AC-4's 'registers nothing' holds."""
         reg = FakeRegistry(strict=True)
         run(schemas.apply_action, "dev", "http://r", registry=reg)
         ref = "dev." + DECL["references"][0]["file"]
         importer = next(s for s, v in reg.subjects.items() if (v[-1].get("payload") or {}).get("references"))
-        del reg.subjects[ref]
+        # The reference's registered version differs from the file now (it changed in this commit).
+        reg.subjects[ref][-1]["payload"] = dict(reg.subjects[ref][-1]["payload"], schema="old")
         reg.incompatible = {importer}
+        before = {s: [v["version"] for v in vs] for s, vs in reg.subjects.items()}
         code, _, err = run(schemas.apply_action, "dev", "http://r", registry=reg)
         self.assertEqual(code, 1)
-        self.assertIn("the registry refuses %s under compatibility BACKWARD; registered before it:" % importer, err)
-        self.assertEqual(len(reg.subjects[importer]), 1, "the refused importer gained no version")
+        self.assertIn("the registry refuses %s under compatibility BACKWARD; nothing was registered (rolled back %s@2)"
+                      % (importer, ref), err)
+        self.assertEqual({s: [v["version"] for v in vs] for s, vs in reg.subjects.items()}, before)
+        self.assertTrue([c for c in reg.calls if c[0] == "DELETE"])
+
+    def test_a_reference_lookup_that_fails_defers_rather_than_crashes(self):
+        """refs_ready's error branch: a lookup answering 500 is 'not ready', never a traceback."""
+        reg = FakeRegistry(strict=True)
+        run(schemas.apply_action, "dev", "http://r", registry=reg)
+        real = reg.__call__
+        ref_path = "/subjects/%s" % schemas.q("dev." + DECL["references"][0]["file"])
+
+        def flaky(url, path, method="GET", payload=None, params=""):
+            if method == "POST" and path == ref_path:
+                raise RuntimeError("POST %s -> HTTP 500 boom" % path)
+            return real(url, path, method, payload, params)
+        code, out, err = run(schemas.apply_action, "dev", "http://r", registry=flaky)
+        self.assertEqual(code, 0, err)
+        self.assertNotIn("Traceback", err)
+        self.assertIn("0 newly registered", out)
 
     def test_a_failed_question_exits_1_naming_the_subject(self):
         reg = FakeRegistry(["dev." + s for s in DECLARED])
@@ -344,13 +373,21 @@ class PortForward(unittest.TestCase):
         proc = self.FakeProc(["Forwarding from 127.0.0.1:41234 -> 8081\n", "Handling connection for 41234\n"])
         self.assertEqual(self.forward(proc), ("http://127.0.0.1:41234", proc))
 
-    def test_no_forwarding_line_exits_1_and_kills_it(self):
-        proc = self.FakeProc([], stderr="error: services \"andara-schema-registry\" not found")
+    def test_no_forwarding_line_exits_1_at_once_and_kills_it(self):
+        # stderr is merged into stdout: kubectl's error is a line, and its exit ends the wait at once.
+        import time
+        proc = self.FakeProc(['error: services "andara-schema-registry" not found\n'])
+        start = time.monotonic()
         with contextlib.redirect_stderr(io.StringIO()) as err, self.assertRaises(SystemExit) as e:
             self.forward(proc)
         self.assertEqual(e.exception.code, 1)
+        self.assertLess(time.monotonic() - start, 0.9, "kubectl ended; the deadline isn't waited out")
         self.assertTrue(proc.killed)
         self.assertIn("not found", err.getvalue())
+
+    def test_a_line_before_the_forwarding_line_is_skipped(self):
+        proc = self.FakeProc(["W1024 some warning\n", "Forwarding from 127.0.0.1:5000 -> 8081\n"])
+        self.assertEqual(self.forward(proc)[0], "http://127.0.0.1:5000")
 
     def test_main_ends_the_forward_even_when_the_action_dies(self):
         proc = self.FakeProc([])
@@ -380,6 +417,10 @@ class Ascii(unittest.TestCase):
             schemas.ascii_comments('option x = "http://\u00e9";', "f.proto")
         self.assertEqual(e.exception.code, 1)
         self.assertEqual(schemas.ascii_comments('option x = "http://a"; // \u2014'), 'option x = "http://a"; // ?')
+
+    def test_escaped_quotes_and_single_quotes(self):
+        self.assertEqual(schemas.ascii_comments('option x = "a\\"b"; // \u2014'), 'option x = "a\\"b"; // ?')
+        self.assertEqual(schemas.ascii_comments("option y = 'x//y'; // \u00e9"), "option y = 'x//y'; // ?")
 
     def test_every_declared_proto_goes_out_ascii(self):
         for r in DECL["references"] + DECL["subjects"]:
