@@ -271,8 +271,10 @@ def registry_url(env, broker):
 
 
 class Unreachable(RuntimeError):
-    """The registry didn't answer at all. A RuntimeError like an HTTP error, so a run that loses the
-    registry part-way still rolls back and names what it registered; main exits 1 on one that escapes."""
+    """The registry didn't answer at all. A RuntimeError like an HTTP error, so it takes the same
+    paths: a deferred importer's lost question rolls back, a failed registration names what was
+    registered before it, and main exits 1 on one that escapes. A loss after a POST the registry
+    committed can leave that one version unnamed; `make schemas-diff ENV=<env>` shows it."""
 
 
 def call(url, path, method="GET", payload=None, params=""):

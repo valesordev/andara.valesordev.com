@@ -189,10 +189,19 @@ class Url(unittest.TestCase):
 
         def gone(url, path, method="GET", payload=None, params=""):
             raise schemas.Unreachable("no schema registry at %s (refused)" % url)
-        with mock.patch.object(schemas, "call", gone), mock.patch.object(schemas, "descriptor", files_from_protos), \
-                contextlib.redirect_stdout(io.StringIO()):
+
+        def flapping(url, path, method="GET", payload=None, params=""):
+            # Lost only for the reads that would otherwise mean "not registered"; every other call
+            # answers, so a swallowed loss would end as drift, not as Unreachable.
+            if path.endswith("/versions/latest"):
+                return gone(url, path)
+            return reg(url, path, method, payload, params)
+        with mock.patch.object(schemas, "call", flapping), mock.patch.object(schemas, "descriptor", files_from_protos), \
+                contextlib.redirect_stdout(io.StringIO()), contextlib.redirect_stderr(io.StringIO()):
             with self.assertRaises(schemas.Unreachable):
                 schemas.diff_action("dev", "http://r")
+        with mock.patch.object(schemas, "call", gone), mock.patch.object(schemas, "descriptor", files_from_protos), \
+                contextlib.redirect_stdout(io.StringIO()):
             with self.assertRaises(schemas.Unreachable):
                 schemas.incompatible("http://r", "dev.x", "src", [], "BACKWARD")
             importer = next(r for r in DECL["subjects"] if files_from_protos()[r["file"]]["deps"])
@@ -201,6 +210,7 @@ class Url(unittest.TestCase):
 
     def test_main_exits_1_on_an_unreachable_registry(self):
         with mock.patch.object(schemas, "registry_url", return_value=("http://nowhere:1", None)), \
+                mock.patch.object(schemas, "descriptor", files_from_protos), \
                 mock.patch("urllib.request.urlopen", side_effect=urllib.error.URLError("refused")), \
                 mock.patch.object(sys, "argv", ["schemas.py", "diff", "--env", "dev"]), \
                 contextlib.redirect_stdout(io.StringIO()), contextlib.redirect_stderr(io.StringIO()) as err:
