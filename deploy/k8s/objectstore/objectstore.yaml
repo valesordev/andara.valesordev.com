@@ -1,9 +1,11 @@
-# The snapshot object store for an in-cluster environment (AW-INF-025): versitygw, the S3
-# gateway compose already pins and server/store's s3 suite passes on (AW-SRV-006), over a
-# directory on its own PVC. The server writes snapshot rounds to it and the state projector
-# reads them, with no volume shared between the two (contract review, 2026-09-28).
+# prod's own snapshot object store (AW-INF-025; ADR-0013 decision 10 keeps prod off the shared
+# one): versitygw, the S3 gateway compose already pins and server/store's s3 suite passes on
+# (AW-SRV-006), over a directory on its own PVC. The server writes snapshot rounds to it and the
+# state projector reads them, with no volume shared between the two (contract review,
+# 2026-09-28). local and dev use the shared gateway in andara-shared instead (shared.yaml,
+# AW-INF-058).
 #
-# Applied into andara-<env> by `make objectstore-install ENV=<env>`, which creates the Secret
+# Applied into andara-prod by `make objectstore-install ENV=prod`, which creates the Secret
 # andara-snapshot-s3 first. The gateway's root credential is that Secret's pair, so the
 # server, the projector and this gateway agree on one credential that exists only in the
 # namespace.

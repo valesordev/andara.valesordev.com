@@ -414,6 +414,7 @@ class Rebuild(Base):
         self.assertEqual(steps, ["export kind-andara", "kind delete", "kind create", "platform-up " + self.run_.id,
                                  "shared-up " + self.run_.id])
         self.assertFalse([line for line in self.out if "AW-INF-055" in line], "shared-up's Kafka is no longer pending")
+        self.assertFalse([line for line in self.out if "AW-INF-058" in line], "shared-up's object store is no longer pending")
         self.assertIn("pending the collectors: AW-INF-065", [line.strip() for line in self.out])
         self.assertFalse([line for line in self.out if "AW-INF-054" in line], "platform-up is no longer pending")
         self.assertEqual(self.out[-1], "rebuilt context=kind-andara")

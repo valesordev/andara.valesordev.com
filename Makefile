@@ -63,7 +63,7 @@ HAS_GO := $(shell find . -name '*.go' -not -path './.git/*' -not -path './bin/*'
         values-schema values-schema-check helm-test image image-publish image-check cli-release cli-release-check cli-release-publish kind-load helm-install measure-tick stack-smoke stack-play stack-linkdead stack-recover stack-recover-mismatch \
         platform-up platform-check kube-context-check cluster-up cluster-down cluster-rebuild stream-soak content-grammar-check observe-check slo-report dashboard-check observe-unavailable gcx-config gcx-check gcx-only-check scripts-test kafka-install kafka-broker-bounce shared-up shared-down shared-check shared-netcheck kafka-users kafka-users-check \
         argocd-install promote promote-log argocd-status argocd-ui argocd-recover argocd-uninstall world-reset content-seed env-destroy env-recover \
-        objectstore-install projector-stop projector-start projector-rebuild server-stop server-start core-versions-check \
+        objectstore-up objectstore-install objectstore-check projector-stop projector-start projector-rebuild server-stop server-start core-versions-check \
         builder-reference builder-reference-check guide-check \
         stack-boundary-lost cli-offline-check stack-projector-check recovery-timing recovery-timing-previous recovery-timing-summary startup-budget-check alerts-sync alerts-diff update-agents \
         tf-plan tf-apply tf-unlock tf-test-alert tf-test-alert-clean tf-fmt-check tf-validate tf-test tf-lock tf-bootstrap-gcp tf-drift tf-plan-show tf-workflow-check tf-ci-environments tf-plan-key tf-replan tf-credentials-check pipelines-check
@@ -411,11 +411,11 @@ cluster-down:
 cluster-rebuild:
 	@$(PY) $(SCRIPTS)/cluster.py rebuild "$(CONFIRM)"
 
-## shared-up: the shared services in andara-shared — Kafka `andara-log` (3 brokers, KRaft) and both environments' prefixed topics; labels andara-local and andara-dev; idempotent (AW-INF-055)
+## shared-up: the shared services in andara-shared — Kafka `andara-log` (3 brokers, KRaft) and both environments' prefixed topics, then the object store and each environment's bucket and pair; labels andara-local and andara-dev; idempotent (AW-INF-055, AW-INF-058)
 shared-up:
 	@PY=$(PY) $(SCRIPTS)/kafka.sh up
 
-## shared-down: delete the shared services and their data (every environment's Command history) — CONFIRM=andara-shared (AW-INF-055)
+## shared-down: delete the shared services and their data (every environment's Command history and snapshots) — CONFIRM=andara-shared (AW-INF-055, AW-INF-058)
 shared-down:
 	@$(PY) $(SCRIPTS)/shared.py down "$(CONFIRM)"
 
@@ -455,9 +455,17 @@ promote:
 promote-log:
 	@$(PY) $(SCRIPTS)/promote.py log
 
-## objectstore-install: versitygw, its PVC, the Secret andara-snapshot-s3 (generated once) and the bucket andara-snapshots-<env> in andara-<env> — idempotent — ENV=<dev|prod> (AW-INF-025)
+## objectstore-up: the shared snapshot object store in andara-shared — versitygw with its IAM, the operator-only root Secret, the andara-it user; idempotent; `make shared-up` runs it (AW-INF-058)
+objectstore-up:
+	@$(PY) $(SCRIPTS)/objectstore.py up
+
+## objectstore-install: local|dev — the user andara-<env>, its bucket andara-snapshots-<env> on the shared gateway, and its pair in andara-<env>/andara-snapshot-s3; prod — its own versitygw in andara-prod (AW-INF-025); idempotent — ENV=<local|dev|prod> (AW-INF-058)
 objectstore-install:
 	@$(PY) $(SCRIPTS)/objectstore.py install "$(if $(filter command line,$(origin ENV)),$(ENV))"
+
+## objectstore-check: prove the shared object store separates the environments — each pair does all four verbs on its own bucket and none on the other's, andara-it only on its andara-test-* bucket (AW-INF-058 AC-2, AC-3, AC-6)
+objectstore-check:
+	@$(PY) $(SCRIPTS)/objectstore.py check
 
 ## projector-stop: scale the state projector to 0 and wait for its consumer group to empty — ENV=<dev|prod> [PROJECTOR_STOP_TIMEOUT=120s] (AW-INF-025)
 projector-stop:

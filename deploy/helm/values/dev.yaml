@@ -43,14 +43,15 @@ server:
     packs: "*"
   auth:
     token_key_file: /etc/andara/secrets/token-key/token.keys
-  # Snapshots in the namespace's object store (AW-INF-025, `make objectstore-install ENV=dev`),
-  # so the state projector reads the rounds the server writes. The StatefulSet's snapshot PVC
-  # stays, unused, until AW-INF-007 retires it. Rollback: store back to fs, and the projector
-  # off, in one revert.
+  # Snapshots in dev's bucket on the shared object store in andara-shared (AW-INF-058, ADR-0013
+  # decision 4; `make objectstore-install ENV=dev` writes the pair into andara-snapshot-s3), so the
+  # state projector reads the rounds the server writes. The StatefulSet's snapshot PVC stays,
+  # unused, until AW-INF-007 retires it. Rollback: store back to fs, and the projector off, in one
+  # revert.
   snapshot:
     store: s3
     s3_bucket: andara-snapshots-dev
-    s3_endpoint: http://andara-objectstore:9000
+    s3_endpoint: http://andara-objectstore.andara-shared.svc:9000
 
 projectors:
   state:

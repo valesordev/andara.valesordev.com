@@ -5,9 +5,11 @@
 # Apache Kafka on the box, via Strimzi (AW-INF-014): one cluster in andara-shared, shared by
 # local and dev, each with its own prefixed topics (ADR-0013 decisions 3–5, AW-INF-055).
 #
-#   kafka.sh up                make shared-up's Kafka step: the application namespaces with their
+#   kafka.sh up                make shared-up: the application namespaces with their
 #                              andara.valesor/env label, deploy/k8s/kafka/*.yaml in andara-shared,
-#                              wait Ready, then both environments' topics from deploy/kafka/topics.yaml.
+#                              wait Ready, both environments' topics from deploy/kafka/topics.yaml,
+#                              then the shared object store (`make objectstore-up` and each
+#                              environment's `objectstore-install`, AW-INF-058).
 #   kafka.sh install <env>     make kafka-install: the same Kafka, then only <env>'s topics.
 #   kafka.sh bounce <env>      make kafka-broker-bounce: lose one broker, prove <env>'s server never
 #                              left service while it was gone (AW-INF-014 AC-5)
@@ -106,11 +108,19 @@ topics_for() {
   "$PY" scripts/topics.py apply --env "$env" "${broker[@]}"
 }
 
+# The shared object store (AW-INF-058): the gateway, then each environment's user, bucket and Secret.
+objectstore_for_all() {
+  local env
+  "$PY" scripts/objectstore.py up
+  for env in "${ENVS[@]}"; do "$PY" scripts/objectstore.py install "$env"; done
+}
+
 up() {
   shared_kafka
   local env
   for env in "${ENVS[@]}"; do topics_for "$env"; done
   brokers
+  objectstore_for_all
 }
 
 install() {

@@ -111,8 +111,10 @@ The cluster's side of the contract with the workstation `nginx` (ADR-0013 decisi
 - **Snapshot store.** `server.snapshot.store` is `fs` (the `snapshots` claim) or `s3`. On `s3`,
   `secrets.snapshotS3.secretName` (`andara-snapshot-s3`) goes into the server and every projector
   by `envFrom`, so both read the rounds the server writes, and `server.snapshot.s3_endpoint` names
-  `objectstore.service` (`andara-objectstore`), which `helm-test` holds together. `dev` is on `s3`
-  (AW-INF-025). The claim stays on the StatefulSet, unused there, until AW-INF-007 retires it.
+  `objectstore.service` (`andara-objectstore.andara-shared.svc`, the shared gateway of AW-INF-058),
+  which `helm-test` holds together. `dev` is on `s3`, in its own bucket `andara-snapshots-dev`
+  with its own pair (`deploy/k8s/objectstore/README.md`). The claim stays on the StatefulSet,
+  unused there, until AW-INF-007 retires it.
 - **Edge (AW-INF-006).** Two `Ingress` on `host` (class `traefik`, entrypoint `websecure`): `/` for
   Game, `/andara.admin.v1.Admin/` behind a `Middleware` `ipAllowList` of `admin.allowedCIDRs`
   (403 at the edge; the server never sees it). TLS ends at Traefik with `andara-edge-tls` and is
