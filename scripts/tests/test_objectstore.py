@@ -5,6 +5,7 @@
 access log, and the isolation check's verdicts, over fakes. The live run is `make objectstore-check`."""
 import contextlib
 import io
+import json
 import os
 import subprocess
 import sys
@@ -401,6 +402,12 @@ class ProbeShell(unittest.TestCase):
                          sorted("DELETE http://h/own/" + k for k in
                                 ("check-r1/1/1/0", "check-r1/1/1/1", "check-r1/1/1/9", "it-r1")))
 
+    def test_the_auth_probe_is_one_signed_listbuckets(self):
+        got, requests = self.run_script(objectstore.S3_FN + objectstore.AUTH_PROBE_SCRIPT, [])
+        self.assertEqual((got, requests), ({"auth": "200"}, ["GET http://andara-objectstore:9000/"]))
+        got, _ = self.run_script(objectstore.S3_FN + objectstore.AUTH_PROBE_SCRIPT, [], FAKE_GET_CODE="403")
+        self.assertEqual(got, {"auth": "403"})
+
     def test_it_cleanup_deletes_the_object_then_the_bucket(self):
         _, requests = self.run_script(objectstore.IT_CLEANUP, ["r1", "http://h"])
         self.assertEqual(requests, ["DELETE http://h/andara-test-r1/o", "DELETE http://h/andara-test-r1"])
@@ -411,16 +418,18 @@ class Install(unittest.TestCase):
     #648: a rotation interrupted between the new Secret and update-user left the pair out of step, and
     a re-run skipped the update because it hadn't made the Secret)."""
 
-    def run_ensure(self, users_table, works):
-        """works: the answers pair_works gives, in order (the probe before and after any change)."""
-        admin_calls, answers = [], list(works)
+    A, R, U = objectstore.ACCEPTED, objectstore.REFUSED, objectstore.UNREACHABLE
+
+    def run_ensure(self, users_table, statuses):
+        """statuses: what pair_status answers, in order (the probe before and after any change)."""
+        admin_calls, answers = [], list(statuses)
 
         def fake_admin(*args, secret_keys=()):
             admin_calls.append((args, list(secret_keys)))
             return users_table if args[0] == "list-users" else ""
         with mock.patch.object(objectstore, "ensure_pair", lambda *a, **k: False), \
                 mock.patch.object(objectstore, "admin", fake_admin), \
-                mock.patch.object(objectstore, "pair_works", lambda secret: answers.pop(0)), \
+                mock.patch.object(objectstore, "pair_status", lambda secret: answers.pop(0)), \
                 contextlib.redirect_stdout(io.StringIO()):
             objectstore.ensure_user("andara-dev", "andara-objectstore-dev", "user", "install")
         return [a for a, _ in admin_calls], [k for _, k in admin_calls], answers
@@ -428,30 +437,69 @@ class Install(unittest.TestCase):
     ABSENT = Parsing.USERS.replace("andara-dev    user      0       0        0\n", "")
 
     def test_absent_user_is_created_with_the_secret_by_reference_then_verified(self):
-        calls, keys, left = self.run_ensure(self.ABSENT, [True])
+        calls, keys, left = self.run_ensure(self.ABSENT, [self.A])
         self.assertEqual(calls[1][:6], ("create-user", "--access", "andara-dev", "--secret", "$(USER_SECRET)", "--role"))
         self.assertEqual(keys[1], [("USER_SECRET", "andara-objectstore-dev", "AWS_SECRET_ACCESS_KEY")])
         self.assertEqual(left, [], "the new user's pair is probed")
 
-    def test_existing_user_whose_pair_works_is_left(self):
-        calls, _, _ = self.run_ensure(Parsing.USERS, [True])
+    def test_existing_user_whose_pair_is_accepted_is_left(self):
+        calls, _, _ = self.run_ensure(Parsing.USERS, [self.A])
         self.assertEqual([c[0] for c in calls], ["list-users"])
 
-    def test_existing_user_whose_pair_the_gateway_refuses_is_updated_whoever_made_the_secret(self):
+    def test_existing_user_whose_pair_is_refused_is_updated_whoever_made_the_secret(self):
         # ensure_pair says the Secret already existed: an earlier run made it and died before update-user.
-        calls, keys, left = self.run_ensure(Parsing.USERS, [False, True])
+        calls, keys, left = self.run_ensure(Parsing.USERS, [self.R, self.A])
         self.assertEqual([c[0] for c in calls], ["list-users", "update-user"])
         self.assertEqual(keys[1], [("USER_SECRET", "andara-objectstore-dev", "AWS_SECRET_ACCESS_KEY")])
         self.assertEqual(left, [])
 
+    def test_an_unreachable_gateway_changes_nothing(self):
+        with self.assertRaisesRegex(objectstore.Failed, "could not reach the gateway; nothing was changed"):
+            calls, _, _ = self.run_ensure(Parsing.USERS, [self.U])
+
     def test_a_pair_still_refused_after_the_update_fails(self):
         with self.assertRaisesRegex(objectstore.Failed, "andara-dev: the gateway refuses the pair in "
-                                                        "andara-shared/andara-objectstore-dev"):
-            self.run_ensure(Parsing.USERS, [False, False])
+                                                        "andara-shared/andara-objectstore-dev after it was updated"):
+            self.run_ensure(Parsing.USERS, [self.R, self.R])
+
+    def test_a_new_user_whose_pair_is_refused_fails(self):
+        with self.assertRaisesRegex(objectstore.Failed, "after it was created"):
+            self.run_ensure(self.ABSENT, [self.R])
 
     def test_a_user_with_the_wrong_role_fails(self):
         with self.assertRaisesRegex(objectstore.Failed, "has role userplus, not user"):
-            self.run_ensure(Parsing.USERS.replace("andara-dev    user ", "andara-dev    userplus "), [True])
+            self.run_ensure(Parsing.USERS.replace("andara-dev    user ", "andara-dev    userplus "), [self.A])
+
+
+class PairStatus(unittest.TestCase):
+    """pair_status, the predicate the convergence rests on (pre-review of the Codex fix: it had no test)."""
+
+    def status(self, result):
+        calls = []
+
+        def fake_run_pod(ns, image, args, env=(), env_from=(), command=None, **kw):
+            calls.append((ns, image, list(env_from), command))
+            return result
+        with mock.patch.object(objectstore, "run_pod", fake_run_pod):
+            got = objectstore.pair_status("andara-objectstore-dev")
+        return got, calls
+
+    def test_the_probe_runs_in_andara_shared_with_the_users_own_secret(self):
+        _, calls = self.status((True, "200 auth"))
+        ns, image, env_from, command = calls[0]
+        self.assertEqual((ns, image, env_from), ("andara-shared", objectstore.CURL, ["andara-objectstore-dev"]))
+        self.assertIn(objectstore.AUTH_PROBE_SCRIPT, command[2])
+
+    def test_statuses(self):
+        for result, want in (((True, "200 auth"), objectstore.ACCEPTED),
+                             ((True, "403 auth"), objectstore.REFUSED),
+                             ((True, "000 auth"), objectstore.UNREACHABLE),
+                             ((True, "503 auth"), objectstore.UNREACHABLE),
+                             ((False, "200 auth"), objectstore.UNREACHABLE),
+                             ((True, ""), objectstore.UNREACHABLE),
+                             ((True, "200 other"), objectstore.UNREACHABLE)):
+            with self.subTest(result=result):
+                self.assertEqual(self.status(result)[0], want)
 
 
 class Up(unittest.TestCase):
@@ -465,9 +513,11 @@ class Up(unittest.TestCase):
         def fake_kubectl(ns, *args, check=True, input=None):
             calls.append(list(args))
             out = ""
-            if args[:2] == ("get", "secret"):
+            # Answer only the exact reads up() must make, so a drifted jsonpath reads nothing.
+            if list(args) == ["get", "secret", "andara-objectstore-root", "-o", "jsonpath={.metadata.uid}"]:
                 out = uid
-            elif args[:2] == ("get", "deployment"):
+            elif list(args) == ["get", "deployment", "andara-objectstore", "-o",
+                                "jsonpath={.spec.template.metadata.annotations.andara\\.valesor/root-secret-uid}"]:
                 out = annotation
             return mock.Mock(returncode=0, stdout=out, stderr="")
         with mock.patch.object(objectstore, "require_shared", lambda cmd: None), \
@@ -488,12 +538,13 @@ class Up(unittest.TestCase):
                 calls, out = self.run_up(annotation)
                 patches = [c for c in calls if c[0] == "patch"]
                 self.assertEqual(len(patches), 1)
-                self.assertIn(objectstore.ROOT_UID_ANNOTATION, patches[0][-1])
-                self.assertIn("uid-new", patches[0][-1])
+                self.assertEqual(json.loads(patches[0][-1]),
+                                 {"spec": {"template": {"metadata": {"annotations": {
+                                     "andara.valesor/root-secret-uid": "uid-new"}}}}})
                 # the rollout is waited on after the patch, so the admin pods meet the new root
                 self.assertGreater(max(i for i, c in enumerate(calls) if c[0] == "rollout"),
                                    calls.index(patches[0]))
-                self.assertIn("restarted onto the root Secret", out)
+                self.assertIn("pinned to the root Secret (uid uid-new)", out)
 
 
 class PairChanged(unittest.TestCase):

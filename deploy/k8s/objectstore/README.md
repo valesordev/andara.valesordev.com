@@ -63,8 +63,8 @@ labelled `andara.valesor/env` in `{local, dev}`, and the tools pods in `andara-s
 
 | Target | What it does |
 |---|---|
-| `make objectstore-up` | The gateway, its root Secret (generated once), and `andara-it`. Idempotent. |
-| `make objectstore-install ENV=<local\|dev>` | That environment's namespace label, user, owned bucket and Secret copy. Idempotent. |
+| `make objectstore-up` | The gateway, its root Secret (generated once), and `andara-it`. Idempotent. The gateway's pod template carries the root Secret's uid, so a recreated root Secret restarts the gateway onto it. |
+| `make objectstore-install ENV=<local\|dev>` | That environment's namespace label, user, owned bucket and Secret copy. Idempotent. A pair the gateway refuses (a rotation interrupted before the gateway learned it) is pushed to the gateway from `andara-shared/andara-objectstore-<env>`; an unreachable gateway changes nothing and fails. |
 | `make objectstore-install ENV=prod` | prod's own per-namespace gateway (AW-INF-025, unchanged). |
 | `make objectstore-check` | The isolation test: each pair against both buckets, and `andara-it` against both buckets and a fresh `andara-test-*` one. The gateway's access log confirms the refusals. |
 | `make shared-down CONFIRM=andara-shared` | Removes the gateway, its PVC (every environment's snapshots) and the operator-only Secrets. |

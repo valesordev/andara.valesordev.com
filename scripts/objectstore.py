@@ -11,8 +11,11 @@ ADR-0013 decision 4), and prod's own per-namespace store (AW-INF-025, ADR-0013 d
     scripts/objectstore.py check             make objectstore-check: the isolation test (AC-2, AC-3, AC-6)
 
 `up` (idempotent): the root pair in the Secret andara-objectstore-root in andara-shared, generated
-once; deploy/k8s/objectstore/shared.yaml applied there and waited on; the user andara-it (role
+once; deploy/k8s/objectstore/shared.yaml applied there, its pod template pinned to the root Secret's
+uid (a recreated root Secret restarts the gateway onto it), and waited on; the user andara-it (role
 `userplus`: it creates andara-test-* buckets) with its pair in andara-shared/andara-objectstore-it.
+Each user converges on what the gateway accepts: a signed request with the user's pair is probed,
+and a refused pair (403) is pushed to the gateway; an unreachable gateway changes nothing.
 
 `install local|dev` (idempotent): the namespace andara-<env> with its andara.valesor/env label;
 the user andara-<env> (role `user`: no bucket creation) with its pair generated once in
@@ -250,11 +253,17 @@ def require_shared(cmd):
 AUTH_PROBE_SCRIPT = 's3 "auth" "http://%s:9000/"' % SERVICE
 
 
-def pair_works(secret_name):
-    """Whether the gateway accepts the pair in andara-shared/secret_name (a curl pod with that Secret)."""
+ACCEPTED, REFUSED, UNREACHABLE = "accepted", "refused", "unreachable"
+
+
+def pair_status(secret_name):
+    """What the gateway says to the pair in andara-shared/secret_name, from a curl pod with that
+    Secret: ACCEPTED (200), REFUSED (403: the pair is out of step), or UNREACHABLE (anything else, a
+    network failure or a 5xx, which says nothing about the pair)."""
     ok, logs = run_pod(SHARED_NS, CURL, ["probe"], env_from=[secret_name],
                        command=["sh", "-c", S3_FN + AUTH_PROBE_SCRIPT])
-    return ok and verdicts(logs).get("auth") == "200"
+    code = verdicts(logs).get("auth") if ok else None
+    return {"200": ACCEPTED, "403": REFUSED}.get(code, UNREACHABLE)
 
 
 def ensure_user(name, secret_name, role, cmd):
@@ -270,15 +279,21 @@ def ensure_user(name, secret_name, role, cmd):
     elif users[name] != role:
         raise Failed("user %s has role %s, not %s; fix it by hand with versitygw admin update-user"
                      % (name, users[name], role))
-    elif pair_works(secret_name):
-        say(cmd, "user %s exists (role %s); unchanged" % (name, role))
-        return
     else:
+        status = pair_status(secret_name)
+        if status == ACCEPTED:
+            say(cmd, "user %s exists (role %s); unchanged" % (name, role))
+            return
+        if status == UNREACHABLE:
+            raise Failed("%s: the probe with %s/%s could not reach the gateway; nothing was changed"
+                         % (name, SHARED_NS, secret_name))
         admin("update-user", "--access", name, "--secret", "$(USER_SECRET)", secret_keys=key)
         did = "out of step with %s/%s; gateway updated" % (SHARED_NS, secret_name)
-    if not pair_works(secret_name):
-        raise Failed("%s: the gateway refuses the pair in %s/%s after it was %s"
-                     % (name, SHARED_NS, secret_name, "created" if did.startswith("created") else "updated"))
+    status = pair_status(secret_name)
+    if status != ACCEPTED:
+        raise Failed("%s: the gateway %s the pair in %s/%s after it was %s"
+                     % (name, "refuses" if status == REFUSED else "could not be reached with",
+                        SHARED_NS, secret_name, "created" if did.startswith("created") else "updated"))
     say(cmd, "user %s %s" % (name, did))
 
 
@@ -286,6 +301,9 @@ def ensure_user(name, secret_name, role, cmd):
 # uid: a recreated Secret changes the template and rolls the gateway onto the new pair, and a run
 # interrupted before the roll converges on the next one (Codex on #648).
 ROOT_UID_ANNOTATION = "andara.valesor/root-secret-uid"
+# The same key as a jsonpath, its dots escaped, so the read can't drift from what the patch writes.
+ROOT_UID_JSONPATH = "jsonpath={.spec.template.metadata.annotations.%s}" % ROOT_UID_ANNOTATION.replace(".", "\\.")
+SECRET_UID_JSONPATH = "jsonpath={.metadata.uid}"
 
 
 def up(cmd="up"):
@@ -293,13 +311,14 @@ def up(cmd="up"):
     made = ensure_pair(SHARED_NS, ROOT_SECRET, keys=("ROOT_ACCESS_KEY", "ROOT_SECRET_KEY"))
     say(cmd, "root Secret %s/%s %s" % (SHARED_NS, ROOT_SECRET, "created" if made else "exists; unchanged"))
     kubectl(SHARED_NS, "apply", "-f", SHARED_MANIFEST)
-    uid = kubectl(SHARED_NS, "get", "secret", ROOT_SECRET, "-o", "jsonpath={.metadata.uid}").stdout.strip()
-    running = kubectl(SHARED_NS, "get", "deployment", SERVICE, "-o",
-                      "jsonpath={.spec.template.metadata.annotations.andara\\.valesor/root-secret-uid}").stdout.strip()
+    uid = kubectl(SHARED_NS, "get", "secret", ROOT_SECRET, "-o", SECRET_UID_JSONPATH).stdout.strip()
+    running = kubectl(SHARED_NS, "get", "deployment", SERVICE, "-o", ROOT_UID_JSONPATH).stdout.strip()
     if running != uid:
         patch = {"spec": {"template": {"metadata": {"annotations": {ROOT_UID_ANNOTATION: uid}}}}}
         kubectl(SHARED_NS, "patch", DEPLOYMENT, "--type", "merge", "-p", json.dumps(patch))
-        say(cmd, "versitygw restarted onto the root Secret (uid %s)" % uid)
+        # A gateway created by this apply is pinned before its first pod is Ready; one already running
+        # on another root pair is restarted onto this one.
+        say(cmd, "versitygw pinned to the root Secret (uid %s); its pods restart onto it" % uid)
     kubectl(SHARED_NS, "rollout", "status", DEPLOYMENT, "--timeout=" + READY_TIMEOUT)
     say(cmd, "versitygw Ready at %s" % SHARED_ENDPOINT)
     ensure_user(IT_USER, IT_SECRET, "userplus", cmd)
