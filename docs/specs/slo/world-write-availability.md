@@ -17,13 +17,15 @@ This SLO is about the one thing players cannot do in that state: act.
 
 ```promql
 sum by (namespace) (
-  sum_over_time((1 - max_over_time(andara_ingress_degraded{cluster!="ci"}[1m]))[28d:1m])
+  sum_over_time((1 - max by (namespace, partition) (
+    max_over_time(andara_ingress_degraded{cluster!="ci"}[1m])
+  ))[28d:1m])
 ) / (64 * 40320)
 ```
 
 Healthy Partition-minutes, divided by every Partition-minute in the window: 64 Partitions × 40,320 minutes.
 
-- **Per Partition, then averaged.** `andara_ingress_degraded{partition}` is 1 while that Partition refuses
+- **Per Partition-minute, over a fixed denominator.** `andara_ingress_degraded{partition}` is 1 while that Partition refuses
   writes, with 64 series per environment. One Partition read-only for the whole window costs 1/64 of the
   budget, and the whole log read-only costs all of it. The page (below) is binary on purpose: one degraded
   Partition's players can't act. The page is for responsiveness, and the SLI measures proportion.
@@ -34,8 +36,15 @@ Healthy Partition-minutes, divided by every Partition-minute in the window: 64 P
   recovering it has no Ready pod, so nothing is scraped. An average over the samples that exist would read
   that time as available and hide exactly the deploy cost this document is about. The fixed denominator
   charges it. The cost: a namespace younger than 28 days reads low until it has a full window, which is the
-  safe direction. The measurement table notes it for a new namespace. `scripts/tests/test_slo_report.py`
-  evaluates this expression over a gap with `promtool`.
+  safe direction. `scripts/tests/test_slo_report.py` evaluates this expression with `promtool` over a gap
+  and over two series for one Partition.
+- **One series per Partition** (`max by (namespace, partition)`). Every server process registers all 64
+  Partitions' series, so two replicas, a restart whose new pod overlaps the old one's last scrape, or two
+  scrape paths would otherwise count one Partition-minute twice and push the SLI past 1.
+- **`local` is stack uptime, not availability.** `local` runs only while someone is working, so against a
+  fixed denominator its number is how long the stack was up. `make slo-report` prints it and marks the budget
+  `n/a`. The target and the exhaustion policy below hold `dev` (and prod, once it exists), not `local`.
+  **[proposed, Brian's to set]**
 - **`cluster!="ci"`**: CI ships to `solo7dev` as `namespace="andara-local"` on cluster `ci` (`ADR-0014`
   A3). Its short runs aren't `local`'s availability. Compose series carry no `cluster` label and still match.
 - **Per `namespace`** (ruling 4). `local` and `dev` share brokers but not budgets. Once `AW-INF-047`'s edit

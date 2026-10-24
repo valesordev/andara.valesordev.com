@@ -41,9 +41,14 @@ DOCS = [
         "file": "world-write-availability.md",
         "target": 0.995,  # the pre-launch target in force; the document's table says which
         # Healthy Partition-minutes over a fixed denominator: a minute with no sample (the server down or
-        # restarting, so no Ready pod to scrape) counts against the budget, as a deploy must.
-        "expr": 'sum by (namespace) (sum_over_time('
-                '(1 - max_over_time(andara_ingress_degraded{cluster!="ci"}[1m]))[28d:1m])) / (64 * 40320)',
+        # restarting, so no Ready pod to scrape) counts against the budget, as a deploy must. The inner
+        # max by (namespace, partition) makes one series per Partition: every server process registers all
+        # 64, so replicas, a restart's overlap or two scrape paths would otherwise count a minute twice.
+        "expr": 'sum by (namespace) (sum_over_time((1 - max by (namespace, partition) ('
+                'max_over_time(andara_ingress_degraded{cluster!="ci"}[1m])))[28d:1m])) / (64 * 40320)',
+        # local runs only while someone works, so against a fixed denominator its row is stack uptime,
+        # not availability, and isn't held to the target (the document says so).
+        "uptime_only": ["andara-local"],
     },
     {
         "file": "kafka-availability.md",
@@ -67,12 +72,16 @@ def budget_left(sli, target):
     return 1 - (1 - sli) / (1 - target)
 
 
-def rows(results, target, when):
+def rows(results, target, when, uptime_only=()):
     out = []
     for r in sorted(results, key=lambda r: r.get("metric", {}).get("namespace", "")):
         ns = r.get("metric", {}).get("namespace") or "(no namespace)"
         sli = float(r["value"][1])
-        out.append("| %s | %s | %.4f%% | %.1f%% | — |" % (when, ns, sli * 100, budget_left(sli, target) * 100))
+        if ns in uptime_only:
+            left = "n/a: stack uptime, not held to the target"
+        else:
+            left = "%.1f%%" % (budget_left(sli, target) * 100)
+        out.append("| %s | %s | %.4f%% | %s | — |" % (when, ns, sli * 100, left))
     return out
 
 
@@ -108,7 +117,7 @@ def main(argv, q=gcx, now=None):
     rendered = []
     for d in DOCS:
         path = os.path.join(SLO_DIR, d["file"])
-        new = rows(q.metrics_query(ctx, d["expr"]), d["target"], when)
+        new = rows(q.metrics_query(ctx, d["expr"]), d["target"], when, d.get("uptime_only", ()))
         if not new:
             new = ["| %s | (no series) | — | — | — |" % when]
         with open(path) as f:

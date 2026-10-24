@@ -84,7 +84,8 @@ class Report(Base):
         w = self.doc("world-write-availability.md")
         # 0.25% of a 0.5% budget spent: half left.
         self.assertIn("| 2026-10-24 18:05 | andara-dev | 99.7500% | 50.0% | — |", w)
-        self.assertIn("| 2026-10-24 18:05 | andara-local | 100.0000% | 100.0% | — |", w)
+        # local's write row is stack uptime, not held to the target.
+        self.assertIn("| 2026-10-24 18:05 | andara-local | 100.0000% | n/a: stack uptime, not held to the target | — |", w)
         k = self.doc("kafka-availability.md")
         self.assertIn("| 2026-10-24 18:05 | andara-dev | 99.9500% | 50.0% | — |", k)
         for text in (w, k):
@@ -174,7 +175,8 @@ class WriteSLISemantics(unittest.TestCase):
     """The write SLI counts a minute with no sample as unavailable: a server that is down or restarting
     (no Ready pod, so no scrape) spends the budget, as the document's deploy tension says it must."""
 
-    def evaluate(self, values, want):
+    def evaluate(self, values, want, more=()):
+        """values is partition 0's series; more adds (instance, values) series for the same Partition."""
         expr = scaled(slo_report.DOCS[0]["expr"])
         d = tempfile.mkdtemp()
         self.addCleanup(shutil.rmtree, d)
@@ -186,7 +188,9 @@ class WriteSLISemantics(unittest.TestCase):
             "tests": [{
                 "interval": "1m",
                 "input_series": [{"series": 'andara_ingress_degraded{namespace="andara-dev",partition="0"}',
-                                  "values": values}],
+                                  "values": values}] + [
+                    {"series": 'andara_ingress_degraded{namespace="andara-dev",partition="0",instance="%s"}' % i,
+                     "values": v} for i, v in more],
                 "promql_expr_test": [{"expr": expr, "eval_time": "20m",
                                       "exp_samples": [{"labels": '{namespace="andara-dev"}', "value": want}]}],
             }],
@@ -201,9 +205,16 @@ class WriteSLISemantics(unittest.TestCase):
         self.evaluate("0x22", 1)
 
     def test_minutes_with_no_sample_count_against_it(self):
-        # Samples at minutes 0-9 and 20, none at 10-19. Step 10's window still holds minute 9's sample, so
-        # the gap costs nine of the twenty steps (0.55), not ten; the old avg-of-what-exists form read 1.0.
-        self.evaluate("0x9 _x9 0x2", 0.55)
+        # Samples at minutes 0-9 and 20 (`_x10` is ten blanks, 10-19): ten empty steps cost ten of the
+        # twenty minutes. The old avg-of-what-exists form read 1.0.
+        self.evaluate("0x9 _x10 0x1", 0.5)
+
+    def test_a_second_series_for_a_partition_is_not_extra_health(self):
+        # Every server process registers all 64 Partitions' series, so two replicas, a restart's overlap
+        # or two scrape paths give one Partition two series. They are one Partition, not two.
+        self.evaluate("0x22", 1, more=[("b", "0x22")])
+        # A second instance scraped only at minute 9, where the first also was: one minute, counted once.
+        self.evaluate("0x9 _x10 0x1", 0.5, more=[("b", "_x9 0 _x12")])
 
     def test_a_degraded_minute_costs_a_minute(self):
         # Degraded samples at minutes 1, 3 and 5: three of the twenty steps.

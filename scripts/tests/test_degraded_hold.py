@@ -3,8 +3,11 @@
 
 """AW-INF-039 AC-5: WorldReadOnly's for: and ingress.degraded_hold change together."""
 import os
+import shutil
 import sys
+import tempfile
 import unittest
+from unittest import mock
 
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 import degraded_hold  # noqa: E402
@@ -71,6 +74,16 @@ class Floor(unittest.TestCase):
             "MinDegradedHold is 60s, below 2 x WorldReadOnly's for: (30s) + 30 = 90s; raise them together "
             "(docs/specs/kafka/client-contract.md)",
             "config's MinIngressDegradedHold (90s) and ingress's MinDegradedHold (60s) disagree"])
+
+    def test_the_repo_check_reads_the_ingress_file(self):
+        d = tempfile.mkdtemp()
+        self.addCleanup(shutil.rmtree, d)
+        path = os.path.join(d, "partitions.go")
+        with open(path, "w") as f:
+            f.write("const MinDegradedHold = 60 * time.Second\nconst DefaultDegradedHold = 120 * time.Second\n")
+        with mock.patch.object(degraded_hold, "INGRESS_GO", path):
+            errors = degraded_hold.check_repo()
+        self.assertTrue(any(e.startswith("MinDegradedHold is 60s") for e in errors), errors)
 
     def test_minute_durations(self):
         self.assertEqual(degraded_hold.seconds("2m"), 120)
