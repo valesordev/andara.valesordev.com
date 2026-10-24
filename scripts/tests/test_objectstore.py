@@ -95,7 +95,8 @@ andara-snapshots-dev    andara-dev
                           ("andara-local", "ListObjects", "andara-snapshots-dev", "403", "AccessDenied")])
 
     def test_verdicts(self):
-        self.assertEqual(objectstore.verdicts("200 write b\n403 list c\nnoise\n000 read d\nok x y\n"),
+        self.assertEqual(objectstore.verdicts("200 write b\n403 list c\nnoise\n000 read d\nok x y\n"
+                                              "abc x\n4030 x\ncurl: (7) Failed to connect\n"),
                          {"write b": "200", "list c": "403", "read d": "000"})
 
 
@@ -193,7 +194,7 @@ class Check(unittest.TestCase):
         calls = []
 
         def fake_run_pod(ns, image, args, env=(), env_from=(), command=None, **kw):
-            calls.append((ns, image, list(env_from), command))
+            calls.append((ns, image, list(env_from), command, list(args)))
             if env_from == ["andara-objectstore-it"]:
                 return True, "\n".join(override.get("it", self.it_lines()))
             env_ = ns.replace("andara-", "")
@@ -218,10 +219,12 @@ class Check(unittest.TestCase):
         self.assertIsNone(err, err)
         self.assertIn("objectstore-check: ok:", out)
         # Every probe is curl in the namespace whose own Secret it uses.
-        self.assertEqual({(ns, tuple(ef)) for ns, _, ef, _ in calls},
+        self.assertEqual({(c[0], tuple(c[2])) for c in calls},
                          {("andara-local", ("andara-snapshot-s3",)), ("andara-dev", ("andara-snapshot-s3",)),
                           ("andara-shared", ("andara-objectstore-it",))})
-        self.assertEqual({img for _, img, _, _ in calls}, {objectstore.CURL})
+        self.assertEqual({c[1] for c in calls}, {objectstore.CURL})
+        self.assertFalse([c for c in calls if "cleanup" in c[4] or c[3][2] == objectstore.IT_CLEANUP],
+                         "a passing run needs no cleanup")
 
     def test_a_cross_environment_read_that_succeeds_fails(self):
         lines = [l.replace("403 read", "200 read") for l in self.env_lines("local", "test")]
@@ -276,6 +279,93 @@ class Check(unittest.TestCase):
         self.assertIn("andara-local DeleteObject on andara-snapshots-dev: no 403 AccessDenied", err)
 
 
+class CheckAndaraItPositive(Check):
+    """AC-3's positive half: andara-it creates its andara-test-* bucket and can delete it again."""
+
+    def test_andara_it_refused_its_own_test_bucket_fails(self):
+        lines = [l.replace("200 create andara-test-r1", "403 create andara-test-r1") for l in self.it_lines()]
+        err, _, _ = self.run_check({"it": lines})
+        self.assertIn("andara-it create andara-test-r1: got 403, want 2xx", err)
+
+    def test_andara_it_unable_to_delete_its_test_bucket_fails(self):
+        lines = [l.replace("204 delete-bucket andara-test-r1", "409 delete-bucket andara-test-r1") for l in self.it_lines()]
+        err, _, _ = self.run_check({"it": lines})
+        self.assertIn("andara-it delete-bucket andara-test-r1: got 409, want 2xx", err)
+
+    def test_a_failed_run_cleans_up_what_it_left(self):
+        lines = [l.replace("403 read", "200 read") for l in self.env_lines("local", "test")]
+        err, _, calls = self.run_check({("local", "test"): lines})
+        self.assertIsNotNone(err)
+        # cleanup runs in both namespaces (phase "cleanup") and for andara-it's test bucket
+        env_cleanups = sorted(c[0] for c in calls if c[4][:2] == ["probe", "cleanup"])
+        self.assertEqual(env_cleanups, ["andara-dev", "andara-local"])
+        it_cleanups = [c for c in calls if c[2] == ["andara-objectstore-it"] and c[3][2] == objectstore.IT_CLEANUP]
+        self.assertEqual(len(it_cleanups), 1)
+
+
+# A stand-in for curl that the probe scripts call: it answers listings with $FAKE_LIST (and the code in
+# $FAKE_LIST_CODE), a GET of an object with "hello", and anything else with 204, writing -o's file.
+FAKE_CURL = r'''#!/bin/sh
+out=""; url=""; meth=GET
+while [ $# -gt 0 ]; do case "$1" in
+  -o) out="$2"; shift 2;; -w|--aws-sigv4|--user|-H|--data-binary) shift 2;; -X) meth="$2"; shift 2;;
+  -sS) shift;; *) url="$1"; shift;; esac; done
+case "$meth $url" in
+  *"list-type=2&prefix=it-"*) printf '%s' "$FAKE_IT_LIST" > "$out"; printf '%s' "${FAKE_LIST_CODE:-200}";;
+  *list-type=2*) printf '%s' "$FAKE_LIST" > "$out"; printf '%s' "${FAKE_LIST_CODE:-200}";;
+  "GET "*) echo hello > "$out"; printf 200;;
+  *) : > "$out"; printf 204;;
+esac
+'''
+
+
+@unittest.skipUnless(os.path.exists("/bin/sh"), "needs a POSIX sh")
+class ProbeShell(unittest.TestCase):
+    """The probe scripts themselves, run by sh against a fake curl (pre-review round 2: the stray and
+    listing guards live in the shell, which the Python verdict tests never ran)."""
+
+    def run_probe(self, phase, listing="", it_listing="", list_code="200"):
+        import tempfile
+        d = tempfile.mkdtemp()
+        self.addCleanup(__import__("shutil").rmtree, d)
+        with open(os.path.join(d, "curl"), "w") as f:
+            f.write(FAKE_CURL)
+        os.chmod(os.path.join(d, "curl"), 0o755)
+        env = dict(os.environ, PATH=d + ":" + os.environ["PATH"], FAKE_LIST=listing, FAKE_IT_LIST=it_listing,
+                   FAKE_LIST_CODE=list_code, AWS_ACCESS_KEY_ID="a", AWS_SECRET_ACCESS_KEY="b")
+        script = objectstore.PROBE.replace("/tmp/", d + "/")
+        r = subprocess.run(["sh", "-c", script, "probe", phase, "own", "other", "r1", "http://h"],
+                           env=env, capture_output=True, text=True)
+        return objectstore.verdicts(r.stdout)
+
+    def test_final_clean(self):
+        got = self.run_probe("final", "<Key>check-r1/1/1/0</Key>")
+        self.assertEqual((got["no stray in own"], got["seed kept in own"]), ("200", "200"))
+
+    def test_final_a_landed_cross_write_is_a_stray(self):
+        got = self.run_probe("final", "<Key>check-r1/1/1/0</Key><Key>check-r1/1/1/9</Key>")
+        self.assertEqual(got["no stray in own"], "000")
+
+    def test_final_andara_its_landed_write_is_a_stray(self):
+        got = self.run_probe("final", "<Key>check-r1/1/1/0</Key>", it_listing="<Key>it-r1</Key>")
+        self.assertEqual(got["no stray in own"], "000")
+        # it-r10 is another run's key, not this one's
+        self.assertEqual(self.run_probe("final", "<Key>check-r1/1/1/0</Key>",
+                                        it_listing="<Key>it-r10</Key>")["no stray in own"], "200")
+
+    def test_final_a_failed_listing_proves_nothing(self):
+        got = self.run_probe("final", "<Key>check-r1/1/1/0</Key>", list_code="403")
+        self.assertEqual((got["no stray in own"], got["seed kept in own"]), ("000", "000"))
+
+    def test_final_a_missing_seed_is_reported(self):
+        self.assertEqual(self.run_probe("final", "")["seed kept in own"], "000")
+
+    def test_test_phase_listed_and_content(self):
+        got = self.run_probe("test", "<Key>check-r1/1/1/1</Key>")
+        self.assertEqual((got["listed own"], got["content own"]), ("200", "200"))
+        self.assertEqual(self.run_probe("test", "<Key>check-r1/1/1/2</Key>")["listed own"], "000")
+
+
 class Install(unittest.TestCase):
     """The user step: create when absent, reset when the pair was regenerated, else leave it."""
 
@@ -307,6 +397,41 @@ class Install(unittest.TestCase):
     def test_a_user_with_the_wrong_role_fails(self):
         with self.assertRaisesRegex(objectstore.Failed, "has role userplus, not user"):
             self.run_ensure(Parsing.USERS.replace("andara-dev    user ", "andara-dev    userplus "), False)
+
+
+class PairChanged(unittest.TestCase):
+    """A changed pair reaches the gateway and the env Secret, but a running pod read it at start: the
+    install says which workloads to restart and how (pre-review round 1, #4)."""
+
+    def install(self, env, state):
+        out = io.StringIO()
+        with mock.patch.object(objectstore, "require_shared", lambda cmd: None), \
+                mock.patch.object(objectstore, "exists", lambda ns, kind, name: True), \
+                mock.patch.object(objectstore, "ensure_namespace", lambda env, cmd: None), \
+                mock.patch.object(objectstore, "ensure_user", lambda *a: None), \
+                mock.patch.object(objectstore, "ensure_bucket", lambda *a: None), \
+                mock.patch.object(objectstore, "copy_pair", lambda *a: state), \
+                mock.patch.object(objectstore, "rclone", lambda *a, **k: ""), \
+                contextlib.redirect_stdout(out):
+            objectstore.install_shared(env)
+        return out.getvalue()
+
+    def test_unchanged_says_nothing_about_restarts(self):
+        for state in ("unchanged", "created"):
+            with self.subTest(state=state):
+                self.assertNotIn("the pair changed", self.install("dev", state))
+
+    def test_dev_names_the_server_and_projector_targets(self):
+        out = self.install("dev", "updated")
+        self.assertIn("the pair changed", out)
+        self.assertIn("make server-stop ENV=dev && make server-start ENV=dev", out)
+        self.assertIn("make projector-stop ENV=dev && make projector-start ENV=dev", out)
+
+    def test_local_restarts_the_server_and_the_projectors(self):
+        out = self.install("local", "updated")
+        self.assertIn("rollout restart statefulset/andara", out)
+        self.assertIn("rollout restart deployment -l app.kubernetes.io/name=andara", out)
+        self.assertNotIn("ENV=local", out)  # those targets don't take local
 
 
 class Manifest(unittest.TestCase):

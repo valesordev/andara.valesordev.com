@@ -364,6 +364,13 @@ class NetCheck(unittest.TestCase):
         self.assertEqual(probes, {("andara-log-kafka-bootstrap.andara-shared.svc",
                                    "kube-dns.kube-system.svc.cluster.local/53", "9092")})
 
+    def test_without_the_object_store_it_says_its_policy_is_not_checked(self):
+        net = FakeNet()
+        code, out, err = self.run_net(net)
+        self.assertEqual(code, 0, err)
+        self.assertIn("no object store in andara-shared (`make objectstore-up`); its policy is not checked", out)
+        self.assertEqual({h for _, _, h in net.hosts}, {"andara-log-kafka-bootstrap.andara-shared.svc:9092"})
+
     def test_with_the_object_store_every_case_is_probed_on_both_listeners(self):
         net = FakeNet(objectstore=True)
         code, out, err = self.run_net(net)

@@ -313,7 +313,9 @@ def install_shared(env, cmd="install"):
                    "`make projector-stop ENV=dev && make projector-start ENV=dev`")
         else:
             # server-stop/-start and projector-stop/-start take dev and prod only (AW-INF-037, AW-INF-025).
-            how = "restart them: `kubectl -n andara-local rollout restart statefulset/andara` (no local target yet)"
+            how = ("restart them: `kubectl -n andara-local rollout restart statefulset/andara` and "
+                   "`kubectl -n andara-local rollout restart deployment -l app.kubernetes.io/name=andara` "
+                   "(the projectors; no local target yet)")
         say(cmd, "the pair changed: a running server and projector in %s keep the old one until restarted; %s"
             % (env_ns(env), how))
     rclone(env_ns(env), "lsf", "s3:" + bucket(env), endpoint=SHARED_ENDPOINT, check_bucket=False)
@@ -398,12 +400,18 @@ test)  s3 "write $own" -X PUT --data-binary @/tmp/o "$H/$own/$mine"
        s3 "read $other" "$H/$other/$seed"
        s3 "write $other" -X PUT --data-binary @/tmp/o "$H/$other/$stray"
        s3 "delete $other" -X DELETE "$H/$other/$seed" ;;
-final) s3 "list $own" "$H/$own?list-type=2"
+final) # Prefixed listings: a bucket holding a thousand snapshot keys can't push these off the page.
+       s3 "list run in $own" "$H/$own?list-type=2&prefix=check-$run/"; c1=$CODE; cp /tmp/body /tmp/l1
+       s3 "list it in $own" "$H/$own?list-type=2&prefix=it-$run"; c2=$CODE
        # A listing that failed proves nothing: both verdicts need its 200.
-       if [ "$CODE" = 200 ] && ! grep -qE "<Key>(check-$run/1/1/9|it-$run)</Key>" /tmp/body; then
+       if [ "$c1" = 200 ] && [ "$c2" = 200 ] && ! grep -q "<Key>$stray</Key>" /tmp/l1 \
+          && ! grep -q "<Key>it-$run</Key>" /tmp/body; then
          echo "200 no stray in $own"; else echo "000 no stray in $own"; fi
-       if has "$seed"; then echo "200 seed kept in $own"; else echo "000 seed kept in $own"; fi
+       if [ "$c1" = 200 ] && grep -q "<Key>$seed</Key>" /tmp/l1; then
+         echo "200 seed kept in $own"; else echo "000 seed kept in $own"; fi
        s3 "cleanup $own" -X DELETE "$H/$own/$seed" ;;
+cleanup) # Best effort after a failure: everything a run can leave in this bucket.
+       for k in "$seed" "$mine" "$stray" "it-$run"; do s3 "cleanup $k" -X DELETE "$H/$own/$k"; done ;;
 esac
 '''
 
@@ -422,6 +430,13 @@ for b in "$@"; do
   s3 "delete $b" -X DELETE "$H/$b/$seed"
   s3 "delete-bucket $b" -X DELETE "$H/$b"
 done
+'''
+
+# andara-it's best-effort cleanup: `sh -c IT_CLEANUP probe <run> <endpoint>`.
+IT_CLEANUP = S3_FN + r'''
+run="$1"; H="$2"; tb="andara-test-$run"
+s3 "cleanup $tb/o" -X DELETE "$H/$tb/o"
+s3 "cleanup $tb" -X DELETE "$H/$tb"
 '''
 
 VERBS_OWN = ("write", "list", "listed", "read", "content", "delete")
@@ -516,6 +531,28 @@ def check(cmd="check", run=None, now=time.time):
             raise Missing("%s/%s is missing; run `make objectstore-install ENV=%s` first" % (env_ns(env), SECRET, env))
     run = run or "%x" % int(now())
     since = time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime(now() - 5))
+    try:
+        _run_check(cmd, run, since)
+    except Exception:
+        _cleanup(run)
+        raise
+
+
+def _cleanup(run):
+    """Best effort after a failed run: the seeds, any stray, andara-it's object and its test bucket."""
+    for env in SHARED_ENVS:
+        try:
+            env_probe(env, "cleanup", run)
+        except Exception:  # noqa: BLE001 -- cleanup must not hide the failure that called it
+            pass
+    try:
+        run_pod(SHARED_NS, CURL, ["probe", run, "http://%s:9000" % SERVICE], env_from=[IT_SECRET],
+                command=["sh", "-c", IT_CLEANUP])
+    except Exception:  # noqa: BLE001
+        pass
+
+
+def _run_check(cmd, run, since):
     bad = []
     for env in SHARED_ENVS:
         bad += expect(env_probe(env, "seed", run), {"seed " + bucket(env): OK}, user(env))
