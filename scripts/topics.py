@@ -319,7 +319,8 @@ def rpk_runner(env, broker=None):
 
 
 def existing_topics(run):
-    """Return {name: {"partitions": int, "config": {..}}} for topics the broker has."""
+    """Return {name: {"partitions": int, "replicas": int or None, "config": {..}}} for topics the
+    broker has; replicas is None when the listing doesn't carry it."""
     res = run(["topic", "list", "--format", "json"])
     if res.returncode != 0:
         die("could not list topics: %s" % (res.stderr or res.stdout).strip())
@@ -333,14 +334,17 @@ def existing_topics(run):
         rows = parsed if isinstance(parsed, list) else parsed.get("topics", [])
         for row in rows:
             out[row.get("name") or row.get("topic")] = {
-                "partitions": int(row.get("partitions", 0)), "config": {}
+                "partitions": int(row.get("partitions", 0)),
+                "replicas": int(row["replicas"]) if row.get("replicas") is not None else None, "config": {}
             }
     else:
         # Tabular fallback: NAME PARTITIONS REPLICAS
         for line in text.split("\n")[1:]:
             parts = line.split()
             if len(parts) >= 2 and not parts[0].startswith("NAME"):
-                out[parts[0]] = {"partitions": int(parts[1]), "config": {}}
+                out[parts[0]] = {"partitions": int(parts[1]),
+                                 "replicas": int(parts[2]) if len(parts) >= 3 and parts[2].isdigit() else None,
+                                 "config": {}}
     return out
 
 
@@ -610,6 +614,12 @@ def run_platform(action, run, decl=DECL, out=sys.stdout, err=sys.stderr):
         if live[name]["partitions"] != parts:
             die("%s has %d partitions, declared %d; repartitioning is refused"
                 % (name, live[name]["partitions"], parts))
+        # Refused before any config change: a min.insync.replicas raised past a topic's real
+        # replication would fail every acks=all write while the settings read as matching.
+        have_rf = live[name].get("replicas")
+        if have_rf is not None and have_rf != rf:
+            die("%s has replication factor %d, declared %d; changing replication is refused (it is a "
+                "partition reassignment, done by hand)" % (name, have_rf, rf))
         have = describe_config(run, name)
         for key in sorted(k for k in cfg if k in COMPARED):
             if key in have and same(key, have[key], cfg[key]):

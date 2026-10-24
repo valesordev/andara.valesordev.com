@@ -103,10 +103,11 @@ DECL = textwrap.dedent("""\
 class FakeBroker:
     """rpk as far as topics.py uses it: list, describe, create, alter-config, cluster set."""
 
-    def __init__(self, topics, refuse=None):
+    def __init__(self, topics, refuse=None, replicas=None):
         # topics: {name: (partitions, {key: value})}. A key the broker "doesn't report" is
-        # simply absent, as on Redpanda.
+        # simply absent, as on Redpanda. replicas: {name: n}, listed as rpk lists it when given.
         self.topics = {n: (p, dict(c)) for n, (p, c) in topics.items()}
+        self.replicas = replicas or {}
         self.refuse = refuse or set()   # {(topic, key)} the broker rejects
         self.calls = []
 
@@ -114,7 +115,9 @@ class FakeBroker:
         self.calls.append(list(args))
         ok = lambda out="": SimpleNamespace(returncode=0, stdout=out, stderr="")  # noqa: E731
         if args[:2] == ["topic", "list"]:
-            return ok(json.dumps([{"name": n, "partitions": p} for n, (p, _) in self.topics.items()]))
+            return ok(json.dumps([dict({"name": n, "partitions": p},
+                                       **({"replicas": self.replicas[n]} if n in self.replicas else {}))
+                                  for n, (p, _) in self.topics.items()]))
         if args[:2] == ["topic", "describe"]:
             _, cfg = self.topics[args[2]]
             return ok("KEY  VALUE  SOURCE\n" + "\n".join(
@@ -559,6 +562,30 @@ class Platform(unittest.TestCase):
         self.assertIn("_schemas: min.insync.replicas is '1', declaration says '2'", err)
         code, out, _ = self.run_platform(b)
         self.assertEqual((code, b.topics["_schemas"][1]["min.insync.replicas"]), (0, "2"))
+
+    def test_a_replication_factor_other_than_declared_is_refused_before_any_change(self):
+        """Codex on #650: an RF-1 `_schemas` with min ISR 1 must not have its min ISR raised to 2
+        (the registry's acks=all writes would then all fail) and then be reported as matching."""
+        for action in ("apply", "diff"):
+            b = FakeBroker({"_schemas": (1, {"cleanup.policy": "compact", "min.insync.replicas": "1"})},
+                           replicas={"_schemas": 1})
+            with contextlib.redirect_stderr(io.StringIO()) as died:
+                code, _, err = self.run_platform(b, action)
+            self.assertEqual(code, 1, action)
+            self.assertIn("_schemas has replication factor 1, declared 3; changing replication is refused", err + died.getvalue())
+            self.assertFalse([c for c in b.calls if c[1] == "alter-config"], action)
+
+    def test_the_declared_replication_factor_matches(self):
+        b = FakeBroker({"_schemas": (1, {"cleanup.policy": "compact", "min.insync.replicas": "2"})},
+                       replicas={"_schemas": 3})
+        code, out, _ = self.run_platform(b, "diff")
+        self.assertEqual(code, 0)
+        self.assertIn("1 platform topic(s) match", out)
+
+    def test_the_tabular_listing_carries_replicas(self):
+        run = lambda args: SimpleNamespace(returncode=0, stdout="NAME  PARTITIONS  REPLICAS\n_schemas  1  1\n",  # noqa: E731
+                                           stderr="")
+        self.assertEqual(topics.existing_topics(run)["_schemas"]["replicas"], 1)
 
     def test_adding_delete_to_the_compacted_topic_is_refused(self):
         # Anchored on the platform entry: the first `cleanup.policy: compact` in the file is an
