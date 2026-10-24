@@ -1,0 +1,161 @@
+#!/usr/bin/env python3
+"""The GitHub App that coordinator lanes and role sessions act as, so a person can approve their PRs.
+
+Source of truth: automate.valesordev.com / plugins/valesor-dev/bin/ghapp.
+Vendored into target repos as .claude/bin/ghapp by `make install`. Don't edit it there.
+
+A library, not a command: bin/coordinator and bin/role load it. The app's `app_id` is in
+~/.config/claude-coordinator/lane-app.json (or the file COORDINATOR_APP_CONFIG names), and its
+private key beside it as lane-app.pem, mode 600. Tokens are installation tokens narrowed to one
+repo and to APP_PERMS; they last an hour.
+"""
+from __future__ import annotations
+
+import base64
+import json
+import os
+import subprocess
+import time
+import urllib.error
+import urllib.request
+from datetime import datetime
+from pathlib import Path
+
+APP_CONFIG = Path(os.environ.get("XDG_CONFIG_HOME") or Path.home() / ".config") / "claude-coordinator" / "lane-app.json"
+# The most the app may hold: an app that can administer a repo, change workflows, or more could
+# have its key mint a token that skips main's rules, so its users refuse it.
+APP_PERMS = {"contents": "write", "pull_requests": "write", "issues": "write", "statuses": "read",
+             "checks": "read", "actions": "read", "metadata": "read", "organization_projects": "write"}
+PERM_LEVEL = {"none": 0, "read": 1, "write": 2, "admin": 3}
+RENEW_BEFORE = 300          # seconds: a token is replaced when it has less than this left
+
+
+class AppError(Exception):
+    pass
+
+
+def config_path() -> Path:
+    return Path(os.environ.get("COORDINATOR_APP_CONFIG") or APP_CONFIG)
+
+
+def lane_app() -> dict | None:
+    """The app: {app_id, key} from config_path(). The key (default lane-app.pem beside it) must be
+    readable by you alone."""
+    f = config_path()
+    if not f.is_file():
+        return None
+    try:
+        cfg = json.loads(f.read_text())
+        app_id = int(cfg["app_id"])
+    except (ValueError, KeyError, TypeError) as e:
+        raise AppError(f"{f} needs a numeric app_id: {e}") from e
+    key = Path(os.path.expanduser(str(cfg.get("private_key") or "lane-app.pem")))
+    key = key if key.is_absolute() else f.parent / key
+    if not key.is_file():
+        raise AppError(f"the lane app's private key {key} doesn't exist")
+    if key.stat().st_mode & 0o077:
+        raise AppError(f"{key} is readable by others: chmod 600 it")
+    return {"app_id": app_id, "key": key}
+
+
+def b64url(b: bytes) -> str:
+    return base64.urlsafe_b64encode(b).rstrip(b"=").decode()
+
+
+def app_jwt(app: dict) -> str:
+    """The app's own ten-minute login, signed RS256 with its key by openssl (no extra libraries)."""
+    t = int(time.time())
+    body = b64url(json.dumps({"alg": "RS256", "typ": "JWT"}).encode()) + "." + b64url(
+        json.dumps({"iat": t - 60, "exp": t + 540, "iss": str(app["app_id"])}).encode())
+    try:
+        r = subprocess.run(["openssl", "dgst", "-sha256", "-sign", str(app["key"])], input=body.encode(),
+                           capture_output=True)
+    except OSError as e:
+        raise AppError(f"couldn't run openssl to sign the lane app's login: {e}") from e
+    if r.returncode or not r.stdout:
+        raise AppError(f"openssl couldn't sign with {app['key']}: {r.stderr.decode(errors='replace').strip()[:200]}")
+    return body + "." + b64url(r.stdout)
+
+
+def app_api(method: str, path: str, auth: str, body: dict | None = None) -> dict:
+    """GitHub's REST API with a bearer credential that never reaches a command line."""
+    req = urllib.request.Request(
+        "https://api.github.com/" + path.lstrip("/"), method=method,
+        data=None if body is None else json.dumps(body).encode(),
+        headers={"Authorization": f"Bearer {auth}", "Accept": "application/vnd.github+json",
+                 "X-GitHub-Api-Version": "2022-11-28", "User-Agent": "claude-coordinator"})
+    try:
+        with urllib.request.urlopen(req, timeout=30) as r:
+            return json.loads(r.read() or b"{}")
+    except urllib.error.HTTPError as e:
+        raise AppError(f"GitHub answered {e.code} to {method} {path}") from e
+    except (urllib.error.URLError, OSError, ValueError) as e:
+        raise AppError(f"{method} {path} failed: {e}") from e
+
+
+def over_permissions(perms: dict) -> list[str]:
+    """The app's permissions that exceed APP_PERMS, as `name: level`."""
+    return sorted(f"{k}: {v}" for k, v in perms.items()
+                  if PERM_LEVEL.get(v, 3) > PERM_LEVEL[APP_PERMS.get(k, "none")])
+
+
+def installation(app: dict, repo: str) -> dict:
+    """The app's installation on owner/repo: {id, app_slug, permissions, …}."""
+    return app_api("GET", f"repos/{repo}/installation", app_jwt(app))
+
+
+class AppToken:
+    """An installation token narrowed to one repo and the app's own permissions, kept in a file
+    (mode `mode`) that gh and git read on each call. GitHub's tokens last an hour, so a user that
+    runs longer renews it while it has less than RENEW_BEFORE left."""
+
+    def __init__(self, app: dict, installation: int, repo: str, perms: dict, name: str):
+        self.app, self.installation, self.repo, self.perms, self.name = app, installation, repo, perms, name
+        self.token, self.expires, self.path, self.mode = "", 0.0, None, 0o600
+
+    def mint(self) -> None:
+        r = app_api(
+            "POST", f"app/installations/{self.installation}/access_tokens", app_jwt(self.app),
+            {"repositories": [self.repo.split("/", 1)[1]], "permissions": self.perms})
+        try:
+            self.token = r["token"]
+            self.expires = datetime.fromisoformat(r["expires_at"].replace("Z", "+00:00")).timestamp()
+        except (KeyError, TypeError, ValueError) as e:
+            raise AppError(f"GitHub's token answer had no usable token: {e}") from e
+        if self.path:
+            self.write()
+
+    def write(self) -> None:
+        tmp = self.path.with_name(self.path.name + ".new")
+        fd = os.open(tmp, os.O_WRONLY | os.O_CREAT | os.O_TRUNC, self.mode)
+        with os.fdopen(fd, "w") as f:
+            f.write(self.token + "\n")
+        os.replace(tmp, self.path)
+
+    def renew(self) -> None:
+        if self.expires - time.time() < RENEW_BEFORE:
+            self.mint()
+
+
+def git_auth(helper: Path) -> list[tuple[str, str]]:
+    """git config for the app's account: GitHub over HTTPS, through `helper` (a credential helper)."""
+    return [("url.https://github.com/.insteadof", "git@github.com:"),
+            ("url.https://github.com/.insteadof", "ssh://git@github.com/"),
+            ("credential.https://github.com.helper", ""),           # drop the helpers your config has
+            ("credential.https://github.com.helper", str(helper))]
+
+
+def git_config_text(cfg: list[tuple[str, str]]) -> str:
+    """cfg as a git config file. Its users' environment carries only `include.path` to it: a tool that
+    drops empty variables when it runs git (buf does) would take the helper reset's "" with it, and
+    git refuses a GIT_CONFIG_COUNT with a value missing. Keys are <section>.<subsection>.<name>."""
+    out, section = [], None
+    for key, value in cfg:
+        sec, rest = key.split(".", 1)
+        sub, name = rest.rsplit(".", 1)
+        if (sec, sub) != section:
+            section = (sec, sub)
+            out.append(f'[{sec} "{sub}"]')
+        quoted = value.replace("\\", "\\\\").replace('"', '\\"')
+        out.append(f'\t{name} = "{quoted}"')
+    return "\n".join(out) + "\n"

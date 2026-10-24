@@ -2,7 +2,7 @@
 name: arch-start-sprint
 description: Work the active sprint as architecture, with stories as GitHub issues. Contract review of the sprint's drafts first (implementation waits on it), then the §8 review queue, then architecture's own backlog. Run once PM has activated the sprint; it also resumes a sprint already under way.
 disable-model-invocation: true
-allowed-tools: Bash(.claude/bin/role:*) Bash(.claude/bin/sprint-state:*) Bash(.claude/bin/story list:*) Bash(.claude/bin/story show:*)
+allowed-tools: Bash(.claude/bin/role:*) Bash(.claude/bin/sprint-state:*) Bash(.claude/bin/story list:*) Bash(.claude/bin/story show:*) Bash(.claude/bin/story check:*)
 ---
 
 # Architecture: work the active sprint
@@ -33,16 +33,19 @@ Follow the order of work in your role file.
    repo §5 and §6, and amend the body where it's wrong (`story body <ID>
    --body-file <f> --note <what changed>`). Then `story status <ID> ready`, or
    `story status <ID> blocked --note <what it waits on>`.
-   Before moving a story to `ready`, check SRE's `Observability review (sre)`
-   comment is there. If it isn't, ready the rest and say which stories wait
-   on SRE. Implementation is waiting on this, so do it before anything else.
+   Before moving a story, run `story check <ID> ready`: it lists every record
+   the move still needs (SRE's `Observability review`, where the repo requires
+   it) and who owes each, and `story status` refuses until they're there. Ready
+   the rest and say which stories wait on whom. Implementation is waiting on
+   this, so do it before anything else.
    Board changes take effect at once; no PR is needed. An ADR or spec change
    you make along the way goes in an `arch/` PR as usual.
-2. **§8 review.** Take `story list --status review` oldest first. Move a story
-   to `done` only when every §8 item holds:
-   - The instrumentation item is SRE's to verify. If there's no
-     `§8 instrumentation (sre)` comment yet, leave the story at `review` and
-     `story comment <ID> --to sre`.
+2. **§8 review.** Take `story list --status review` oldest first, and run
+   `story check <ID> done` on each: it lists every record still missing and
+   the role that owes it, in one go. Move a story to `done` only when every §8
+   item holds:
+   - A record another role owes (SRE's `§8 instrumentation`) that isn't there
+     yet: leave the story at `review` and `story comment <ID> --to <role>`.
    - Otherwise record your review with `story comment <ID> --record "§8"`,
      then `story status <ID> done --note <PRs reviewed>`.
    - If an item fails, record it in the `§8` comment and leave the story at

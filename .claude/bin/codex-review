@@ -203,4 +203,6 @@ def main(argv: list[str] | None = None) -> int:
 
 
 if __name__ == "__main__":
+    # Codex reviews only for a person with a Codex account: ask as you, never as a role session's app (bin/role gh-exec)
+    os.environ["VALESOR_IDENTITY"] = "person"
     sys.exit(main())
