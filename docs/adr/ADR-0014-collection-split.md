@@ -118,8 +118,8 @@ inside `andara-shared`, belong to Fleet.
 | the server's OTLP log records (`AW-SRV-024`) | dropped at the `receiver` | `applicationObservability.logs` with a filter that drops every record | The server sends logs and traces to one `otlp_endpoint`, and nothing switches only the logs off. Shipping both would double the server's log volume with duplicates. The receiver accepts the records, so the exporter reports no failure, and drops them. A server switch for the log export is an implementation story PM may write. Nothing waits on it. |
 | cert-manager | chart | `integrations.cert-manager` | the chart has the integration |
 | Traefik | chart | `annotationAutodiscovery` on Traefik's pod annotations | platform edge, standard scrape; `[verify 065]` that the pinned Traefik chart annotates its pods, else an `extraConfig` scrape on the same collector. *Amended 2026-10-21 (A2):* its pods carry `k8s.grafana.com/job: traefik`, so `job="traefik"`. |
-| Kafka brokers (`andara-log`, the Strimzi Metrics Reporter on `:9404`) | **Fleet** | `shared-kafka` | Brian's direction: outside the chart's standard scope, changed without a chart upgrade |
-| Postgres | **Fleet** | `shared-postgres` (later) | Brian's direction ("database observability"), even though the chart has a `postgresql` integration. Nothing is deployed until `AW-SRV-018` has a binary (`ADR-0013` decision 3); the story that deploys Postgres writes the pipeline. |
+| Kafka brokers (`andara-log`, the Strimzi Metrics Reporter on `:9404`) | **Fleet** | `shared_kafka` (A5) | Brian's direction: outside the chart's standard scope, changed without a chart upgrade |
+| Postgres | **Fleet** | `shared_postgres` (later) | Brian's direction ("database observability"), even though the chart has a `postgresql` integration. Nothing is deployed until `AW-SRV-018` has a binary (`ADR-0013` decision 3); the story that deploys Postgres writes the pipeline. |
 | Schema registry (Karapace), versitygw, Redis | **Fleet**, when shipped | none yet | nothing reads their series today (`ADR-0012` decision 13: unread series are not shipped), and Redis has no binary. The first rule or dashboard panel that reads one adds its pipeline in its own story. |
 | the collectors' own metrics | chart | not shipped | nothing reads them; Fleet's inventory shows collector health |
 
@@ -180,8 +180,8 @@ applied by `make platform-up`. They don't appear in Grafana Cloud's Fleet pages,
   `otelcol.exporter.*`, any `loki.write`, and any `sys.env` call outside the allow-list in the pipeline-safety bullet.
 - **A Fleet pipeline sets `namespace` and `job`** from discovery (`__meta_kubernetes_namespace`, the pod's
   `k8s.grafana.com/job` annotation), because the chart's stamp keys on `namespace` (§4).
-- **The pipelines now:** `shared-kafka`, which discovers pods in `andara-shared` that carry `k8s.grafana.com/job:
-  andara-kafka`, scrapes `:9404`, keeps its allow-list (§5) and forwards. `shared-postgres` comes with Postgres.
+- **The pipelines now:** `shared_kafka`, which discovers pods in `andara-shared` that carry `k8s.grafana.com/job:
+  andara-kafka`, scrapes `:9404`, keeps its allow-list (§5) and forwards. `shared_postgres` comes with Postgres.
 - **Credentials.** The telemetry token's scopes are unchanged (`ADR-0012` decision 4: `metrics:write logs:write
   traces:write fleet-management:read`). There is one token, in the Secret **`grafana-telemetry`** in `observability`.
   `AW-INF-065` creates it from `.local/box.env`. The chart's destinations read it, and so does `fleet`'s
@@ -237,7 +237,7 @@ applied by `make platform-up`. They don't appear in Grafana Cloud's Fleet pages,
   - Each feature's own `metricsTuning.useDefaultAllowList` is **`false`**, so the destination is the **one** filter.
     With the defaults on, kube-state-metrics' list silently drops two keep-list series, which is how `AW-INF-009`'s
     keep-list check failed on 4.5.0.
-- **Fleet:** each pipeline also keeps only its own names before forwarding (`shared-kafka` keeps `kafka_*` names
+- **Fleet:** each pipeline also keeps only its own names before forwarding (`shared_kafka` keeps `kafka_*` names
   and `up`), so an unfiltered broker scrape never crosses the hop. Its names must also be in `keep-list.yaml`,
   marked `owner: fleet`. The destination keeps what it is told to keep, so a name kept by a pipeline but missing
   from `keep-list.yaml` is dropped at the destination and fails the test below.
@@ -266,19 +266,19 @@ applied by `make platform-up`. They don't appear in Grafana Cloud's Fleet pages,
 
 Kafka series are shipped from now on. Today nothing of the brokers is shipped (`AW-INF-051`'s Observability section).
 `AW-INF-039` (in progress) consumes under-replicated partitions and the ISR shrink rate, so those series now have a
-reader. The `shared-kafka` allow-list starts as:
+reader. The `shared_kafka` allow-list starts as:
 
-| Series (Strimzi Metrics Reporter names; exact spelling `[verify 051]` against `:9404`) | Per broker | Brokers | Series |
+| Series (Strimzi Metrics Reporter names, as served on `:9404`; A5) | Per broker | Brokers | Series |
 |---|---|---|---|
 | `kafka_server_replicamanager_underreplicatedpartitions` | 1 | 3 | 3 |
 | `kafka_server_replicamanager_underminisrpartitioncount`, `…_atminisrpartitioncount` | 2 | 3 | 6 |
-| `kafka_server_replicamanager_isrshrinks_total`, `…_isrexpands_total` | 2 | 3 | 6 |
+| `kafka_server_replicamanager_isrshrinkspersec_total`, `…_isrexpandspersec_total` | 2 | 3 | 6 |
 | `kafka_controller_kafkacontroller_offlinepartitionscount`, `…_activecontrollercount` (combined KRaft nodes) | 2 | 3 | 6 |
 | `up{job="andara-kafka"}` | 1 | 3 | 3 |
 | **Kafka total** | | | **24** (bound: 50) |
 | Postgres, when deployed (`pg_up`, `pg_stat_database_numbackends` and `pg_settings_max_connections` for the two databases) | | | about 10 (bound: 30) |
 
-The bounds allow for label variants (`instance`, a `-total` suffix). Per-topic series
+The bounds allow for label variants (`instance`). Per-topic series
 (`kafka_server_brokertopicmetrics_*{topic}`) are **not** kept: across both environments' topics on 3 brokers they
 come to about 1,000 series, and no reader exists. The reporter's own `allowList` in `kafka.yaml` is unchanged, since
 it bounds the scrape, not the shipment.
@@ -312,7 +312,7 @@ services add at most 80. The chart side is the same set decision 15 planned, so 
 ### 8. Terraform's scope
 
 - **What remains Terraform's** (per stack root, `solo7dev` now and `solo7` in `AW-INF-078`):
-  - the Fleet pipelines (`shared-kafka`, later `shared-postgres` and any service pipeline);
+  - the Fleet pipelines (`shared_kafka`, later `shared_postgres` and any service pipeline);
   - the Fleet provider, its tokens and `tf.py`'s composition of them, from `AW-INF-051` scope items 1 and 2;
   - decision 15's `tf_policy.py` rules for pipeline sources. *Corrected 2026-10-21 (A4):* the original said
     "minus the `replace()`/`__PLACEHOLDER__` allowance". `tf_policy.py` never had one, and it gains none;
@@ -368,7 +368,7 @@ telemetry-freshness rule exists, a dead `metrics` collector is silent rather tha
 - **Decision 13:**
   - "the collection pipelines are files in this repo (decision 15), rendered with the stack endpoints";
   - "the allow-list is read from the in-repo pipeline source";
-  - order step 1's "`AW-INF-051`'s pipelines are applied" (now: `shared-kafka` is applied; the chart is installed by
+  - order step 1's "`AW-INF-051`'s pipelines are applied" (now: `shared_kafka` is applied; the chart is installed by
     the rebuild).
 - **Decision 9:**
   - "the Fleet `stamp` pipeline derives `environment`" now reads "the chart's destinations derive `environment`
@@ -389,15 +389,15 @@ deployed (§1).
 
 | Story | What changes | New story? |
 |---|---|---|
-| `AW-INF-065` (draft) | **Gains:** the chart's features and the four collectors (§2), the autodiscovery remap and include-lists (§1), the receiver's fixed Service and ports, the OTLP-log drop filter, `environments.yaml` and `keep-list.yaml` with their rendered rules, the keep-list and parity tests moved from `AW-INF-051`, `KEEP_PIPELINE`, the log stream-label allow-list (also from `AW-INF-051`: `environment`, `namespace`, `cluster`, `job`, `container`), the active-series and log records (from `AW-INF-051`), AC-2 (`environment` on a series) and AC-4 (`unknown` outside the table) moved from `AW-INF-051`, and `AW-INF-009`'s inherited line (the two kube-state-metrics series kept, now by the chart). **Changes:** AC-3 ("each collector registers") becomes "only `fleet` registers"; AC-7's "reachable by the exporters" becomes the include-lists; the Secret `grafana-telemetry` holds the token under one key and the endpoint usernames, which aren't secret, under one key each (`prom`, `loki`, `tempo`, `fleet`; the chart's `usernameKey` defaults to `username` and must be set per destination and on `fleet`'s `remoteConfig` (`usernameKey: fleet`); every reader takes the token as `passwordKey: token`); node-exporter is not installed; the bare-collector `[verify]` is dropped. It **stays blocked by `AW-INF-051`**, because `[verify 065]` item 1 and §5's `owner: fleet` test need `shared-kafka`. Its `[verify]` items are the ones below. Likely `L`. | PM's call: a split such as **065a** (install, Secret, `fleet` registration, the receiver) and **065b** (stamp, guard, keep-list and their tests) |
-| `AW-INF-051` (ready) | Shrinks to the Fleet plumbing (provider, tokens, `tf.py`, the `pipelines/` safety checks without `replace()`) plus `shared-kafka`, and its series spelling `[verify 051]`. Loses `scrape`, `stamp`, `keep`, `logs`, `traces` and `export`, its keep-list and `replace()` tests, ACs 2, 4 and 10, the active-series record, and the inherited `AW-INF-009` line, all of which move to `AW-INF-065`. Its Observability line "broker … series are **not shipped**" reverses: `shared-kafka` ships §6's set. Probably `S`. | no |
+| `AW-INF-065` (draft) | **Gains:** the chart's features and the four collectors (§2), the autodiscovery remap and include-lists (§1), the receiver's fixed Service and ports, the OTLP-log drop filter, `environments.yaml` and `keep-list.yaml` with their rendered rules, the keep-list and parity tests moved from `AW-INF-051`, `KEEP_PIPELINE`, the log stream-label allow-list (also from `AW-INF-051`: `environment`, `namespace`, `cluster`, `job`, `container`), the active-series and log records (from `AW-INF-051`), AC-2 (`environment` on a series) and AC-4 (`unknown` outside the table) moved from `AW-INF-051`, and `AW-INF-009`'s inherited line (the two kube-state-metrics series kept, now by the chart). **Changes:** AC-3 ("each collector registers") becomes "only `fleet` registers"; AC-7's "reachable by the exporters" becomes the include-lists; the Secret `grafana-telemetry` holds the token under one key and the endpoint usernames, which aren't secret, under one key each (`prom`, `loki`, `tempo`, `fleet`; the chart's `usernameKey` defaults to `username` and must be set per destination and on `fleet`'s `remoteConfig` (`usernameKey: fleet`); every reader takes the token as `passwordKey: token`); node-exporter is not installed; the bare-collector `[verify]` is dropped. It **stays blocked by `AW-INF-051`**, because `[verify 065]` item 1 and §5's `owner: fleet` test need `shared_kafka`. Its `[verify]` items are the ones below. Likely `L`. | PM's call: a split such as **065a** (install, Secret, `fleet` registration, the receiver) and **065b** (stamp, guard, keep-list and their tests) |
+| `AW-INF-051` (ready) | Shrinks to the Fleet plumbing (provider, tokens, `tf.py`, the `pipelines/` safety checks without `replace()`) plus `shared_kafka`, and its series spelling `[verify 051]` (resolved, A5). Loses `scrape`, `stamp`, `keep`, `logs`, `traces` and `export`, its keep-list and `replace()` tests, ACs 2, 4 and 10, the active-series record, and the inherited `AW-INF-009` line, all of which move to `AW-INF-065`. Its Observability line "broker … series are **not shipped**" reverses: `shared_kafka` ships §6's set. Probably `S`. | no |
 | `AW-INF-047` (ready) | The rules are unchanged except `AndaraServerUnavailable`'s guard (§9: `namespace!="andara-shared"`; *amended 2026-10-21 (A3):* also `cluster!="ci"`). "keeps the `environment` it arrived with: `unknown` once `AW-INF-051`'s `stamp` runs" now reads "once `AW-INF-065`'s destinations stamp", and its blocked-by link moves from `AW-INF-051` to `AW-INF-065`. | no |
 | `AW-INF-049` (ready) | No contract change. Its live data already waits on `AW-INF-065`. | no |
 | `AW-INF-061` (ready) | Its out-of-scope line "the same pipeline files as static config with `environment="local"` (`AW-INF-065`)" becomes "the chart with `values-ci.yaml` (`platform-up PROFILE=ci`), no override". The throwaway Kafka's namespace is outside the CI include-list, so it isn't scraped. | no |
 | `AW-INF-075` (review, merged) | none to its contract; its constant moves in `AW-INF-065` | no |
-| `AW-INF-070` (ready) | Step 4(i-b) applies `shared-kafka` only. Step 4(iii-b) becomes "the chart is installed and `fleet` has registered and pulled `shared-kafka`". | no |
+| `AW-INF-070` (ready) | Step 4(i-b) applies `shared_kafka` only. Step 4(iii-b) becomes "the chart is installed and `fleet` has registered and pulled `shared_kafka`". | no |
 | `AW-INF-078` (parked) | `solo7`'s collection is the same chart with a prod values profile on prod's cluster, plus `solo7`'s copy of the pipelines | no |
-| Postgres's deployment story (`ADR-0013` "later") | writes `shared-postgres` and its `env-allow.txt` entry | written when `AW-SRV-018` has a binary |
+| Postgres's deployment story (`ADR-0013` "later") | writes `shared_postgres` and its `env-allow.txt` entry | written when `AW-SRV-018` has a binary |
 
 **`[verify 065]`**, observed in `AW-INF-065` against the pinned 4.5.3:
 
@@ -519,3 +519,22 @@ raises it with PM.
 - `ADR-0012` decision 1: the guard sentence, annotated.
 - AW-INF-064: its box `ENV=local` selectors add `cluster="andara"`.
 - `AW-INF-061`: no change.
+
+**2026-10-23, `AW-INF-051`'s `[verify 051]` and its first apply.** Two names in this ADR were wrong against
+the live systems. Both are corrected in place above, so the ADR names what is applied.
+
+- **A5. Pipeline names are Alloy identifiers, and the ISR rates carry `persec`.**
+  - **The pipeline name.** Fleet refuses `shared-kafka`: `invalid_argument: pipeline name must be valid alloy
+    identifier` (terraform run 39953398767, which created nothing). The pipeline is `shared_kafka` (created by run
+    39958791748), and Postgres's will be `shared_postgres`. **The rule:** a Fleet pipeline's name equals its
+    source's file name and matches `[a-z_][a-z0-9_]*`, which `make pipelines-check` enforces. The mock provider and
+    `alloy validate` don't check names, so the check is the only guard before the API.
+  - **The ISR rates.** The Strimzi Metrics Reporter serves `kafka_server_replicamanager_isrshrinkspersec_total`
+    and `…_isrexpandspersec_total` (counters), not `…_isrshrinks_total` and `…_isrexpands_total` (SRE read
+    `:9404` from `quay.io/strimzi/kafka:1.2.0-kafka-4.3.1` with `kafka.yaml`'s allow-list, 2026-10-22). The other
+    five names in §6 match. The count is unchanged at 24. The live read from a broker in `andara-shared` is
+    `AW-INF-051` AC-12's.
+
+**Ripple (A5):** `AW-INF-051`'s body; `AW-INF-065` (AC-7, AC-9, its scope and out-of-scope lines, and the
+keep-list names); `AW-INF-070` (step 4's pipeline); `AW-INF-039`, whose rule reads the ISR shrink rate by the
+`persec_total` name when it is written; `ADR-0012` decision 1's annotation. `AW-INF-078` names neither.

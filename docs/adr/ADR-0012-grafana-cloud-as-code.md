@@ -899,7 +899,7 @@ step (so their ignored-`ENV` caveat goes away).
 > the chart. The keep-list's allow-list is `deploy/platform/collectors/keep-list.yaml`, enforced at the chart's
 > metrics destination. "The collection pipelines are files … rendered with the stack endpoints" and "the allow-list
 > is read from the in-repo pipeline source" no longer hold. The keep-list table, the checks and the order stand,
-> with order step 1's pipelines read as `shared-kafka` (`ADR-0014` §5, §10). Below, read "the `scrape` pipeline's
+> with order step 1's pipelines read as `shared_kafka` (`ADR-0014` §5, §10; the name per its A5). Below, read "the `scrape` pipeline's
 > annotation discovery" as the chart's `annotationAutodiscovery`, "the `stamp` pipeline's final rule" as the
 > destinations' guard (`ADR-0014` §4), and "the `keep` pipeline's allow-list" as `keep-list.yaml`.
 
