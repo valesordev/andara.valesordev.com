@@ -416,6 +416,18 @@ def test_alert_rules():
                                            (p.stdout + p.stderr).strip()))
 
 
+def test_degraded_hold_floor():
+    """AW-INF-039 AC-5: ingress.degraded_hold >= 2 x WorldReadOnly's for: + 30 s."""
+    sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+    import degraded_hold
+    try:
+        errors = degraded_hold.check_repo()
+    except ValueError as e:
+        errors = [str(e)]
+    for e in errors:
+        fail(e)
+
+
 def test_image_source():
     """AW-INF-013 AC-4: where the StatefulSet's image comes from, rendered through
     scripts/helm_image_args.sh — the same arguments helm_install.sh passes — so a change to
@@ -803,6 +815,7 @@ def main():
         test_scrape_annotations(env)
     test_edge_off()
     test_alert_rules()
+    test_degraded_hold_floor()
     test_ordinal_partitions()
     test_measurements()
     test_projectors_render_when_enabled()
