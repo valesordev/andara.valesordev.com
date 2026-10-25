@@ -21,6 +21,8 @@ import json
 import os
 import re
 
+from urllib.parse import urlparse
+
 import yaml
 
 import collectors
@@ -164,6 +166,56 @@ def metric_rules(cfg):
             for b in blocks(endpoint, "write_relabel_config")]
 
 
+def expected(envs, keep):
+    """What the destinations must carry, rendered by collectors.py from the sources and read back by the
+    same parsers that read the chart's output, so a comparison is like for like."""
+    metrics = metric_rules('prometheus.remote_write "solo7dev_metrics" {\nendpoint {\n%s}\n}\n'
+                           % collectors.metric_rules(envs, keep))
+    logs = log_signature('loki.process "solo7dev_logs" {\n%s}\n' % collectors.log_stages(envs))
+    return metrics, logs, collectors.trace_statements(envs)
+
+
+def log_signature(cfg):
+    """[(selector, {static label: value})] of solo7dev-logs' stage.match blocks, and ("label_keep", values)
+    for each label_keep, in order; None when cfg has no logs destination."""
+    body = component(cfg, "loki.process", "solo7dev_logs")
+    if body is None:
+        return None
+    out = []
+    for name, inner in top_blocks(body):
+        if name == "stage.match":
+            labels = {}
+            for st in blocks(inner, "stage.static_labels"):
+                labels.update({k: string(v) for k, v in re.findall(r'([A-Za-z_][A-Za-z0-9_]*)\s*=\s*(%s)' % STRING, st)})
+            out.append((attr(inner, "selector"), labels))
+        elif name == "stage.label_keep":
+            out.append(("label_keep", tuple(strings(inner, "values"))))
+    return out
+
+
+def top_blocks(body):
+    """(name, body) of every block directly inside body, in order."""
+    out, depth, i = [], 0, 0
+    while i < len(body):
+        c = body[i]
+        if c in "\"`":
+            i = _skip_string(body, i)
+            continue
+        if c == "{":
+            if depth == 0:
+                m = re.search(r"([A-Za-z_][A-Za-z0-9_.]*)\s*$", body[:i])
+                inner = _body(body, i)
+                if m and inner is not None:
+                    out.append((m.group(1), inner))
+                    i += len(inner) + 2
+                    continue
+            depth += 1
+        elif c == "}":
+            depth -= 1
+        i += 1
+    return out
+
+
 def metric_table(rules):
     """(table, guarded, kube namespaces, keep names) read back from metric_rules()."""
     table, guarded, kube, keep = {}, False, None, None
@@ -235,11 +287,22 @@ def trace_table(statements):
 
 # --- the render's invariants ----------------------------------------------------------------------------
 
-def render_problems(renders, envs, profiles, chart_dir, kind_text=None, prod_tfvars=None):
-    """renders: {profile: (values, docs)}; profiles: {profile: its file's parsed doc}."""
+def first_difference(got, want):
+    for i, (g, w) in enumerate(zip(got, want)):
+        if g != w:
+            return "at %d: %s, want %s" % (i, g, w)
+    return "%d entries, want %d" % (len(got), len(want))
+
+
+def render_problems(renders, envs, profiles, chart_dir, kind_text=None, prod_tfvars=None, keep=None):
+    """renders: {profile: (values, docs)}; profiles: {profile: its file's parsed doc}. Each destination's
+    blocks are compared in full with what collectors.py renders from environments.yaml and keep-list.yaml
+    (keep, when given, stands in for keep-list.yaml); the narrower checks name the usual breakages."""
     problems = []
     say = problems.append
     blocks_by_profile = {}
+    keep = collectors.keep_list() if keep is None else keep
+    want_metrics, want_logs, want_traces = expected(envs, keep)
     for profile, (vals, docs) in sorted(renders.items()):
         cfgs = collectors.alloy_configs(docs)
         seen = {"metrics": 0, "logs": 0, "traces": 0}
@@ -261,6 +324,9 @@ def render_problems(renders, envs, profiles, chart_dir, kind_text=None, prod_tfv
                     say("%s/%s: solo7dev-metrics has no keep rule" % (profile, name))
                 elif rules[-1][4] != "keep":
                     say("%s/%s: solo7dev-metrics' keep rule is not its last rule" % (profile, name))
+                if rules != want_metrics:
+                    say("%s/%s: solo7dev-metrics' rules are not what environments.yaml and keep-list.yaml render, %s"
+                        % (profile, name, first_difference(rules, want_metrics)))
                 signature.append(("metrics", rules))
             stages = log_stages(cfg)
             if stages is not None:
@@ -273,7 +339,11 @@ def render_problems(renders, envs, profiles, chart_dir, kind_text=None, prod_tfv
                 if keep != list(collectors.LOG_LABELS):
                     say("%s/%s: solo7dev-logs keeps stream labels %s, not the allow-list %s"
                         % (profile, name, keep, list(collectors.LOG_LABELS)))
-                signature.append(("logs", stages))
+                sig = log_signature(cfg)
+                if sig != want_logs:
+                    say("%s/%s: solo7dev-logs' stages are not what environments.yaml renders, %s"
+                        % (profile, name, first_difference(sig, want_logs)))
+                signature.append(("logs", sig))
             stmts = trace_statements(cfg)
             if stmts is not None:
                 seen["traces"] += 1
@@ -282,6 +352,9 @@ def render_problems(renders, envs, profiles, chart_dir, kind_text=None, prod_tfv
                     say("%s/%s: solo7dev-traces' stamp encodes %s, environments.yaml %s" % (profile, name, table, envs))
                 if not guarded:
                     say("%s/%s: solo7dev-traces has no unknown guard after its stamp" % (profile, name))
+                if stmts != want_traces:
+                    say("%s/%s: solo7dev-traces' environment statements are not what environments.yaml renders, %s"
+                        % (profile, name, first_difference(stmts, want_traces)))
                 signature.append(("traces", stmts))
             for m in re.finditer(r'loki\.resource\.labels\\?"\], \\?"([^"\\]*)\\?"', cfg):
                 extra = sorted({x.strip() for x in m.group(1).split(",")} - set(collectors.LOG_LABELS))
@@ -338,6 +411,12 @@ def collector_problems(profile, cfgs, docs):
     jobs = set(re.findall(r'"(__meta_kubernetes_pod_annotation_[a-z0-9_]*job)"', ad))
     if jobs != {"__meta_kubernetes_pod_annotation_k8s_grafana_com_job"}:
         say("%s: annotation autodiscovery reads job from %s, not k8s.grafana.com/job" % (profile, sorted(jobs) or "nothing"))
+    fleet = cfgs.get("fleet")
+    if fleet is not None:
+        writers = sorted(set(re.findall(r'(?m)^\s*(prometheus\.remote_write|loki\.write|otelcol\.exporter\.[a-z_]+)\s+"', fleet)))
+        if writers:
+            say("%s: fleet renders its own writers (%s); its only output is the receiver, through Fleet's pipelines "
+                "(ADR-0014 §3)" % (profile, ", ".join(writers)))
     rcv = cfgs.get("receiver", "")
     flt = component(component(rcv, "declare", "application_observability") or "", "otelcol.processor.filter", "default")
     logs = blocks(flt or "", "logs")
@@ -359,13 +438,40 @@ def collector_problems(profile, cfgs, docs):
     return out
 
 
+def external_labels(cfg, kind, label):
+    """{label: value} of a component's external_labels, or None when it has none."""
+    body = component(cfg, kind, label)
+    m = re.search(r"external_labels\s*=\s*\{([^}]*)\}", body or "")
+    if not m:
+        return None
+    return {k.strip('"'): string(v)
+            for k, v in re.findall(r'("[^"]+"|[A-Za-z_][A-Za-z0-9_]*)\s*=\s*(%s)' % STRING, m.group(1))}
+
+
 def cluster_problems(profile, cfgs):
+    """Every metric, log and trace destination stamps cluster with the profile's name (A3), and the logs
+    destination adds no stream label outside the allow-list after its label_keep."""
     out = []
+    want = CLUSTER[profile]
     for name, cfg in sorted(cfgs.items()):
-        for m in re.finditer(r'external_labels\s*=\s*\{([^}]*)\}', cfg):
-            got = re.findall(r'"cluster"\s*=\s*"([^"]*)"', m.group(1))
-            if got != [CLUSTER[profile]]:
-                out.append('%s/%s: the destinations carry cluster=%s, not "%s"' % (profile, name, got, CLUSTER[profile]))
+        for kind, label, what in (("prometheus.remote_write", "solo7dev_metrics", "metrics"),
+                                  ("loki.write", "solo7dev_logs", "logs")):
+            if component(cfg, kind, label) is None:
+                continue
+            labels = external_labels(cfg, kind, label) or {}
+            if labels.get("cluster") != want:
+                out.append('%s/%s: solo7dev-%s carries cluster=%s, not "%s"'
+                           % (profile, name, what, labels.get("cluster"), want))
+            if what == "logs":
+                extra = sorted(set(labels) - set(collectors.LOG_LABELS))
+                if extra:
+                    out.append("%s/%s: solo7dev-logs adds stream labels outside the allow-list after label_keep: %s"
+                               % (profile, name, ", ".join(extra)))
+        body = component(cfg, "otelcol.processor.transform", "solo7dev_traces")
+        if body is not None:
+            stmts = [x for b in blocks(body, "trace_statements") for x in strings(b, "statements")]
+            if 'set(attributes["cluster"], "%s")' % want not in stmts:
+                out.append('%s/%s: solo7dev-traces does not set cluster="%s"' % (profile, name, want))
     return out
 
 
@@ -401,9 +507,14 @@ def prod_values(path=None):
 
 
 def prod_problems(profile, vals, docs, prod_tfvars=None):
+    """Prod's endpoint values, and each prod url's host however it is spelled (Tempo renders host:443)."""
     text = yaml.safe_dump(vals) + yaml.safe_dump_all(docs)
-    out = ["%s: the render names prod's %s (%s); prod's credentials never reach this cluster (AW-INF-078)"
-           % (profile, k, v) for k, v in sorted(prod_values(prod_tfvars).items()) if v in text]
+    out = []
+    for k, v in sorted(prod_values(prod_tfvars).items()):
+        host = urlparse(v).hostname if k.endswith("_url") else None
+        if v in text or (host and host in text):
+            out.append("%s: the render names prod's %s (%s); prod's credentials never reach this cluster (AW-INF-078)"
+                       % (profile, k, v))
     out += ["%s: the render names %s, a prod credential" % (profile, n) for n in PROD_NAMES if n in text]
     return out
 
@@ -489,19 +600,41 @@ def pipelines(directory=PIPELINES):
 
 # --- the runbooks' LogQL --------------------------------------------------------------------------------
 
-# A stream selector followed by a line filter or a parser: LogQL, not PromQL.
-LOGQL = re.compile(r"\{([^{}]*)\}\s*(?:\|=|\|~|!=|!~|\|\s*(?:json|logfmt|pattern|regexp|unpack|line_format|label_format)\b)")
+# A stream selector is LogQL, not PromQL, when a line filter or parser follows it (on its line or the
+# next), when it is the argument of a log range function (count_over_time({…}[5m])), or when it sits in a
+# ```logql block. service_name is Loki's alone (no kept series carries it), so a selector naming it is
+# always LogQL.
+SELECTOR = re.compile(r"\{([^{}]*)\}")
+PIPELINE = re.compile(r"\s*(?:\|=|\|~|!=|!~|\|\s*(?:json|logfmt|pattern|regexp|unpack|line_format|label_format|drop|keep)\b)")
+LOG_RANGE = re.compile(r"\b(?:count_over_time|bytes_over_time|bytes_rate|absent_over_time|rate)\(\s*$")
+FENCE = re.compile(r"(?ms)^```logql[ \t]*$(.*?)^```")
 MATCHER = re.compile(r'([A-Za-z_][A-Za-z0-9_]*)\s*(?:=~|!~|!=|=)\s*"')
+LOKI_ONLY = ("service_name",)
+
+
+def logql_selectors(text):
+    """(offset, labels) of every selector in text that reads as LogQL."""
+    fenced = [(m.start(1), m.end(1)) for m in FENCE.finditer(text)]
+    for m in SELECTOR.finditer(text):
+        labels = MATCHER.findall(m.group(1))
+        if not labels:
+            continue
+        piped = PIPELINE.match(text, m.end())
+        ranged = LOG_RANGE.search(text, max(0, m.start() - 40), m.start()) and text[m.end():m.end() + 1] == "["
+        fence = any(a <= m.start() < b for a, b in fenced)
+        if piped or ranged or fence or set(labels) & set(LOKI_ONLY):
+            yield m.start(), labels
 
 
 def runbook_problems(directory=RUNBOOKS):
     out = []
     for path in sorted(glob.glob(os.path.join(directory, "*.md"))):
         with open(path) as f:
-            for n, line in enumerate(f, 1):
-                for m in LOGQL.finditer(line):
-                    for label in MATCHER.findall(m.group(1)):
-                        if label not in collectors.LOG_LABELS:
-                            out.append("%s:%d: a LogQL selector names %s, outside the stream-label allow-list %s"
-                                       % (os.path.relpath(path, REPO), n, label, ", ".join(collectors.LOG_LABELS)))
+            text = f.read()
+        for offset, labels in logql_selectors(text):
+            n = text.count("\n", 0, offset) + 1
+            for label in labels:
+                if label not in collectors.LOG_LABELS:
+                    out.append("%s:%d: a LogQL selector names %s, outside the stream-label allow-list %s"
+                               % (os.path.relpath(path, REPO), n, label, ", ".join(collectors.LOG_LABELS)))
     return out

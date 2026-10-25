@@ -202,8 +202,10 @@ def check(r, profile, env, sleep=time.sleep, now=time.time):
                         "empty: the collectors ship nothing (%s unset at platform-up)" % collectors.TOKEN))
     readers = [p for p in pods if references_secret(p, collectors.SECRET)]
     outside = ["%s/%s" % (p["metadata"]["namespace"], p["metadata"]["name"]) for p in readers if not in_release(p)]
-    r.check(not outside, "pods referencing %s: %d, all in the release%s" % (
-        collectors.SECRET, len(readers), "" if not outside else "; outside it: " + ", ".join(outside)))
+    # The collectors read the Secret through the API (remote.kubernetes.secret), so a pod that mounts or
+    # env-references it is an addition; none is the expected count.
+    r.check(not outside, "pods that mount or env-reference %s: %d%s; the collectors read it through the API" % (
+        collectors.SECRET, len(readers), "" if not outside else ", outside the release: " + ", ".join(outside)))
     if profile == "box" and shipping:
         fleet_inventory(r, env)
     return r

@@ -848,7 +848,8 @@ registered collectors. Here it carries only the collection of `andara-shared`'s 
 deployed through Terraform per stack, on the one `fleet` collector. Its pipelines forward to the chart's `receiver`,
 so the chart's destinations stamp `environment` (a series nothing stamped carries `environment="unknown"`) and apply
 the keep-list (ADR-0014). Grafana also creates default pipelines in every stack (`self-monitoring-*`); they match
-`fleet` too, and write past the destinations, so `fleet` holds no token they can use (AW-INF-065).
+`fleet` too, and write past the destinations with the token from the environment, so `fleet`'s environment
+holds none (AW-INF-065).
 
 **Contact point** — Where Grafana sends a notification: a Slack channel, an IRM integration, or
 `blackhole`, which notifies no one (its one webhook never resolves, and its route is always muted). **Notification policy** — The tree that matches an alert's labels

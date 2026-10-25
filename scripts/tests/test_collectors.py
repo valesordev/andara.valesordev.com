@@ -49,11 +49,11 @@ def edit_config(rs, profile, collector, old, new, count=1):
 
 class Base(unittest.TestCase):
 
-    def problems(self, rs=None, profiles=None, envs=None, kind_text=None, prod_tfvars=None):
+    def problems(self, rs=None, profiles=None, envs=None, kind_text=None, prod_tfvars=None, keep=None):
         rs = rs or renders()
         profiles = profiles or {p: collectors.profile_doc(p) for p in rs}
         return check.render_problems(rs, envs or collectors.environments(), profiles, collectors.chart(),
-                                     kind_text=kind_text, prod_tfvars=prod_tfvars)
+                                     kind_text=kind_text, prod_tfvars=prod_tfvars, keep=keep)
 
     def assertProblem(self, pattern, problems):
         self.assertTrue([p for p in problems if re.search(pattern, p)],
@@ -97,8 +97,9 @@ class Committed(Base):
     def test_fleet_registers_with_cluster_and_stack_only(self):
         """AC-3's attributes: cluster and stack, never environment, and each key once."""
         cfg = collectors.alloy_configs(renders()["box"][1])["fleet"]
-        attrs = re.findall(r'^\s*"([^"]+)"\s*=\s*"([^"]*)",', check.component(cfg, "remotecfg", "") or
-                           cfg[cfg.index("remotecfg"):], re.M)
+        remotecfg = check._body(cfg, cfg.index("{", cfg.index("remotecfg {")))
+        block = re.search(r"attributes\s*=\s*\{([^}]*)\}", remotecfg).group(1)
+        attrs = re.findall(r'^\s*"([^"]+)"\s*=\s*"([^"]*)",', block, re.M)
         keys = [k for k, _ in attrs]
         self.assertEqual(len(keys), len(set(keys)), keys)
         self.assertEqual(dict(attrs).get("cluster"), "andara")
@@ -163,6 +164,34 @@ class Stamp(Base):
         rs = edit_config(renders(), "ci", "metrics", 'regex = "andara-prod"', 'regex = "andara-prod|andara-x"')
         self.assertProblem(r"ci: the stamp, guard and keep blocks differ from box's", self.problems(rs))
 
+    def test_a_guard_that_drops_instead_of_stamping_fails(self):
+        """Reviewer (a): a guard with action drop removes every series outside the table."""
+        rs = edit_config(renders(), "box", "metrics", 'replacement = "unknown"\n',
+                         'replacement = "unknown"\n      action = "drop"\n')
+        self.assertProblem(r"box/metrics: solo7dev-metrics' rules are not what environments.yaml and keep-list.yaml "
+                           r"render, at 4: .*'drop'", self.problems(rs))
+
+    def test_a_kube_drop_rule_that_keeps_fails(self):
+        """Reviewer (b): action keep on A1's last rule drops every series but kube_ ones."""
+        rs = edit_config(renders(), "ci", "receiver", 'regex = "drop"\n      action = "drop"',
+                         'regex = "drop"\n      action = "keep"')
+        self.assertProblem(r"ci/receiver: solo7dev-metrics' rules are not what", self.problems(rs))
+
+    def test_a_kube_mark_that_matches_nothing_fails(self):
+        """Reviewer (c): A1 switched off by its first rule."""
+        rs = edit_config(renders(), "box", "metrics", 'regex = "kube_.+"', 'regex = "kube_NOPE"')
+        self.assertProblem(r"box/metrics: solo7dev-metrics' rules are not what", self.problems(rs))
+
+    def test_a_keep_rule_that_no_longer_matches_the_keep_list_fails(self):
+        """Reviewer (d): the keep regex cut to `up`."""
+        names = "|".join(sorted(e["name"] for e in collectors.keep_list()))
+        rs = edit_config(renders(), "box", "metrics", 'regex = "%s"' % names, 'regex = "up"')
+        self.assertProblem(r"box/metrics: solo7dev-metrics' rules are not what", self.problems(rs))
+
+    def test_a_render_against_another_keep_list_fails(self):
+        keep = [e for e in collectors.keep_list() if e["name"] != "andara_ticks_total"]
+        self.assertProblem(r"solo7dev-metrics' rules are not what", self.problems(keep=keep))
+
     def test_a_kube_regex_that_differs_from_the_table_fails(self):
         """A1."""
         rs = edit_config(renders(), "box", "receiver", 'drop;(andara-ci|', 'drop;(andara-shared|andara-ci|')
@@ -225,7 +254,29 @@ class Collection(Base):
         rs = renders()
         for name in ("metrics", "logs", "receiver"):
             rs = edit_config(rs, "ci", name, '"cluster" = "ci"', '"cluster" = "andara"')
-        self.assertProblem(r'ci/metrics: the destinations carry cluster=\[\'andara\'\], not "ci"', self.problems(rs))
+        self.assertProblem(r'ci/metrics: solo7dev-metrics carries cluster=andara, not "ci"', self.problems(rs))
+        self.assertProblem(r'ci/logs: solo7dev-logs carries cluster=andara, not "ci"', self.problems(rs))
+
+    def test_destinations_without_a_cluster_label_fail(self):
+        """A3, the other way: clusterLabels emptied leaves no cluster on any signal."""
+        rs = renders()
+        rs = edit_config(rs, "box", "metrics", '"cluster" = "andara",\n', '')
+        rs = edit_config(rs, "box", "receiver", '`set(attributes["cluster"], "andara")`,\n', '')
+        problems = self.problems(rs)
+        self.assertProblem(r'box/metrics: solo7dev-metrics carries cluster=None, not "andara"', problems)
+        self.assertProblem(r'box/receiver: solo7dev-traces does not set cluster="andara"', problems)
+
+    def test_a_log_label_added_after_label_keep_fails(self):
+        """extraLabels on the logs destination renders into loki.write, after label_keep."""
+        rs = edit_config(renders(), "box", "logs", '"cluster" = "andara",\n', '"cluster" = "andara",\n    pod = "x",\n')
+        self.assertProblem(r"box/logs: solo7dev-logs adds stream labels outside the allow-list after label_keep: pod",
+                           self.problems(rs))
+
+    def test_fleet_with_a_writer_of_its_own_fails(self):
+        """fleet's only output is the receiver, through Fleet's pipelines (ADR-0014 §3)."""
+        rs = edit_config(renders(), "box", "fleet", "remotecfg {",
+                         'prometheus.remote_write "direct" {\n  endpoint {\n    url = "https://x"\n  }\n}\n\nremotecfg {')
+        self.assertProblem(r"box: fleet renders its own writers \(prometheus.remote_write\)", self.problems(rs))
 
     def test_values_ci_sets_cluster_name_ci(self):
         self.assertEqual(collectors.profile_doc("ci")["cluster"]["name"], "ci")
@@ -287,6 +338,12 @@ class Prod(Base):
         rs = renders()
         rs["box"][0]["collectors"]["fleet"]["remoteConfig"]["url"] = fleet
         self.assertProblem(r"box: the render names prod's fleet_url", self.problems(rs))
+
+    def test_prods_tempo_host_as_rendered_for_grpc_fails(self):
+        """Tempo renders as host:443, never as the tfvars url, so the host alone must be caught."""
+        rs = renders()
+        rs["box"][0]["destinations"]["solo7dev-traces"]["url"] = collectors.tempo_grpc(check.prod_values()["tempo_url"])
+        self.assertProblem(r"box: the render names prod's tempo_url", self.problems(rs))
 
     def test_a_prod_credential_name_in_the_render_fails(self):
         rs = edit_config(renders(), "ci", "metrics", 'name      = "grafana-telemetry"', 'name      = "GRAFANA_SOLO7_TELEMETRY"')
@@ -382,6 +439,21 @@ class Runbooks(unittest.TestCase):
         problems = check.runbook_problems(d)
         self.assertEqual(len(problems), 1, problems)
         self.assertIn("names service_name, outside the stream-label allow-list", problems[0])
+
+    def test_every_logql_shape_is_read(self):
+        """A bare service_name selector, a log range function, a filter on the next line, a ```logql block;
+        PromQL beside them is not LogQL."""
+        d = tempfile.mkdtemp()
+        with open(os.path.join(d, "z.md"), "w") as f:
+            f.write('`{service_name="andara-server"}`\n'
+                    '`sum(count_over_time({app="andara"}[5m]))`\n'
+                    '```\n{namespace="andara-dev", pod=~"andara-.*"}\n  |= "refused"\n```\n'
+                    '```logql\n{instance="andara-0"}\n```\n'
+                    '`rate(up{job="andara-server"}[5m])` and `{job="andara-server", pod="andara-0"}`\n')
+        problems = check.runbook_problems(d)
+        for label in ("service_name", "app", "pod", "instance"):
+            self.assertTrue([p for p in problems if "names %s," % label in p], (label, problems))
+        self.assertEqual(len(problems), 4, problems)
 
     def test_a_pod_selector_with_a_parser_fails(self):
         d = tempfile.mkdtemp()
