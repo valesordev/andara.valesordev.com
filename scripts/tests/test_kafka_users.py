@@ -119,6 +119,16 @@ class PlatformBreaks(unittest.TestCase):
 
     def test_create_on_a_platform_topic_is_the_registrys_on_schemas_only(self):
         self.assertEqual(kafka_users.check(self.users, REAL), [])
+        # The registry, on another declared platform topic: refused.
+        doc = copy.deepcopy(REAL)
+        doc["platform_topics"].append({"name": "_other", "partitions": "1", "replication_factor": "3"})
+        users = users_of(doc)
+        reg = next(u for u in users if u["metadata"]["name"] == "andara-schema-registry")
+        reg["spec"]["authorization"]["acls"].append(
+            {"resource": {"type": "topic", "name": "_other", "patternType": "literal"}, "operations": ["Create"]})
+        errs = kafka_users.check(users, doc)
+        self.assertTrue([e for e in errs if "andara-schema-registry: topic literal _other Create: Create on a topic "
+                         "is the operator's alone" in e], errs)
         self.reg["metadata"]["name"] = "andara-other"
         self.assertFails("andara-other: topic literal _schemas Create,Read,Write: Create on a topic is the operator's alone")
 

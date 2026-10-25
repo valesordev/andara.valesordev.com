@@ -451,9 +451,9 @@ kafka-creds:
 kafka-acl-probe:
 	@$(PY) $(SCRIPTS)/kafka_acl_probe.py
 
-## kafka-creds-rotate: a new password for one principal (the User Operator writes it to the broker; the old one is refused), then kafka-creds; running workloads pick it up without a restart — ENV=<local|dev> PRINCIPAL=<andara-server|andara-projector-state> (AW-INF-056)
+## kafka-creds-rotate: a new password for one principal (the User Operator writes it to the broker; the old one is refused), then kafka-creds; running workloads pick it up without a restart — ENV=<local|dev> PRINCIPAL=<andara-server|andara-projector-state>, or PRINCIPAL=<andara-operator|andara-schema-registry> with no ENV (the registry is restarted) (AW-INF-056)
 kafka-creds-rotate:
-	@$(PY) $(SCRIPTS)/kafka_creds.py rotate "$(ENV)" "$(PRINCIPAL)"
+	@$(PY) $(SCRIPTS)/kafka_creds.py rotate "$(if $(filter command line,$(origin ENV)),$(ENV),)" "$(PRINCIPAL)"
 
 ## argocd-install: Argo CD into `argocd` at its pinned version; with ENV=dev, dev's Secrets (if absent) and the andara-dev Application, which follows the Git tag `dev` and needs it to exist (AW-INF-019, AW-INF-059)
 argocd-install:

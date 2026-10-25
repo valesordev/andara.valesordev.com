@@ -62,6 +62,8 @@ class FakeKube:
             name = args[-1].split("/", 1)[-1]
             store.pop(name, None)
             return ok()
+        if args[:2] == ["rollout", "restart"] or args[:2] == ["rollout", "status"]:
+            return ok()
         if args[0] == "annotate":
             name = args[-2].split("/", 1)[1]
             if self.regenerate:
@@ -79,10 +81,13 @@ class Base(unittest.TestCase):
         self.kube = FakeKube()
 
     def run_main(self, fn, *args, **kw):
+        return self.run_main_with(self.kube, fn, *args, **kw)
+
+    def run_main_with(self, runner, fn, *args, **kw):
         out, err = io.StringIO(), io.StringIO()
         with contextlib.redirect_stdout(out), contextlib.redirect_stderr(err):
             try:
-                fn(*args, run=self.kube, doc=REAL, **kw)
+                fn(*args, run=runner, doc=REAL, **kw)
                 code = 0
             except kafka_creds.Failed as e:
                 print("make: kafka-creds: %s" % e, file=sys.stderr)
@@ -102,6 +107,14 @@ class Copy(Base):
         self.assertIn("kafka-creds: andara-server-dev -> andara-dev created", out)
         # Nothing is written outside andara-dev.
         self.assertFalse([c for c in self.kube.calls if c[1][0] in ("apply", "delete") and c[0] != "andara-dev"])
+
+    def test_local_gets_its_own_pair_only_and_dev_nothing(self):
+        code, _, _ = self.run_main(kafka_creds.copy, "local")
+        self.assertEqual(code, 0)
+        self.assertEqual(sorted(self.kube.secrets["andara-local"]),
+                         ["andara-projector-state-local", "andara-server-local"])
+        self.assertEqual(self.kube.secrets["andara-dev"], {})
+        self.assertFalse([c for c in self.kube.calls if c[1][0] in ("apply", "delete") and c[0] != "andara-local"])
 
     def test_a_second_run_changes_nothing(self):
         self.run_main(kafka_creds.copy, "dev")
@@ -156,6 +169,43 @@ class Rotate(Base):
         self.assertEqual(code, 1)
         self.assertIn("wrote no new Secret andara-shared/andara-server-dev", err)
         self.assertEqual(self.kube.secrets["andara-dev"], {})
+
+    def test_the_old_secret_still_there_is_waited_out(self):
+        """The wait takes only a password that differs from the old one: an operator that hasn't yet
+        removed the old Secret (or recreated it unchanged) doesn't count as rotated."""
+        self.run_main(kafka_creds.copy, "dev")
+        real = self.kube.__call__
+        seen = {"n": 0}
+
+        def slow(argv, capture_output=True, text=True, input=None):
+            # The delete and the annotate are accepted but change nothing yet; the new password
+            # appears on the fourth read of the shared Secret.
+            args, ns = argv[argv.index("-n") + 2:], argv[argv.index("-n") + 1]
+            if args[0] in ("delete", "annotate"):
+                return SimpleNamespace(returncode=0, stdout="", stderr="")
+            if ns == "andara-shared" and args[:2] == ["get", "secret"] and "jsonpath={.data.password}" in args:
+                seen["n"] += 1
+                if seen["n"] == 4:
+                    self.kube.secrets["andara-shared"]["andara-server-dev"] = {"data": {"password": "bmV3"}}
+            return real(argv, input=input)
+        code, out, err = self.run_main_with(slow, kafka_creds.rotate, "dev", "andara-server", sleep=lambda s: None)
+        self.assertEqual(code, 0, err)
+        self.assertGreaterEqual(seen["n"], 4, "it took the unchanged old password as the new one")
+        self.assertEqual(self.kube.secrets["andara-dev"]["andara-server-dev"]["data"]["password"], "bmV3")
+
+    def test_a_platform_principal_rotates_without_a_copy_and_the_registry_restarts(self):
+        self.kube.secrets["andara-shared"]["andara-schema-registry"] = {"data": {"password": b64("reg")}}
+        code, out, _ = self.run_main(kafka_creds.rotate, "", "andara-schema-registry", sleep=lambda s: None)
+        self.assertEqual(code, 0)
+        self.assertEqual(self.kube.secrets["andara-dev"], {})
+        self.assertEqual(self.kube.secrets["andara-local"], {})
+        self.assertIn(("andara-shared", ["rollout", "restart", "deploy/andara-schema-registry"]), self.kube.calls)
+        self.assertIn("andara-schema-registry: restarted on the new password", out)
+
+    def test_a_platform_principal_with_an_env_is_refused(self):
+        code, _, err = self.run_main(kafka_creds.rotate, "dev", "andara-operator", sleep=lambda s: None)
+        self.assertEqual(code, 2)
+        self.assertFalse([c for c in self.kube.calls if c[1][0] in ("delete", "annotate")])
 
     def test_another_environments_principal_is_refused(self):
         code, _, err = self.run_main(kafka_creds.rotate, "dev", "andara-server-local", sleep=lambda s: None)

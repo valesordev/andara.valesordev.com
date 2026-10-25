@@ -125,7 +125,8 @@ keys:
   # Empty is prod's value; outside prod it is a startup warn until the follow-on story makes it
   # fatal (ADR-0013 Amendment 16). The chart's values and required check are AW-INF-055's.
   - {key: kafka.topic_prefix,        env: ANDARA_KAFKA_TOPIC_PREFIX,      type: string, pattern: "^[a-z0-9]*$", default: "", story: AW-SRV-058}
-  # The SASL principal; empty means no SASL, which is how everything runs today. The password
+  # The SASL principal; empty means no SASL (the compose stack). values/local.yaml and dev.yaml name
+  # their environment's server principal on the shared broker (AW-INF-056). The password
   # is a file, re-read on each new connection and only when a username is set: the `password`
   # key of the Strimzi KafkaUser Secret, mounted whole by secrets.kafkaCreds. Every projector
   # envFroms andara-config, so a live sasl_username reaches it too and must be overridden per

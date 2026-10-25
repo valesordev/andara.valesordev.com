@@ -94,7 +94,9 @@ sasl_switch() {
   kube_kubectl -n "$KAFKA_NS" get deploy/andara-schema-registry >/dev/null 2>&1 || return 0
   echo "shared: stopping the schema registry while kafka/$KAFKA moves to SASL (AW-INF-056); it starts again on SASL below"
   kube_kubectl -n "$KAFKA_NS" scale deploy/andara-schema-registry --replicas=0 >/dev/null
+  REGISTRY_STOPPED=1
 }
+REGISTRY_STOPPED=0
 
 # The Kafka itself, idempotent: a second run applies nothing new and waits on a Ready cluster.
 shared_kafka() {
@@ -160,6 +162,8 @@ install() {
   shared_kafka
   topics_for "$env"
   brokers
+  # sasl_switch stopped the registry for the move to SASL: start it again, on SASL.
+  if [[ "$REGISTRY_STOPPED" == 1 ]]; then schema_registry; fi
 }
 
 # The unavailable-submit counter from the server's own /metrics: 0 when it has never

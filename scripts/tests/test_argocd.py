@@ -733,6 +733,34 @@ class KafkaOperator(unittest.TestCase):
         self.assertTrue([c for c in made if "-n andara-shared rollout status deploy/andara-schema-registry" in c], made)
         self.assertTrue([c for c in made if "-n andara-shared apply -f deploy/k8s/kafka/" in c], made)
 
+    def run_install_on(self, listener_auth):
+        """kafka.sh install dev against a Kafka whose 9092 listener has listener_auth, with the
+        registry deployed; PY is a stub, so only kafka.sh's own kubectl calls are seen."""
+        d = tempfile.mkdtemp()
+        self.addCleanup(lambda: subprocess.run(["rm", "-rf", d]))
+        log = os.path.join(d, "calls")
+        values = json.dumps({"watchNamespaces": ["andara-shared"]})
+        helm = 'case "$1" in get) echo \'%s\'; exit 0;; esac\nexit 0' % values
+        py = 'case "$1" in -c|*/kube.py) exec python3 "$@";; esac\nexit 0'
+        kubectl = 'case "$*" in *authentication.type*) echo "%s";; esac\nexit 0' % listener_auth
+        env = stub_bin(d, log, {"helm": helm, "kubectl": kubectl, "pystub": py})
+        env["PY"] = os.path.join(d, "pystub")
+        p = subprocess.run([os.path.join(SCRIPTS, "kafka.sh"), "install", "dev"], capture_output=True, text=True, env=env)
+        return p, calls(log)
+
+    def test_install_starts_the_registry_again_after_the_sasl_switch(self):
+        # Reviewer round 1: kafka-install stopped the registry for the switch and never restarted it.
+        p, made = self.run_install_on("")
+        self.assertEqual(p.returncode, 0, p.stderr)
+        stop = next(i for i, c in enumerate(made) if "scale deploy/andara-schema-registry --replicas=0" in c)
+        start = next(i for i, c in enumerate(made) if "-n andara-shared apply -f deploy/k8s/schema-registry/" in c)
+        self.assertLess(stop, start)
+
+    def test_install_on_a_sasl_broker_leaves_the_registry_alone(self):
+        p, made = self.run_install_on("scram-sha-512")
+        self.assertEqual(p.returncode, 0, p.stderr)
+        self.assertFalse([c for c in made if "andara-schema-registry" in c and (" scale " in c or " apply " in c)], made)
+
     def test_bounce_refuses_local_before_any_call(self):
         # local's server runs on memory until AW-INF-060, so a bounce would pass proving nothing.
         d = tempfile.mkdtemp()

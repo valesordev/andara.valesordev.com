@@ -669,6 +669,7 @@ class AclDrift(unittest.TestCase):
         self.assertEqual(topics.acl_drift(b, env="dev"), [
             "ACL User:andara-server-dev TOPIC dev.andara.state.v1 LITERAL WRITE: not declared in deploy/kafka/topics.yaml"])
         self.assertEqual(topics.acl_drift(b, env="local"), [])
+        self.assertEqual(topics.acl_drift(b, env=None), [], "an environment's drift is reported once, in its own diff")
 
     def test_a_removed_acl_is_drift(self):
         b = FakeBroker({})
@@ -676,6 +677,8 @@ class AclDrift(unittest.TestCase):
         self.assertEqual(topics.acl_drift(b, env="local"), [
             "ACL User:andara-server-local GROUP andara-sim-local PREFIXED READ: declared, missing on the broker "
             "(`make shared-up` restores it)"])
+        self.assertEqual(topics.acl_drift(b, env=None), [])
+        self.assertEqual(topics.acl_drift(b, env="dev"), [])
 
     def test_an_undeclared_principal_is_the_platform_diffs(self):
         b = FakeBroker({})

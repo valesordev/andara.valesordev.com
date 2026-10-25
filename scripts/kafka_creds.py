@@ -17,7 +17,11 @@ only writer of those copies.
                                                     declares
     scripts/kafka_creds.py rotate <env> <principal> make kafka-creds-rotate ENV=<env>
                                                     PRINCIPAL=<principal>: a new password for
-                                                    <principal>-<env>, then `copy <env>`
+                                                    <principal>-<env>, then `copy <env>`. A platform
+                                                    principal (andara-operator,
+                                                    andara-schema-registry) takes no ENV and isn't
+                                                    copied; the registry is restarted, since
+                                                    Karapace reads its password at start.
 
 A copy holds the password under `password` only, the file ANDARA_KAFKA_SASL_PASSWORD_FILE names;
 the username is the principal's name, which the chart sets. Clients read the file per connection,
@@ -44,6 +48,7 @@ import kafka_users  # noqa: E402
 import kube  # noqa: E402
 
 LABEL = "andara.valesor/kafka-creds"
+REGISTRY = "andara-schema-registry"
 ROTATED = "andara.valesor/rotated-at"
 ROTATE_TIMEOUT = 180
 
@@ -113,10 +118,17 @@ def copy(env, run=subprocess.run, doc=None):
 
 
 def rotate(env, principal, run=subprocess.run, doc=None, sleep=time.sleep, now=time.monotonic):
-    names = principals(env, doc)
-    name = principal if principal.endswith("-" + env) else "%s-%s" % (principal, env)
-    if name not in names:
-        raise Failed("PRINCIPAL=%s: %s has no principal %s (%s)" % (principal, env, name, ", ".join(names)), 2)
+    doc = doc or kafka_users.load()
+    platform = [p["name"] for p in doc.get("platform_principals") or []]
+    if principal in platform:
+        if env:
+            raise Failed("PRINCIPAL=%s is platform-wide; give no ENV" % principal, 2)
+        name = principal
+    else:
+        names = principals(env, doc)
+        name = principal if principal.endswith("-" + env) else "%s-%s" % (principal, env)
+        if name not in names:
+            raise Failed("PRINCIPAL=%s: %s has no principal %s (%s)" % (principal, env, name, ", ".join(names)), 2)
     old = password_of(name, run)
     kubectl(shared_ns(), "delete", "secret", name, run=run)
     stamp = datetime.datetime.now(datetime.timezone.utc).strftime("%Y-%m-%dT%H%M%SZ")
@@ -131,7 +143,12 @@ def rotate(env, principal, run=subprocess.run, doc=None, sleep=time.sleep, now=t
                          % (shared_ns(), name, ROTATE_TIMEOUT))
         sleep(2)
     say("%s: new password written by the User Operator" % name)
-    copy(env, run, doc)
+    if principal not in platform:
+        copy(env, run, doc)
+    elif name == REGISTRY:
+        kubectl(shared_ns(), "rollout", "restart", "deploy/" + REGISTRY, run=run)
+        kubectl(shared_ns(), "rollout", "status", "deploy/" + REGISTRY, "--timeout=180s", run=run)
+        say("%s: restarted on the new password" % REGISTRY)
 
 
 def main(argv):

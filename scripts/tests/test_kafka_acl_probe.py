@@ -2,7 +2,7 @@
 # Copyright 2026 Valesor Development
 
 """AW-INF-056: `make kafka-acl-probe` derives its probes from topics.yaml, reads the broker's answer
-rather than rpk's exit code, and leaves nothing behind."""
+rather than rpk's exit code, never writes a record to a World topic, and leaves nothing behind."""
 import copy
 import io
 import os
@@ -14,30 +14,37 @@ import kafka_acl_probe  # noqa: E402
 import kafka_users  # noqa: E402
 
 REAL = kafka_users.load()
+LIMITS = kafka_acl_probe.max_message_bytes(REAL)
 
 
 class FakeBroker:
     """Answers each probe as the declaration says it should, unless told otherwise."""
 
-    def __init__(self, override=None, group_exists=False, hwm=7):
+    def __init__(self, override=None, group_state="absent"):
         self.override = override or {}
-        self.group_exists_ = group_exists
-        self.hwm = hwm
+        self.group_state = group_state
         self.calls = []
+        self.stdins = []
 
     def rpk(self, principal, args, stdin=""):
         self.calls.append((principal, list(args)))
+        self.stdins.append(stdin)
         key = (principal, tuple(args))
         if key in self.override:
             return self.override[key]
-        if args[:2] == ["topic", "describe"]:
-            return 0, '[{"summary": {}, "partitions": [{"partition": 0, "high_watermark": %d}]}]' % self.hwm
-        if args[:2] == ["group", "describe"] and principal == "andara-operator":
-            return (0, "STATE Stable") if self.group_exists_ else (0, "ERROR GROUP_ID_NOT_FOUND")
-        if args[:2] in (["topic", "trim-prefix"], ["group", "delete"]) and principal == "andara-operator":
-            return 0, ""
+        if principal == "andara-operator":
+            if args[:2] == ["group", "describe"]:
+                return {"absent": (0, "STATE Dead\nERROR GROUP_ID_NOT_FOUND: The group id does not exist."),
+                        "exists": (0, "STATE Empty\nMEMBERS 0"),
+                        "unknown": (124, "timed out after 90s")}[self.group_state]
+            if args[:2] == ["group", "delete"]:
+                return 0, ""
         want = self.want_for(principal, args)
-        return (0, '{"offset": 3}') if want == "allowed" else (1, "TOPIC_AUTHORIZATION_FAILED: no")
+        if want == "denied":
+            return 1, "TOPIC_AUTHORIZATION_FAILED: Not authorized"
+        if args[:2] == ["topic", "produce"]:
+            return 1, "unable to produce record: MESSAGE_TOO_LARGE: The request included a message larger"
+        return 0, ""
 
     def want_for(self, principal, args):
         for p in kafka_acl_probe.probes(REAL):
@@ -55,10 +62,47 @@ class Classify(unittest.TestCase):
     def test_the_brokers_answer_decides_not_rpks_exit_code(self):
         self.assertEqual(kafka_acl_probe.classify(0, "x  TOPIC_AUTHORIZATION_FAILED: Topic authorization failed."),
                          "denied")
+        self.assertEqual(kafka_acl_probe.classify(1, "unable to produce record: MESSAGE_TOO_LARGE: …"), "allowed")
         self.assertEqual(kafka_acl_probe.classify(1, "GROUP_ID_NOT_FOUND: The group id does not exist."), "allowed")
-        self.assertEqual(kafka_acl_probe.classify(124, '{"topic": "t", "offset": 3}'), "allowed")
         self.assertEqual(kafka_acl_probe.classify(124, "timed out after 60s"), "error")
-        self.assertEqual(kafka_acl_probe.classify(0, "Produced to partition 0 at offset 3"), "allowed")
+        # A refusal wins over anything else in the same output.
+        self.assertEqual(kafka_acl_probe.classify(1, "MESSAGE_TOO_LARGE … TOPIC_AUTHORIZATION_FAILED"), "denied")
+
+
+class NeverWrites(unittest.TestCase):
+    """Reviewer round 1 P0: the command log is the World's WAL, kept forever; the probe once wrote to
+    it and trimmed the partition, which would delete every record below the high watermark."""
+
+    def test_every_produce_is_larger_than_its_topic_accepts_and_uncompressed(self):
+        produces = [p for p in kafka_acl_probe.probes(REAL) if p.args[:2] == ["topic", "produce"]]
+        self.assertTrue(produces)
+        for p in produces:
+            topic = p.args[2].split(".", 1)[1]
+            self.assertGreater(p.size, LIMITS[topic], p.what)
+            self.assertEqual(p.args[p.args.index("--compression") + 1], "none", p.what)
+            self.assertGreaterEqual(int(p.args[p.args.index("--max-message-bytes") + 1]), p.size, p.what)
+            self.assertNotIn("--tombstone", p.args)
+
+    def test_the_blob_topics_limit_is_read_from_the_declaration(self):
+        self.assertEqual(LIMITS["andara.content.blobs.v1"], 9437184)
+        blob = next(p for p in kafka_acl_probe.probes(REAL) if p.args[:3] == ["topic", "produce", "dev.andara.content.blobs.v1"])
+        self.assertGreater(blob.size, 9437184)
+
+    def test_the_payload_is_the_size_asked_and_incompressible_text(self):
+        body = kafka_acl_probe.payload(3 << 20)
+        self.assertEqual(len(body), 3 << 20)
+        self.assertNotIn("\n", body)
+        import zlib
+        self.assertGreater(len(zlib.compress(body.encode())), 2 << 20)
+
+    def test_a_run_sends_the_oversized_record_and_no_trim_or_delete_of_data(self):
+        b = FakeBroker()
+        run(b)
+        for (principal, args), stdin in zip(b.calls, b.stdins):
+            self.assertNotIn("trim-prefix", args)
+            self.assertFalse(args[:2] == ["topic", "delete"] and principal == "andara-operator")
+            if args[:2] == ["topic", "produce"]:
+                self.assertGreater(len(stdin), LIMITS[args[2].split(".", 1)[1]])
 
 
 class Probes(unittest.TestCase):
@@ -75,56 +119,77 @@ class Probes(unittest.TestCase):
         self.assertEqual(allowed, {("andara-projector-state-dev", "dev.andara.state.v1"),
                                    ("andara-projector-state-local", "local.andara.state.v1")})
 
-    def test_the_state_write_is_a_tombstone_and_the_destructive_probes_name_absent_topics(self):
+    def test_destructive_probes_name_absent_topics_and_groups_are_probe_groups(self):
         for p in kafka_acl_probe.probes(REAL):
-            if p.ac == "AC-12":
-                self.assertIn("--tombstone", p.args)
             if p.args[:2] in (["topic", "create"], ["topic", "delete"], ["topic", "alter-config"]):
                 self.assertTrue(p.args[2].endswith(".andara.acl-probe-absent"), p.args)
-            if p.args[:2] == ["topic", "consume"] and "-g" in p.args:
-                self.assertTrue(p.args[p.args.index("-g") + 1].endswith("-acl-probe"), p.args)
+            if p.args[:2] == ["group", "seek"]:
+                self.assertTrue(p.args[2].endswith("-acl-probe"), p.args)
 
     def test_each_environment_has_its_cross_environment_denials(self):
         whats = {(p.principal, p.what, p.want) for p in kafka_acl_probe.probes(REAL)}
         self.assertIn(("andara-server-dev", "produce local.andara.commands.v1", "denied"), whats)
         self.assertIn(("andara-projector-state-local", "DeleteGroups andara-projector-state-dev", "denied"), whats)
         self.assertIn(("andara-projector-state-dev", "read dev.andara.audit.v1", "denied"), whats)
+        self.assertIn(("andara-server-dev", "commit offsets on dev.andara.commands.v1 in group andara-sim-local-acl-probe",
+                       "denied"), whats)
 
 
 class Main(unittest.TestCase):
-    def test_all_as_declared_passes_and_cleans_up_after_every_probe(self):
+    def test_all_as_declared_passes_and_deletes_every_probe_group(self):
         b = FakeBroker()
         code, out, err = run(b)
         self.assertEqual(code, 0, err)
-        cleanups = [i for i, (pr, a) in enumerate(b.calls) if pr == "andara-operator" and a[:2] in
-                    (["topic", "trim-prefix"], ["group", "delete"])]
-        consumes = [i for i, (pr, a) in enumerate(b.calls) if a[:2] == ["topic", "consume"] and "-g" in a]
-        self.assertTrue(cleanups and consumes)
-        self.assertGreater(min(cleanups), max(consumes), "a cleanup ran before the consume that needs the record")
-        self.assertIn(("andara-operator", ["topic", "trim-prefix", "dev.andara.commands.v1", "-p", "0", "-o", "7",
-                                           "--no-confirm"]), b.calls)
+        for env in ("dev", "local"):
+            self.assertIn(("andara-operator", ["group", "delete", "andara-sim-%s-acl-probe" % env]), b.calls)
+        deletes = [i for i, (pr, a) in enumerate(b.calls) if pr == "andara-operator" and a[:2] == ["group", "delete"]]
+        seeks = [i for i, (_, a) in enumerate(b.calls) if a[:2] == ["group", "seek"]]
+        self.assertGreater(min(deletes), max(seeks))
+        self.assertIn("wrote no record", out)
 
     def test_an_unexpected_allow_fails_naming_it(self):
-        b = FakeBroker(override={("andara-server-dev", ("topic", "produce", "local.andara.commands.v1", "-p", "0",
-                                                         "-k", kafka_acl_probe.PROBE_KEY)): (0, "Produced")})
+        p = next(p for p in kafka_acl_probe.probes(REAL)
+                 if p.principal == "andara-server-dev" and p.what == "produce local.andara.commands.v1")
+        b = FakeBroker(override={(p.principal, tuple(p.args)): (1, "MESSAGE_TOO_LARGE")})
         code, _, err = run(b)
         self.assertEqual(code, 1)
         self.assertIn("AC-2 andara-server-dev produce local.andara.commands.v1: allowed, want denied", err)
 
-    def test_the_projectors_own_group_is_never_deleted_when_it_exists(self):
-        b = FakeBroker(group_exists=True)
+    def test_the_projectors_own_group_is_skipped_when_it_exists(self):
+        b = FakeBroker(group_state="exists")
         code, out, _ = run(b)
         self.assertEqual(code, 0)
         self.assertIn("skipped, the group exists", out)
         self.assertFalse([c for c in b.calls if c[0].startswith("andara-projector-state")
                           and c[1] == ["group", "delete", c[0]]])
 
-    def test_a_failed_trim_is_reported_as_left_behind(self):
-        b = FakeBroker()
-        b.override[("andara-operator", ("topic", "describe", "dev.andara.commands.v1", "-p", "--format", "json"))] = (1, "")
+    def test_an_unknown_group_state_never_deletes_and_fails(self):
+        """Reviewer round 1 P1: a describe that failed read as 'absent', and the probe deleted the
+        projector's real group, a silent rebuild."""
+        b = FakeBroker(group_state="unknown")
+        code, out, err = run(b)
+        self.assertEqual(code, 1)
+        self.assertFalse([c for c in b.calls if c[0].startswith("andara-projector-state")
+                          and c[1] == ["group", "delete", c[0]]])
+        self.assertIn("couldn't tell whether andara-projector-state-dev exists", err)
+
+    def test_group_state_reads_the_describe(self):
+        for text, code, want in (("STATE Dead\nERROR GROUP_ID_NOT_FOUND: x", 0, "absent"),
+                                 ("STATE Empty\nMEMBERS 0", 0, "exists"),
+                                 ("STATE Stable\nMEMBERS 1", 0, "exists"),
+                                 ("timed out after 90s", 124, "unknown"),
+                                 ("GROUP_AUTHORIZATION_FAILED", 1, "unknown"),
+                                 ("", 0, "unknown")):
+            class B:
+                def rpk(self, *a, **k):
+                    return code, text
+            self.assertEqual(kafka_acl_probe.group_state(B(), "g"), want, text)
+
+    def test_a_failed_group_cleanup_is_reported_as_left_behind(self):
+        b = FakeBroker(override={("andara-operator", ("group", "delete", "andara-sim-dev-acl-probe")): (1, "boom")})
         code, _, err = run(b)
         self.assertEqual(code, 1)
-        self.assertIn("left behind: could not read dev.andara.commands.v1/0's high watermark", err)
+        self.assertIn("left behind: deleting probe group andara-sim-dev-acl-probe failed: boom", err)
 
 
 if __name__ == "__main__":

@@ -57,9 +57,9 @@ A running server or projector keeps working, with no restart:
 
 In the gap between the broker taking the new password and the kubelet refreshing the file, a *new* connection is refused. The client logs it at `error` with `reason="sasl_failed"` (`andara_kafka_client_auth_failures_total`) and retries.
 
-Rotate the operator's own credential (`andara-operator`) or the registry's by deleting its Secret in `andara-shared` and re-running `make shared-up`. Their consumers read the Secret directly:
-- the `make` targets read it on each run;
-- Karapace reads it at start, so `kubectl --context kind-andara -n andara-shared rollout restart deploy/andara-schema-registry`.
+Rotate a platform principal the same way, with no `ENV`: `make kafka-creds-rotate PRINCIPAL=andara-operator` or `PRINCIPAL=andara-schema-registry`. Nothing is copied, because both are read in `andara-shared`:
+- the `make` targets read the operator's Secret on every run;
+- Karapace reads its own at start, so the target restarts it and waits for it.
 
 ## A client can't authenticate, or is refused
 
@@ -75,4 +75,4 @@ Rotate the operator's own credential (`andara-operator`) or the registry's by de
 
 ## Undo SASL
 
-Restore the previous `deploy/k8s/kafka/kafka.yaml`: the `plain` listener with no `authentication` and no `authorization` block. Then `make shared-up`, and point the clients back at no SASL (`server.kafka.sasl_username: ""`, and the registry without its `KARAPACE_SASL_*` settings). The brokers roll, and no topic, offset or record changes.
+Revert the change that brought SASL in (`AW-INF-056`), whole. That restores the `plain` listener with no authorizer, and it also restores the scripts: after the change, every operator tool and `make shared-up` assume SASL (they apply KafkaUsers and authenticate as `andara-operator`). Restoring only `kafka.yaml` leaves them failing on a listener without authentication. Then run `make shared-up`. The brokers roll, the clients go back to no SASL (the chart's `sasl_username` and the registry's `KARAPACE_SASL_*` settings revert too), and no topic, offset or record changes. The KafkaUsers stay, and a broker without an authorizer ignores them; the next SASL `make shared-up` applies the declared set again and deletes any it no longer declares.
