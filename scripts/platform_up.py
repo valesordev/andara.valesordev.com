@@ -12,9 +12,10 @@ release that already matches is reported `unchanged` with its revision untouched
   up [box|ci]   PROFILE=box (the default), in order: cert-manager; the CA root restore
                 (scripts/cluster_secrets.py, cert-manager/andara-ca-tls only); andara-ca.yaml; the
                 letsencrypt and letsencrypt-staging ClusterIssuers; Traefik; the namespace
-                andara-shared; Strimzi watching andara-shared; Argo CD. PROFILE=ci: cert-manager,
-                andara-ca.yaml and Traefik only. CI installs Argo CD with `make argocd-install`, and the
-                drills job (AW-INF-061) its own Strimzi.
+                andara-shared; Strimzi watching andara-shared; Argo CD; the namespace observability, the
+                Secret grafana-telemetry and the k8s-monitoring release (AW-INF-065). PROFILE=ci:
+                cert-manager, andara-ca.yaml, Traefik and the collectors only. CI installs Argo CD with
+                `make argocd-install`, and the drills job (AW-INF-061) its own Strimzi.
   check         versions.yaml is valid (every chart item has a repo, chart and version, every image a
                 digest, no Image Updater key), and no file in scripts/ or .github/workflows/ outside
                 scripts/tests/ carries a version of a listed item.
@@ -23,6 +24,13 @@ The context is ANDARA_KUBE_CONTEXT, default kind-andara, passed to every kubectl
 through scripts/kube.py; nothing here runs `kubectl config use-context`. CLOUDFLARE_API_TOKEN is read after .local/box.env is
 loaded by scripts/tf.py's rules, written to cert-manager/cloudflare-api-token by server-side apply,
 and never printed. Without it both letsencrypt issuers are skipped and the last line says so.
+
+The collectors (ADR-0014): GRAFANA_SOLO7DEV_TELEMETRY_TOKEN, from the same box.env, goes into
+observability/grafana-telemetry under `token`, beside solo7dev's endpoint usernames (`prom`, `loki`,
+`tempo`, and `fleet` on the box), by server-side apply and never printed. The release's values are
+scripts/collectors.py's: deploy/platform/collectors/ plus the stamp and keep rules rendered from
+environments.yaml and keep-list.yaml. Unset, the Secret holds an empty token, the collectors run and ship
+nothing (ADR-0012 decision 14), it still exits 0, and the last line says so.
 
 The edge (decision 11): Traefik's websecure entrypoint trusts the PROXY protocol from the `kind`
 docker network's IPv4 gateway as a /32, read with `docker network inspect kind` on every run. It's
@@ -48,6 +56,7 @@ import uuid
 import yaml
 
 import cluster_secrets
+import collectors
 import kube
 import tf
 
@@ -60,12 +69,13 @@ ARGOCD_VALUES = os.path.join(REPO, "deploy", "argocd", "argocd-values.yaml")
 PROFILES = ("box", "ci")
 SHARED = "andara-shared"
 WAIT = "5m"
-# The chart items versions.yaml must list; collectors is AW-INF-065's and optional until then.
-CHARTS = ("certManager", "traefik", "strimzi", "argocd")
-OPTIONAL = ("collectors",)
+# The chart items versions.yaml must list.
+CHARTS = ("certManager", "traefik", "strimzi", "argocd", "collectors")
+OPTIONAL = ()
 # item: (release, namespace)
 RELEASES = {"certManager": ("cert-manager", "cert-manager"), "traefik": ("traefik", "traefik"),
-            "strimzi": ("strimzi", "strimzi"), "argocd": ("argocd", "argocd")}
+            "strimzi": ("strimzi", "strimzi"), "argocd": ("argocd", "argocd"),
+            "collectors": (collectors.RELEASE, collectors.NAMESPACE)}
 # The RoleBindings the Strimzi chart puts in each watched namespace. Deleting and recreating the
 # namespace removes them while the release still matches (AW-INF-021 AC-7), so a release without
 # them is reapplied.
@@ -74,6 +84,7 @@ STRIMZI_BINDINGS = ("strimzi-cluster-operator", "strimzi-cluster-operator-watche
 ISSUERS = ("letsencrypt", "letsencrypt-staging")
 TOKEN = "CLOUDFLARE_API_TOKEN"
 TOKEN_SECRET = ("cert-manager", "cloudflare-api-token", "api-token")
+TELEMETRY_TOKEN = collectors.TOKEN
 FIELD_MANAGER = "andara-platform-up"
 
 
@@ -168,7 +179,7 @@ VERSION_RE = re.compile(r"(?<![\w.])v?\d+\.\d+\.\d+(?![\w.])")
 NODE_IMAGE_RE = re.compile(r"kindest/node(:v?\d|@sha256:)")
 # What names each chart item on a line, lowercased with `-`, `_` and spaces removed.
 ALIASES = {"certManager": ("certmanager",), "traefik": ("traefik",), "strimzi": ("strimzi",),
-           "argocd": ("argocd",)}
+           "argocd": ("argocd",), "collectors": ("k8smonitoring",)}
 # Not a platform item, though its name contains one; AW-INF-059 removed it, and this keeps a
 # stray mention from reading as an Argo CD pin.
 NOT_ITEMS = ("imageupdater",)
@@ -414,7 +425,7 @@ def strip_none(v):
     return v
 
 
-def desired_values(item, cidr=None):
+def desired_values(item, cidr=None, profile="box"):
     if item == "certManager":
         return {"crds": {"enabled": True}}
     if item == "traefik":
@@ -428,6 +439,11 @@ def desired_values(item, cidr=None):
     if item == "argocd":
         with open(ARGOCD_VALUES) as f:
             return yaml.safe_load(f) or {}
+    if item == "collectors":
+        try:
+            return collectors.values(profile)
+        except (collectors.Invalid, OSError, yaml.YAMLError) as e:
+            raise Failed("collectors values: %s" % e)
     raise Failed("no values for %s" % item)
 
 
@@ -476,8 +492,10 @@ def reconcile(r, c, item, values, doc):
         reason = "values differ"
     elif item == "strimzi" and bindings_missing(c, SHARED):
         reason = "RoleBindings missing in %s" % SHARED
+    # The collectors' lines name their chart, as AW-INF-065 AC-1 reads them; the others their item.
+    label = name if item == "collectors" else item
     if reason is None:
-        r.say("%s %s unchanged" % (item, version))
+        r.say("%s %s unchanged" % (label, version))
         return
     with tempfile.NamedTemporaryFile("w", suffix=".yaml", prefix="platform-%s-" % item) as f:
         yaml.safe_dump(values, f)
@@ -485,7 +503,7 @@ def reconcile(r, c, item, values, doc):
         c.helm("upgrade", "--install", release, name, "--repo", repo, "--version", version,
                "--namespace", ns, "--create-namespace", "--values", f.name, "--reset-values",
                "--wait", "--timeout", WAIT)
-    r.say("%s %s installed (%s)" % (item, version, reason))
+    r.say("%s %s installed (%s)" % (label, version, reason))
 
 
 def apply_file(r, c, path, attempts=12, pause=5):
@@ -568,12 +586,51 @@ def letsencrypt(r, c, token):
     return True
 
 
-def shared_namespace(r, c):
-    if c.kubectl("get", "namespace", SHARED, "-o", "name", check=False).returncode == 0:
-        r.say("namespace %s unchanged" % SHARED)
+def namespace(r, c, ns):
+    if c.kubectl("get", "namespace", ns, "-o", "name", check=False).returncode == 0:
+        r.say("namespace %s unchanged" % ns)
         return
-    c.kubectl("create", "namespace", SHARED)
-    r.say("namespace %s created" % SHARED)
+    c.kubectl("create", "namespace", ns)
+    r.say("namespace %s created" % ns)
+
+
+def shared_namespace(r, c):
+    namespace(r, c, SHARED)
+
+
+def telemetry_secret_doc(token, users):
+    data = dict(users, token=token)
+    return {"apiVersion": "v1", "kind": "Secret", "type": "Opaque",
+            "metadata": {"name": collectors.SECRET, "namespace": collectors.NAMESPACE},
+            "data": {k: base64.b64encode(v.encode()).decode() for k, v in sorted(data.items())}}
+
+
+def telemetry(r, c, token, profile):
+    """The namespace observability and the Secret grafana-telemetry the collectors read (ADR-0014 §3):
+    the token under `token` (empty when unset) and the endpoint usernames, which aren't secret."""
+    namespace(r, c, collectors.NAMESPACE)
+    try:
+        users = collectors.usernames(fleet=profile == "box")
+    except (KeyError, OSError) as e:
+        raise Failed("solo7dev's terraform.tfvars has no endpoint username: %s" % e)
+    secret = telemetry_secret_doc(token, users)
+    if token:
+        r.secrets += [token, secret["data"]["token"]]
+    where = "%s/%s" % (collectors.NAMESPACE, collectors.SECRET)
+    p = c.kubectl("-n", collectors.NAMESPACE, "get", "secret", collectors.SECRET, "-o", "json", check=False)
+    if p.returncode == 0:
+        try:
+            if (json.loads(p.stdout or "{}").get("data") or {}) == secret["data"]:
+                r.say("secret %s unchanged" % where)
+                return
+        except ValueError:
+            pass
+    p = c.kubectl("apply", "--server-side", "--force-conflicts", "--field-manager", FIELD_MANAGER,
+                  "-f", "-", check=False, stdin=json.dumps(secret))
+    if p.returncode != 0:
+        raise Failed(r.redact("write the Secret %s: %s" % (where, p.stderr.strip())))
+    r.say("secret %s written %s" % (where, ("from %s" % TELEMETRY_TOKEN) if token else
+                                     "with an empty token (%s unset)" % TELEMETRY_TOKEN))
 
 
 def up(r, profile="box", env=None, restore=cluster_secrets.restore):
@@ -612,6 +669,12 @@ def up(r, profile="box", env=None, restore=cluster_secrets.restore):
         reconcile(r, c, "argocd", desired_values("argocd"), doc)
     else:
         skipped.append("CA root restore, letsencrypt issuers, %s, strimzi, argocd (PROFILE=ci)" % SHARED)
+    telemetry_token = env.get(TELEMETRY_TOKEN, "")
+    telemetry(r, c, telemetry_token, profile)
+    reconcile(r, c, "collectors", desired_values("collectors", profile=profile), doc)
+    if not telemetry_token:
+        skipped.append("telemetry: the collectors ship nothing, %s is unset (set it in .local/box.env)"
+                       % TELEMETRY_TOKEN)
     r.say("done profile=%s context=%s skipped: %s" % (profile, c.context, "; ".join(skipped) or "none"))
 
 

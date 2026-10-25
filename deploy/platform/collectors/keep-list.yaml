@@ -1,0 +1,103 @@
+# The metric allow-list (ADR-0012 decision 13, ADR-0014 §5): the only series names solo7dev-metrics ships.
+# scripts/collectors.py renders it into the destination's final `keep` rule, after the environment stamp,
+# so it filters the chart's own scrapes and the series Fleet pipelines forward into the receiver alike.
+# A name with the prefix `kube_` is kept only from environments.yaml's namespaces (amendment A1).
+#
+# Each entry names its reader: an alert rule (deploy/helm/andara/files/alerts.yaml), a dashboard panel
+# (deploy/grafana/dashboards/), or a drill that queries Grafana Cloud. Unread series are not shipped.
+# `owner: fleet` marks a name a Fleet pipeline scrapes and keeps (the `kafka_` prefix: shared_kafka.alloy);
+# every other name is the chart's. `up` is shared and listed once.
+#
+# A rule or panel that names a new series adds it here (make check fails otherwise), and the series
+# arrives after the next `make platform-up` (ADR-0014 §5).
+metrics:
+  - name: up
+    reader: rule AndaraServerUnavailable; rule StateProjectorDown; make observe-check
+  - name: andara_build_info
+    reader: "panel tick-health: Build and content version"
+  - name: andara_checkpoint_age_ticks
+    reader: "panel tick-health: Deferred records and checkpoint age"
+  - name: andara_consumer_lag
+    reader: "rule SimulationConsumerLagging; panel tick-health: Per-partition consumer lag"
+  - name: andara_content_pending_seconds
+    reader: rule ContentLoadFailing
+  - name: andara_events_emitted_total
+    reader: make env-recover (AC-5)
+  - name: andara_handoff_placed_entries
+    reader: "panel tick-health: Handoff marks (Placed), against the runbook thresholds"
+  - name: andara_handoff_retries_total
+    reader: "panel tick-health: Cross-Zone handoffs: in transit, retries, stale arrivals"
+  - name: andara_handoff_stale_arrivals_total
+    reader: "panel tick-health: Cross-Zone handoffs: in transit, retries, stale arrivals"
+  - name: andara_handoffs_in_transit
+    reader: "panel tick-health: Cross-Zone handoffs: in transit, retries, stale arrivals"
+  - name: andara_ingress_degraded
+    reader: rule WorldReadOnly
+  - name: andara_linkdead_outcomes_total
+    reader: make env-recover (AC-5)
+  - name: andara_recovery_round_tick
+    reader: make env-recover (AC-5)
+  - name: andara_recovery_state_hash_match
+    reader: rule RecoveryStateMismatch; make env-recover (AC-5)
+  - name: andara_session_egress_drops_total
+    reader: rule SessionsDroppingAtRate
+  - name: andara_sessions_active
+    reader: make observe-check
+  - name: andara_simulation_lag_seconds
+    reader: "rule SimulationLagging; panel tick-health: Simulation lag"
+  - name: andara_snapshot_age_seconds
+    reader: rule SnapshotStale
+  - name: andara_snapshot_interval_seconds
+    reader: rule SnapshotStale
+  - name: andara_state_digest_mismatches_total
+    reader: rule StateProjectorDiverged
+  - name: andara_state_projector_lag_budget_seconds
+    reader: rule ProjectionStale
+  - name: andara_state_projector_lag_seconds
+    reader: rule ProjectionStale
+  - name: andara_stream_subscribers
+    reader: rule SessionsDroppingAtRate
+  - name: andara_tick_deferred_records
+    reader: "panel tick-health: Deferred records and checkpoint age"
+  - name: andara_tick_duration_seconds_bucket
+    reader: "panel tick-health: Tick duration — p50 / p99 against the 50 ms Tick Budget"
+  - name: andara_tick_input_starved_total
+    reader: "panel tick-health: Tick overruns and input starvation"
+  - name: andara_tick_overruns_total
+    reader: "panel tick-health: Tick overruns and input starvation"
+  - name: andara_ticks_total
+    reader: "rule ProjectionStale; panel tick-health: Tick overruns and input starvation"
+  - name: certmanager_certificate_expiration_timestamp_seconds
+    reader: rule CertificateExpiringSoon
+  - name: kube_deployment_spec_replicas
+    reader: rule StateProjectorDown
+  - name: kube_pod_container_status_last_terminated_exitcode
+    reader: rule RecoveryStateMismatch
+  - name: kube_pod_container_status_ready
+    reader: rule RecoveryStateMismatch
+  - name: kube_pod_container_status_restarts_total
+    reader: rule AndaraServerCrashLooping
+  - name: traefik_router_requests_total
+    reader: rule IngressErrorRateHigh
+  # shared_kafka's allow-list (ADR-0014 §6, amendment A5), forwarded into the receiver by `fleet`.
+  - name: kafka_server_replicamanager_underreplicatedpartitions
+    reader: AW-INF-039 (under-replicated partitions, kafka-availability.md); AW-INF-065 AC-7
+    owner: fleet
+  - name: kafka_server_replicamanager_underminisrpartitioncount
+    reader: runbook simulation-consumer-lagging (step 4); kafka-availability.md
+    owner: fleet
+  - name: kafka_server_replicamanager_atminisrpartitioncount
+    reader: kafka-availability.md (its reading at rest, RF 1 on local)
+    owner: fleet
+  - name: kafka_server_replicamanager_isrshrinkspersec_total
+    reader: runbook simulation-consumer-lagging (step 4)
+    owner: fleet
+  - name: kafka_server_replicamanager_isrexpandspersec_total
+    reader: ADR-0014 §6 (the pair to the shrink rate)
+    owner: fleet
+  - name: kafka_controller_kafkacontroller_offlinepartitionscount
+    reader: ADR-0014 §6 (offline partitions)
+    owner: fleet
+  - name: kafka_controller_kafkacontroller_activecontrollercount
+    reader: runbook simulation-consumer-lagging (step 4)
+    owner: fleet

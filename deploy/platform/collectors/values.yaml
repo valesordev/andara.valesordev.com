@@ -1,0 +1,162 @@
+# grafana/k8s-monitoring (pinned in deploy/platform/versions.yaml as `collectors`), shared by every cluster
+# (ADR-0014 §2). `make platform-up` installs the release `k8s-monitoring` in `observability` from this file,
+# then the profile's (values-box.yaml or values-ci.yaml), then what scripts/collectors.py renders:
+#   - each destination's url, from deploy/terraform/grafana/stacks/solo7dev/terraform.tfvars;
+#   - the environment stamp and its `unknown` guard, from environments.yaml, on all three destinations;
+#   - the keep rule, from keep-list.yaml, last on solo7dev-metrics.
+# The token is never here: every destination reads the Secret `grafana-telemetry`, which platform-up writes
+# from GRAFANA_SOLO7DEV_TELEMETRY_TOKEN (key `token`) and the tfvars usernames (keys prom, loki, tempo, fleet).
+# A hand `helm upgrade` is reverted by the next `make platform-up`.
+#
+# What a profile may set is fixed (make check): the collector list, the namespace lists and cluster.name.
+
+cluster:
+  name: andara
+
+destinations:
+  solo7dev-metrics:
+    type: prometheus
+    clusterLabels: [cluster]
+    auth:
+      type: basic
+      usernameKey: prom
+      passwordKey: token
+    secret:
+      create: false
+      name: grafana-telemetry
+      namespace: observability
+  solo7dev-logs:
+    type: loki
+    clusterLabels: [cluster]
+    auth:
+      type: basic
+      usernameKey: loki
+      passwordKey: token
+    secret:
+      create: false
+      name: grafana-telemetry
+      namespace: observability
+  solo7dev-traces:
+    type: otlp
+    protocol: grpc
+    clusterLabels: [cluster]
+    metrics:
+      enabled: false
+    logs:
+      enabled: false
+    traces:
+      enabled: true
+    auth:
+      type: basic
+      usernameKey: tempo
+      passwordKey: token
+    secret:
+      create: false
+      name: grafana-telemetry
+      namespace: observability
+
+# --- What the chart collects (ADR-0014 §1) -------------------------------------------------------------
+
+clusterMetrics:
+  enabled: true
+  collector: metrics
+  # The destination's keep rule is the one metric filter (ADR-0014 §5): with the defaults on,
+  # kube-state-metrics' own list drops two keep-list series.
+  kubelet:
+    metricsTuning:
+      useDefaultAllowList: false
+  kubeletResource:
+    metricsTuning:
+      useDefaultAllowList: false
+  kubeletProbes:
+    metricsTuning:
+      useDefaultAllowList: false
+  cadvisor:
+    metricsTuning:
+      useDefaultAllowList: false
+  kube-state-metrics:
+    metricsTuning:
+      useDefaultAllowList: false
+
+annotationAutodiscovery:
+  enabled: true
+  collector: metrics
+  # The server's and projector's charts annotate their pods prometheus.io/*; remapped here rather than
+  # changed in two charts. `job` stays k8s.grafana.com/job, so it comes out andara-server and
+  # andara-projector-state (ADR-0012 decision 13).
+  annotations:
+    scrape: prometheus.io/scrape
+    metricsPortNumber: prometheus.io/port
+    metricsPath: prometheus.io/path
+    job: k8s.grafana.com/job
+  # Pods only: a Service carrying the same annotations would scrape the same process a second time.
+  services:
+    enabled: false
+  # namespaces: the profile's include-list. Never andara-shared, whose brokers are Fleet's (ADR-0014 §3).
+
+integrations:
+  collector: metrics
+  cert-manager:
+    instances:
+      - name: cert-manager
+        namespaces: [cert-manager]
+        labelSelectors:
+          app.kubernetes.io/name: cert-manager
+
+podLogsViaLoki:
+  enabled: true
+  collector: logs
+  # Stream labels are the allow-list (environment, namespace, cluster, job, container); the
+  # destination's label_keep enforces it, and this keeps the feature from adding app_kubernetes_io_name.
+  labels: {}
+  # namespaces: the profile's.
+
+applicationObservability:
+  enabled: true
+  collector: receiver
+  receivers:
+    otlp:
+      grpc:
+        enabled: true
+        port: 4317
+  # The server sends logs and traces to one otlp_endpoint; its logs are shipped from stderr by
+  # podLogsViaLoki, so every OTLP log record is accepted and dropped here (ADR-0014 §1).
+  logs:
+    enabled: true
+    filters:
+      log_record:
+        - "true"
+    transforms:
+      labels: [cluster, namespace, job, container]
+  metrics:
+    enabled: false
+
+prometheusMetricsReceiver:
+  enabled: true
+  collector: receiver
+  port: 9090
+
+selfReporting:
+  enabled: false
+
+# --- Telemetry services ---------------------------------------------------------------------------------
+
+telemetryServices:
+  kube-state-metrics:
+    deploy: true
+  # No rule or panel reads a node_* series (ADR-0014 §1).
+  node-exporter:
+    deploy: false
+
+# --- Collectors (ADR-0014 §2; the names are fixed) ------------------------------------------------------
+
+collectors:
+  metrics:
+    presets: [deployment]
+  logs:
+    presets: [daemonset, filesystem-log-reader]
+  receiver:
+    presets: [deployment]
+    extraService:
+      enabled: true
+      fullname: k8s-monitoring-alloy-receiver

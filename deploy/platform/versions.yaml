@@ -9,8 +9,7 @@
 # an image built for that release. kubectl's minor stays within one of this image's Kubernetes
 # minor; bootstrap refuses otherwise.
 #
-# Not here: Argo CD Image Updater, which AW-INF-059 removed (dev follows a Git tag), and the
-# collectors' chart, which AW-INF-065 adds once its [verify 051] has chosen it.
+# Not here: Argo CD Image Updater, which AW-INF-059 removed (dev follows a Git tag).
 kind:
   # kind v0.33.0 release notes, "Images pre-built for this release".
   nodeImage: kindest/node:v1.36.4@sha256:099e049362a1526b2db71494e1947aae99bd16290d7c895f2b7ea312e3cbfaed
@@ -33,3 +32,9 @@ argocd:
   repo: https://argoproj.github.io/argo-helm
   chart: argo-cd
   version: 10.9.2
+collectors:
+  # grafana/k8s-monitoring: the collectors, kube-state-metrics and the Alloy operator (ADR-0014 §2).
+  # Its values are deploy/platform/collectors/ (AW-INF-065).
+  repo: https://grafana.github.io/helm-charts
+  chart: k8s-monitoring
+  version: 4.5.3

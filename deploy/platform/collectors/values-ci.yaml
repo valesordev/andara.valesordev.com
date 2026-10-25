@@ -1,0 +1,13 @@
+# CI's kind cluster (PROFILE=ci): andara-local (the lifecycle job) and andara-ci (the drills job). No Fleet
+# collector: ephemeral collectors would fill the inventory (ADR-0014 §7). Its series carry cluster="ci",
+# which AndaraServerUnavailable's guard excludes (amendment A3). Only the collector list, the namespace
+# lists and cluster.name may differ from values-box.yaml (make check).
+
+cluster:
+  name: ci
+
+annotationAutodiscovery:
+  namespaces: [andara-local, andara-ci, traefik]
+
+podLogsViaLoki:
+  namespaces: [andara-local, andara-ci]
