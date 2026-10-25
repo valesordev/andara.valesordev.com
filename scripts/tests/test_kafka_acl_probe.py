@@ -39,9 +39,12 @@ class FakeBroker:
                 value = self.live.get(topic, LIMITS[topic.split(".", 1)[1]])
                 return 0, '[{"summary": {}, "configs": [{"key": "max.message.bytes", "value": "%d"}]}]' % value
             if args[:2] == ["group", "describe"]:
+                # One state for every group, or {group: state} with "absent" for the rest.
+                state = self.group_state.get(args[2], "absent") if isinstance(self.group_state, dict) \
+                    else self.group_state
                 return {"absent": (0, "STATE Dead\nERROR GROUP_ID_NOT_FOUND: The group id does not exist."),
                         "exists": (0, "STATE Empty\nMEMBERS 0"),
-                        "unknown": (124, "timed out after 90s")}[self.group_state]
+                        "unknown": (124, "timed out after 90s")}[state]
             if args[:2] == ["group", "delete"]:
                 return 0, ""
         want = self.want_for(principal, args)
@@ -222,6 +225,37 @@ class Main(unittest.TestCase):
                       b.calls)
         self.assertIn(("andara-projector-state-local", ["group", "delete", "andara-projector-state-dev-acl-probe-absent"]),
                       b.calls)
+
+    def test_each_guard_checks_the_group_its_probe_would_delete(self):
+        """Reviewer: one state for every group couldn't tell a guard keyed on the wrong group. Here dev's
+        group exists and local's is absent: nothing may delete dev's, and local's real name is probed."""
+        b = FakeBroker(group_state={"andara-projector-state-dev": "exists"})
+        code, out, err = run(b)
+        self.assertEqual(code, 0, err)
+        self.assertFalse([c for c in b.calls if c[1] == ["group", "delete", "andara-projector-state-dev"]
+                          and c[0] != "andara-operator"], "dev's existing group was deleted")
+        self.assertIn(("andara-projector-state-dev", ["group", "delete", "andara-projector-state-local"]), b.calls)
+        self.assertIn(("andara-projector-state-local", ["group", "delete", "andara-projector-state-local"]), b.calls)
+        self.assertIn("2 probe(s) of a real group skipped because it exists", out)
+        # And the reverse.
+        b = FakeBroker(group_state={"andara-projector-state-local": "exists"})
+        run(b)
+        self.assertFalse([c for c in b.calls if c[1] == ["group", "delete", "andara-projector-state-local"]
+                          and c[0] != "andara-operator"])
+        self.assertIn(("andara-projector-state-local", ["group", "delete", "andara-projector-state-dev"]), b.calls)
+
+    def test_the_allowed_half_of_ac3_runs_even_when_the_real_group_exists(self):
+        b = FakeBroker(group_state="exists")
+        code, _, err = run(b)
+        self.assertEqual(code, 0, err)
+        for env in ("dev", "local"):
+            proj = "andara-projector-state-" + env
+            self.assertIn((proj, ["group", "delete", proj + "-acl-probe-absent"]), b.calls)
+
+    def test_create_probes_are_validate_only(self):
+        creates = [p for p in kafka_acl_probe.probes(REAL) if p.args[:2] == ["topic", "create"]]
+        self.assertTrue(creates)
+        self.assertTrue(all("--dry" in p.args for p in creates))
 
     def test_the_real_other_group_is_probed_when_absent(self):
         b = FakeBroker(group_state="absent")

@@ -27,24 +27,29 @@ What is probed, per environment <env> (the other is <o>):
          group under andara-sim-<env> (`rpk group seek`: OffsetCommit needs Read on the group and the
          topic, as a join does); producing to <o>.andara.commands.v1 and a group under
          andara-sim-<o> are denied.
-  AC-3   every environment principal is denied CreateTopics, DeleteTopics and AlterConfigs on a name
-         that doesn't exist, and DeleteGroups on another group; andara-projector-state-<env> may
-         delete its own group and not <o>'s: a disposable group under <o>'s prefix always, and <o>'s
-         real group only when the operator has seen it absent.
+  AC-3   every environment principal is denied CreateTopics (validate-only), DeleteTopics and
+         AlterConfigs on a name that doesn't exist, and DeleteGroups on another group;
+         andara-projector-state-<env> may delete under its own group's prefix and not under <o>'s,
+         each asked on a disposable group every run, and on the real groups only when the operator
+         has seen them absent.
   AC-12  every declared principal but andara-projector-state-<env> (and the superuser) is denied
          producing to <env>.andara.state.v1; andara-projector-state-<env> is allowed.
   AC-13  andara-projector-state-<env> is denied producing to <env>.andara.content.* and
          <env>.andara.audit.v1, and reading audit; it may read content.*.
 
 Nothing is left behind:
-  - a create, delete or alter-config probe names a topic that doesn't exist;
+  - a create probe is validate-only (`rpk topic create --dry`): the broker authorizes it and creates
+    nothing, even if the ACL has drifted to allow it; a delete or alter-config probe names a topic
+    that doesn't exist;
   - a group probe uses a group under the granted prefix (`<group>-acl-probe`), never the real one,
     and the operator deletes it afterwards;
   - a probe that names a projector's real group (its own, or the other environment's) runs only when
     the operator has seen that group absent: when it exists (deleting it is
     `andara-projector --rebuild`) the probe is skipped, and when the operator can't tell, the run
     fails without deleting it. A probe that is meant to be denied is guarded too, since drift that
-    allows it is exactly what it detects (Codex on #654).
+    allows it is exactly what it detects (Codex on #654). The describe and the delete are not atomic:
+    a group created between them could still be deleted if the ACL had drifted. That window is
+    accepted; the disposable-group probes, which run every time, are the ones the check rests on.
 
 Exit codes: 0 every probe answered as declared; 1 one didn't, or a cleanup failed; 3 a Secret,
 kubectl or the cluster missing.
@@ -132,12 +137,15 @@ def probes(doc):
         absent = "%s.andara.acl-probe-absent" % prefix
         for name in env_principals:
             principal = "%s-%s" % (name, env)
-            out.append(Probe("AC-3", principal, "CreateTopics " + absent, ["topic", "create", absent], "denied"))
+            out.append(Probe("AC-3", principal, "CreateTopics " + absent, ["topic", "create", absent, "--dry"],
+                             "denied"))
             out.append(Probe("AC-3", principal, "DeleteTopics " + absent, ["topic", "delete", absent], "denied"))
             out.append(Probe("AC-3", principal, "AlterConfigs " + absent,
                              ["topic", "alter-config", absent, "--set", "retention.ms=1"], "denied"))
             out.append(Probe("AC-3", principal, "DeleteGroups andara-sim-%s-acl-probe-absent" % env,
                              ["group", "delete", "andara-sim-%s-acl-probe-absent" % env], "denied"))
+        out.append(Probe("AC-3", proj, "DeleteGroups %s-acl-probe-absent (its own prefix)" % proj,
+                         ["group", "delete", proj + "-acl-probe-absent"], "allowed"))
         out.append(Probe("AC-3", proj, "DeleteGroups its own " + proj, ["group", "delete", proj], "allowed",
                          cleanup=[("guard", proj)]))
         if other:
@@ -233,7 +241,7 @@ def clean(broker, step, out):
 def main(argv=None, broker=None, doc=None, out=sys.stdout, err=sys.stderr):
     doc = doc or kafka_users.load()
     broker = broker or Broker(topics.kafka_namespace())
-    failed, leftovers, cleanups, limits = [], [], [], {}
+    failed, leftovers, cleanups, limits, skipped = [], [], [], {}, 0
     for p in probes(doc):
         guard = next((c[1] for c in p.cleanup if c[0] == "guard"), None)
         if guard:
@@ -241,6 +249,7 @@ def main(argv=None, broker=None, doc=None, out=sys.stdout, err=sys.stderr):
             if state == "exists":
                 out.write("kafka-acl-probe: %s %s %s: skipped, the group exists and deleting it is a rebuild\n"
                           % (p.ac, p.principal, p.what))
+                skipped += 1
                 continue
             if state == "unknown":
                 out.write("kafka-acl-probe: %s %s %s: not run, the operator couldn't tell whether the group "
@@ -278,7 +287,8 @@ def main(argv=None, broker=None, doc=None, out=sys.stdout, err=sys.stderr):
         err.write("make: kafka-acl-probe: %d probe(s) answered other than declared, %d cleanup(s) failed\n"
                   % (len(failed), len(leftovers)))
         return 1
-    out.write("kafka-acl-probe: every probe answered as topics.yaml declares, and wrote no record\n")
+    out.write("kafka-acl-probe: every probe answered as topics.yaml declares, and wrote no record%s\n"
+              % ("; %d probe(s) of a real group skipped because it exists" % skipped if skipped else ""))
     return 0
 
 
