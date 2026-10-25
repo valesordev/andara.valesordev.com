@@ -7,7 +7,8 @@
 #
 #   kafka.sh up                make shared-up: the application namespaces with their
 #                              andara.valesor/env label, deploy/k8s/kafka/*.yaml in andara-shared,
-#                              wait Ready, both environments' topics from deploy/kafka/topics.yaml,
+#                              wait Ready, the KafkaUsers rendered from topics.yaml (AW-INF-056),
+#                              both environments' topics from deploy/kafka/topics.yaml,
 #                              the platform topics and the schema registry (AW-INF-057), then
 #                              the shared object store (`make objectstore-up` and each
 #                              environment's `objectstore-install`, AW-INF-058).
@@ -81,6 +82,20 @@ require_operator() {
     || die "$CMD" "Strimzi watches $watching, not $KAFKA_NS; run \`make platform-up\`" 3
 }
 
+# The broker moving to SASL (AW-INF-056) while the schema registry still runs on the
+# unauthenticated listener: stop the registry first, so the switch never denies a running client;
+# schema_registry starts it again on SASL. Nothing on a broker already on SASL, or a new one.
+sasl_switch() {
+  local auth
+  kube_kubectl -n "$KAFKA_NS" get "kafka/$KAFKA" >/dev/null 2>&1 || return 0
+  auth="$(kube_kubectl -n "$KAFKA_NS" get "kafka/$KAFKA" \
+    -o jsonpath='{.spec.kafka.listeners[?(@.port==9092)].authentication.type}')"
+  [[ -z "$auth" ]] || return 0
+  kube_kubectl -n "$KAFKA_NS" get deploy/andara-schema-registry >/dev/null 2>&1 || return 0
+  echo "shared: stopping the schema registry while kafka/$KAFKA moves to SASL (AW-INF-056); it starts again on SASL below"
+  kube_kubectl -n "$KAFKA_NS" scale deploy/andara-schema-registry --replicas=0 >/dev/null
+}
+
 # The Kafka itself, idempotent: a second run applies nothing new and waits on a Ready cluster.
 shared_kafka() {
   need helm kubectl "$PY"
@@ -89,12 +104,17 @@ shared_kafka() {
   kube_kubectl get namespace "$KAFKA_NS" >/dev/null 2>&1 \
     || die "$CMD" "no namespace $KAFKA_NS; run \`make platform-up\`, which creates it before Strimzi" 3
   ensure_env_namespaces
+  sasl_switch
   kube_kubectl -n "$KAFKA_NS" apply -f deploy/k8s/kafka/ >/dev/null
   echo "shared: applied deploy/k8s/kafka/ to $KAFKA_NS; waiting for kafka/$KAFKA (first boot pulls images and forms the KRaft quorum)"
   kube_kubectl -n "$KAFKA_NS" wait "kafka/$KAFKA" --for=condition=Ready --timeout=15m >/dev/null \
     || die "$CMD" "kafka/$KAFKA in $KAFKA_NS did not become Ready: kubectl --context $ANDARA_KUBE_CONTEXT -n $KAFKA_NS describe kafka $KAFKA"
   kube_kubectl -n "$KAFKA_NS" rollout status deploy/andara-kafka-tools --timeout=5m >/dev/null \
     || die "$CMD" "the rpk toolbox in $KAFKA_NS did not become Available"
+  # Every principal's credential and ACLs, before anything authenticates: the operator's first,
+  # which every topic apply below uses.
+  ANDARA_KAFKA_NAMESPACE="$KAFKA_NS" "$PY" scripts/kafka_users.py apply \
+    || die "$CMD" "the KafkaUsers from deploy/kafka/topics.yaml were not all Ready in $KAFKA_NS"
 }
 
 brokers() {
@@ -160,7 +180,8 @@ ready_since() {
 # "?" when the count could not be taken: an unanswered question is not a zero.
 under_replicated() {
   local out
-  out="$(kube_kubectl -n "$1" exec "$KAFKA-broker-1" -c kafka -- \
+  # As andara-operator, the password on stdin (AW-INF-056).
+  out="$(ANDARA_KAFKA_NAMESPACE="$1" "$PY" scripts/kafka_auth.py broker-exec "$KAFKA-broker-1" -- \
     /opt/kafka/bin/kafka-topics.sh --bootstrap-server localhost:9092 --describe --under-replicated-partitions 2>/dev/null)" \
     || { echo "?"; return; }
   grep -c 'Topic:' <<<"$out" || true

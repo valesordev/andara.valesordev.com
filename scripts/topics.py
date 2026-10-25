@@ -40,6 +40,8 @@ import shutil
 import subprocess
 import sys
 
+import kafka_auth
+import kafka_users
 import kube
 
 REPO = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
@@ -285,8 +287,8 @@ def rpk_prefix(env, compose_redpanda_running, host_rpk, broker="compose"):
     ANDARA_ENV=dev` with `make up` running applied dev's declaration to the laptop's broker.
     """
     if not redpanda(env, broker):
-        return kube.kubectl("-n", kafka_namespace(), "exec", "-i", CLUSTER_TOOLBOX, "--",
-                            "rpk", "-X", "brokers=" + CLUSTER_BOOTSTRAP)
+        # As andara-operator: the password goes on the exec's stdin (kafka_auth, AW-INF-056).
+        return kafka_auth.rpk_argv(kafka_namespace(), CLUSTER_TOOLBOX, CLUSTER_BOOTSTRAP)
     if compose_redpanda_running:
         return ["docker", "compose", "-f", COMPOSE, "exec", "-T", "redpanda", "rpk"]
     if host_rpk:
@@ -311,11 +313,13 @@ def rpk_runner(env, broker=None):
         prefix = rpk_prefix(env, compose_redpanda_running(), shutil.which("rpk") is not None)
         if prefix is None:
             die("no running Redpanda container and no local rpk; run `make up` first")
-    else:
-        if shutil.which("kubectl") is None:
-            die("env '%s' is on the cluster and kubectl is not installed" % env, 3)
-        prefix = rpk_prefix(env, False, False, broker="cluster")
-    return lambda args: subprocess.run(prefix + args, capture_output=True, text=True)
+        return lambda args: subprocess.run(prefix + args, capture_output=True, text=True)
+    if shutil.which("kubectl") is None:
+        die("env '%s' is on the cluster and kubectl is not installed" % env, 3)
+    prefix = rpk_prefix(env, False, False, broker="cluster")
+    # Read once, before the first call: a missing Secret exits 3 naming it (AW-INF-056 AC-11).
+    password = kafka_auth.operator_password(kafka_namespace())
+    return lambda args: subprocess.run(prefix + args, input=password + "\n", capture_output=True, text=True)
 
 
 def existing_topics(run):
@@ -398,6 +402,61 @@ def destructive(key, have, want):
     if key == "cleanup.policy":
         return bool(policies(want) - policies(have))
     return False
+
+
+def acl_op(op):
+    """A Strimzi KafkaUser operation as the broker lists it: DescribeConfigs -> DESCRIBE_CONFIGS."""
+    return re.sub(r"(?<!^)(?=[A-Z])", "_", op).upper()
+
+
+def declared_acls(decl=DECL):
+    """{(principal, resource type, name, pattern, operation)} as the broker lists them, from the
+    KafkaUsers rendered from the declaration (kafka_users.render)."""
+    out = set()
+    for u in kafka_users.render(kafka_users.load(decl)):
+        for acl in (u["spec"].get("authorization") or {}).get("acls") or []:
+            r = acl["resource"]
+            rtype = r["type"].upper()
+            name = "kafka-cluster" if rtype == "CLUSTER" else r["name"]
+            pattern = {"literal": "LITERAL", "prefix": "PREFIXED"}[r.get("patternType", "literal")]
+            for op in acl["operations"]:
+                out.add(("User:" + u["metadata"]["name"], rtype, name, pattern, acl_op(op)))
+    return out
+
+
+def live_acls(run):
+    """The broker's ACLs in the same shape; a DENY or a host other than * is kept, as drift."""
+    res = run(["security", "acl", "list", "--format", "json"])
+    if res.returncode != 0:
+        die("could not list ACLs: %s" % (res.stderr or res.stdout).strip())
+    try:
+        rows = json.loads(res.stdout or "{}").get("matches") or []
+    except ValueError:
+        die("rpk security acl list: not JSON: %r" % res.stdout[:200])
+    out = set()
+    for m in rows:
+        op = m["operation"] if (m.get("permission"), m.get("host")) == ("ALLOW", "*") else \
+            "%s (%s from %s)" % (m["operation"], m.get("permission"), m.get("host"))
+        out.add((m["principal"], m["resource_type"], m["resource_name"], m["resource_pattern_type"], op))
+    return out
+
+
+def acl_drift(run, env=None, decl=DECL):
+    """ACL drift (AW-INF-056 AC-10): an ACL on the broker that the declaration doesn't grant, or one
+    it grants that the broker lacks. env scopes it to that environment's principals
+    (`User:<name>-<env>`); None, the platform diff, is every other principal, including any no
+    declaration names."""
+    envs = sorted(e for e, d in parse_environments(decl).items() if d["prefix"])
+
+    def mine(acl):
+        tail = acl[0].rsplit("-", 1)[-1]
+        return tail == env if env else tail not in envs
+    declared = {a for a in declared_acls(decl) if mine(a)}
+    live = {a for a in live_acls(run) if mine(a)}
+    lines = ["ACL %s %s %s %s %s: not declared in deploy/kafka/topics.yaml" % a for a in sorted(live - declared)]
+    lines += ["ACL %s %s %s %s %s: declared, missing on the broker (`make shared-up` restores it)" % a
+              for a in sorted(declared - live)]
+    return lines
 
 
 def run_action(action, env, allow_data_loss, run, decl=DECL, out=sys.stdout, err=sys.stderr,
@@ -529,6 +588,9 @@ def run_action(action, env, allow_data_loss, run, decl=DECL, out=sys.stdout, err
                 die("could not set broker config %s=%s: %s"
                     % (key, val, (res.stderr or res.stdout).strip()))
 
+    # The shared broker's ACLs (AW-INF-056); the compose Redpanda runs none.
+    if action == "diff" and not rp:
+        drift += acl_drift(run, env=env, decl=decl)
     if drift:
         for line in drift:
             err.write("topics-%s: %s\n" % (action, line))
@@ -639,6 +701,8 @@ def run_platform(action, run, decl=DECL, out=sys.stdout, err=sys.stderr):
         if res.returncode != 0:
             die("the broker refused %s %s=%s: %s" % (name, key, want, (res.stderr or res.stdout).strip()))
         out.write("topics: altered %s %s %s -> %s (platform)\n" % (name, key, was, want))
+    if action == "diff":
+        drift += acl_drift(run, env=None, decl=decl)
     if drift:
         for line in drift:
             err.write("topics-%s: %s\n" % (action, line))

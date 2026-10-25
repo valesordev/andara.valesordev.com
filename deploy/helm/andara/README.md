@@ -38,6 +38,7 @@ chart, and one `Deployment` per projector. Story: [AW-INF-003](https://github.co
 | `make shared-down CONFIRM=andara-shared` | delete the shared Kafka and its PVCs, which hold every environment's Command history; without the CONFIRM it exits 2 and removes nothing. The namespace stays (`platform-up`'s) |
 | `make shared-check` | each `andara-shared` PVC's use against its size (exit 1 over 80%), each broker's bytes per environment prefix, and every topic outside both prefixes on its own line; an unprefixed `andara.` topic other than `andara.test.` fails it |
 | `make shared-netcheck` | proves the listener's NetworkPolicy (*Who may connect*, below) with four throwaway pods on the toolbox's image: an `andara` pod in `andara-local` and in `andara-dev` reach the bootstrap, one in a fresh unlabelled namespace and a pod without the `andara` label in `andara-dev` don't; exit 1 names each case that didn't hold; everything it creates is deleted |
+| `make kafka-creds ENV=<local\|dev>` | copy `ENV`'s broker passwords from the User Operator's Secrets in `andara-shared` into `andara-ENV` only; `make kafka-creds-rotate ENV=… PRINCIPAL=…` gives one principal a new password and re-copies it (AW-INF-056) |
 | `make kafka-install ENV=<local\|dev>` | the shared Kafka, as `shared-up`, then only `ENV`'s prefixed topics |
 | `make kafka-broker-bounce ENV=dev` | delete one shared broker; after it rejoins with every partition in sync, assert once that `ENV`'s server never left Ready, never logged `command log unreachable`, and refused no Submit. Both environments lose the broker while it's gone |
 | `make kafka-users` / `kafka-users-check` | print the per-environment `KafkaUser`s rendered from `deploy/kafka/topics.yaml`'s `principals` / check that none grants a topic Create, Alter or AlterConfigs or a literal `*`, each stays inside its prefix, and each workload has one per environment; the check is in `make check`. AW-INF-056 applies them |
@@ -108,8 +109,9 @@ The cluster's side of the contract with the workstation `nginx` (ADR-0013 decisi
 - **Projectors.** `projectors.{state,redis,postgres}.enabled` render a `Deployment` each,
   `strategy: Recreate` (one consumer-group holder). `state` is on for `dev` (AW-INF-025); the
   others wait on AW-SRV-017/018. A projector's Kafka credential is its own,
-  `projectors.<name>.kafkaCreds.secretName`, mounted at `/etc/andara/secrets/kafka`; empty renders
-  no mount, and it never falls back to the server's `secrets.kafkaCreds` (ADR-0011).
+  `projectors.<name>.kafkaCreds.secretName`, mounted at `/etc/andara/secrets/kafka`, and its
+  `ANDARA_KAFKA_SASL_USERNAME` is that Secret's name; empty renders no mount and an empty username,
+  and it never falls back to the server's `secrets.kafkaCreds` (ADR-0011, AW-INF-056).
 - **Snapshot store.** `server.snapshot.store` is `fs` (the `snapshots` claim) or `s3`. On `s3`,
   `secrets.snapshotS3.secretName` (`andara-snapshot-s3`) goes into the server and every projector
   by `envFrom`, so both read the rounds the server writes, and `server.snapshot.s3_endpoint` names
@@ -214,10 +216,22 @@ destroying `andara-local` or `andara-dev` never touches it.
   projector) in a namespace labelled `andara.valesor/env` `local` or `dev`, and the `rpk` toolbox
   (`app.kubernetes.io/name: andara-kafka-tools`) in `andara-shared`, the broker pool itself, for the tools run in a broker pod (`shared-check`'s `kafka-log-dirs`, `kafka-broker-bounce`'s `kafka-topics`), and the schema registry (`app.kubernetes.io/name: andara-schema-registry`, AW-INF-057), which keeps its schemas in `_schemas`. Nothing else connects, including an `andara` pod
   in an unlabelled namespace. `make shared-up` sets the labels, and `make shared-netcheck` proves the policy.
-- **Principals.** The per-environment `KafkaUser`s (`andara-server-dev`, `andara-projector-state-local`, …) are
-  rendered from `topics.yaml` and checked by `make kafka-users-check`, with the platform principal
-  `andara-schema-registry` (`platform_principals`, rendered once and scoped to the platform topic `_schemas`).
-  AW-INF-056 applies them with SASL and the authorizer. Until then, `local`'s retention bound is the only bound on what it can take of the brokers.
+- **Principals and SASL.** The listener is SASL/SCRAM-SHA-512 with deny-by-default ACLs (AW-INF-056). Every
+  client authenticates as a principal declared in `topics.yaml`:
+  - per environment: `andara-server-dev`, `andara-projector-state-local`, and so on;
+  - platform-wide: `andara-schema-registry`, and the one superuser `andara-operator`, which only the operator's
+    tools use.
+
+  `make shared-up` renders them into `KafkaUser`s and applies them, and the User Operator writes each principal's
+  Secret in `andara-shared`. `make kafka-creds ENV=<env>` copies an environment's passwords into its own namespace
+  only. `values/<env>.yaml` names its principals:
+  - `server.kafka.sasl_username` and `secrets.kafkaCreds.secretName` are both `andara-server-<env>`;
+  - `projectors.state.kafkaCreds.secretName` is `andara-projector-state-<env>`. The projector's
+    `ANDARA_KAFKA_SASL_USERNAME` is its own Secret's name, set on the container, so the server's in
+    `andara-config` never reaches it.
+
+  `make helm-test` holds each workload to its own principal. `local`'s principals also carry the byte-rate quotas
+  `topics.yaml` declares. Rotation and refusals: `docs/runbooks/kafka-credentials.md`.
 - **What sharing costs.** One environment can fill the brokers' disks or exhaust their partitions or connections for
   both, and a broker fault puts both read-only at once. `make shared-check` is the control for the disks.
   `docs/specs/kafka/broker-contract.md` states the shared failure domain.

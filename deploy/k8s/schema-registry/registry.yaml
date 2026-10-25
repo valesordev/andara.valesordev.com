@@ -52,6 +52,15 @@ spec:
             - {name: KARAPACE_ADVERTISED_HOSTNAME, value: andara-schema-registry.andara-shared.svc}
             - {name: KARAPACE_ADVERTISED_PORT, value: "8081"}
             - {name: KARAPACE_BOOTSTRAP_URI, value: andara-log-kafka-bootstrap.andara-shared.svc:9092}
+            # Its own principal on the SASL listener (AW-INF-056): the platform principal
+            # andara-schema-registry from topics.yaml, whose Secret the User Operator writes here
+            # in andara-shared, so nothing copies it.
+            - {name: KARAPACE_SECURITY_PROTOCOL, value: SASL_PLAINTEXT}
+            - {name: KARAPACE_SASL_MECHANISM, value: SCRAM-SHA-512}
+            - {name: KARAPACE_SASL_PLAIN_USERNAME, value: andara-schema-registry}
+            - name: KARAPACE_SASL_PLAIN_PASSWORD
+              valueFrom:
+                secretKeyRef: {name: andara-schema-registry, key: password}
             - {name: KARAPACE_CLIENT_ID, value: andara-schema-registry}
             - {name: KARAPACE_GROUP_ID, value: andara-schema-registry}
             - {name: KARAPACE_TOPIC_NAME, value: _schemas}

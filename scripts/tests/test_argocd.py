@@ -691,7 +691,9 @@ class KafkaOperator(unittest.TestCase):
         p, made = self.run_install(["andara-shared"])
         applies = [c for c in made if " apply " in c]
         self.assertTrue(applies, (p.stderr, made))
-        self.assertTrue(all("-n andara-shared apply -f deploy/k8s/kafka/" in c for c in applies), applies)
+        # The manifests, and the KafkaUsers rendered from topics.yaml on stdin (AW-INF-056), both there.
+        self.assertTrue(all("-n andara-shared apply -f deploy/k8s/kafka/" in c or c.endswith("-n andara-shared apply -f -")
+                            for c in applies), applies)
         self.assertFalse([c for c in made if c.startswith("helm upgrade") or c.startswith("helm install")], made)
 
     def test_no_operator_names_platform_up(self):
@@ -718,6 +720,9 @@ class KafkaOperator(unittest.TestCase):
         for e in ("local", "dev"):
             self.assertIn("kubectl --context kind-andara label namespace andara-%s andara.valesor/env=%s --overwrite"
                           % (e, e), made)
+        # The KafkaUsers before any topic: every topic apply authenticates as andara-operator (AW-INF-056).
+        users = made.index("pystub scripts/kafka_users.py apply")
+        self.assertLess(users, min(i for i, c in enumerate(made) if "topics.py" in c))
         topic_calls = [c for c in made if "topics.py" in c]
         self.assertEqual(topic_calls, ["pystub scripts/topics.py apply --env local --broker cluster",
                                        "pystub scripts/topics.py apply --env dev",
@@ -769,6 +774,8 @@ class KafkaOperator(unittest.TestCase):
                    '  *"delete pod"*) touch "%s";;\n'
                    '  *"get pod andara-log-broker-0"*uid*) if [ -f "%s" ]; then echo u1; else echo u0; fi;;\n'
                    '  *"get pod andara-log-broker-0"*ready*) echo true;;\n'
+                   # The operator's password, which kafka-topics in the broker pod reads on stdin (AW-INF-056).
+                   '  *"get secret andara-operator"*) printf b3BlcmF0b3JwdzE=;;\n'
                    'esac\nexit 0') % (gone, gone)
         env = stub_bin(d, log, {"helm": "exit 0", "kubectl": kubectl})
         p = subprocess.run([os.path.join(SCRIPTS, "kafka.sh"), "bounce", "dev"], capture_output=True, text=True, env=env)
@@ -779,6 +786,9 @@ class KafkaOperator(unittest.TestCase):
         self.assertTrue([c for c in broker if " delete pod andara-log-broker-0" in c], made)
         self.assertTrue(broker and all(" -n andara-shared " in c for c in broker), broker)
         self.assertTrue(server and all(" -n andara-dev " in c for c in server), server)
+        topics_call = [c for c in broker if "kafka-topics.sh" in c]
+        self.assertTrue(topics_call and all("--command-config" in c for c in topics_call), topics_call)
+        self.assertFalse([c for c in made if "operatorpw1" in c], "the password reached a command line")
 
     def test_kafka_sh_refuses_prod_before_any_call(self):
         # prod's Kafka isn't on this cluster (ADR-0013 decision 10).

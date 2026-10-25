@@ -776,7 +776,9 @@ def test_snapshot_s3_and_projector_creds():
     for name, d in (("server", sts), ("projector", proj)):
         if env_from_secrets(d) != ["andara-snapshot-s3"]:
             fail("dev: %s envFrom secrets are %r, want andara-snapshot-s3" % (name, env_from_secrets(d)))
-    if [m for m in container(proj).get("volumeMounts", []) if m["name"] == "kafka-creds"]:
+    code, out, err = render("dev", "--set", "projectors.state.kafkaCreds.secretName=")
+    bare = find(docs(out), "Deployment", "andara-projector-state")
+    if [m for m in container(bare).get("volumeMounts", []) if m["name"] == "kafka-creds"]:
         fail("dev: projector mounts kafka-creds with projectors.state.kafkaCreds.secretName empty")
 
     # The replica loads the server's content (Codex on #171). Since AW-INF-021 both read it from
@@ -791,7 +793,8 @@ def test_snapshot_s3_and_projector_creds():
     if mounts.get("kafka-creds") != "/etc/andara/secrets/kafka" or vols.get("kafka-creds") != "andara-projector-kafka":
         fail("projector: kafka-creds should mount andara-projector-kafka at /etc/andara/secrets/kafka, got %r %r"
              % (mounts, vols))
-    code, out, err = render("dev", "--set", "secrets.kafkaCreds.secretName=andara-server-kafka")
+    code, out, err = render("dev", "--set", "secrets.kafkaCreds.secretName=andara-server-kafka",
+                            "--set", "projectors.state.kafkaCreds.secretName=")
     proj = find(docs(out), "Deployment", "andara-projector-state")
     if "kafka-creds" in {v["name"] for v in proj["spec"]["template"]["spec"]["volumes"]}:
         fail("projector: falls back to secrets.kafkaCreds when its own kafkaCreds is empty")
@@ -805,6 +808,44 @@ def test_snapshot_s3_and_projector_creds():
         fail("local: the server takes a snapshot Secret")
     if find(ds, "Deployment", "andara-projector-state") is not None:
         fail("local: renders a projector")
+
+
+def env_value(d, name):
+    return next((e.get("value") for e in container(d).get("env", []) if e["name"] == name), None)
+
+
+def kafka_creds_volume(d):
+    return next((v["secret"]["secretName"] for v in d["spec"]["template"]["spec"]["volumes"]
+                 if v["name"] == "kafka-creds"), None)
+
+
+def test_kafka_sasl_credentials():
+    """AW-INF-056 AC-15: each workload authenticates as its own environment's principal with its own
+    Secret; no projector takes the server's username, and one with no Secret renders no mount and
+    no username."""
+    for env in ("local", "dev"):
+        code, out, err = render(env, "--set", "projectors.state.enabled=true")
+        if code:
+            fail("%s render failed: %s" % (env, err.strip()))
+            continue
+        ds = docs(out)
+        server_user = find(ds, "ConfigMap", "andara-config")["data"].get("ANDARA_KAFKA_SASL_USERNAME")
+        sts, proj = find(ds, "StatefulSet", "andara"), find(ds, "Deployment", "andara-projector-state")
+        want = {"server": "andara-server-" + env, "projector": "andara-projector-state-" + env}
+        if server_user != want["server"] or kafka_creds_volume(sts) != want["server"]:
+            fail("%s: the server authenticates as %r with Secret %r, want %s for both"
+                 % (env, server_user, kafka_creds_volume(sts), want["server"]))
+        proj_user = env_value(proj, "ANDARA_KAFKA_SASL_USERNAME")
+        if proj_user != want["projector"] or kafka_creds_volume(proj) != want["projector"]:
+            fail("%s: the projector authenticates as %r with Secret %r, want %s for both"
+                 % (env, proj_user, kafka_creds_volume(proj), want["projector"]))
+        if proj_user == server_user:
+            fail("%s: the projector renders the server's username %r" % (env, server_user))
+    code, out, err = render("dev", "--set", "projectors.state.kafkaCreds.secretName=")
+    proj = find(docs(out), "Deployment", "andara-projector-state")
+    if env_value(proj, "ANDARA_KAFKA_SASL_USERNAME") != "" or kafka_creds_volume(proj) is not None:
+        fail("dev: a projector with no kafkaCreds renders username %r and Secret %r, want none"
+             % (env_value(proj, "ANDARA_KAFKA_SASL_USERNAME"), kafka_creds_volume(proj)))
 
 
 def main():
@@ -834,6 +875,7 @@ def main():
     test_content_configmaps()
     test_content_checksum()
     test_snapshot_s3_and_projector_creds()
+    test_kafka_sasl_credentials()
     if failures:
         print("helm-test: %d failure(s)" % len(failures), file=sys.stderr)
         sys.exit(1)

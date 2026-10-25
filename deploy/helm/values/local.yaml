@@ -37,6 +37,9 @@ server:
   kafka:
     brokers: andara-log-kafka-bootstrap.andara-shared.svc:9092
     topic_prefix: local
+    # local's server principal on the SASL listener (AW-INF-056); `make kafka-creds ENV=local`
+    # copies its password into andara-local as the Secret of the same name (secrets.kafkaCreds).
+    sasl_username: andara-server-local
 # The box's Traefik holds :80/:443 on the kind control plane (the kind port mapping was
 # made for it), so the chart binds no host port of its own (AC-8). `andara.local` resolves
 # by the /etc/hosts line `make helm-install` prints. Connections from the box arrive at
@@ -53,6 +56,14 @@ secrets:
     secretName: andara-server-token-key
   bootstrapOperator:
     secretName: andara-server-bootstrap
+  kafkaCreds:
+    secretName: andara-server-local
+
+# Off on local; when it's on, its own principal (ADR-0011 decision 6).
+projectors:
+  state:
+    kafkaCreds:
+      secretName: andara-projector-state-local
 
 snapshots:
   size: 1Gi

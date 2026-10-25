@@ -51,6 +51,13 @@ spec:
           image: {{ $.Values.image.repository }}:{{ $.Values.image.tag }}
           imagePullPolicy: {{ $.Values.image.pullPolicy }}
           command: ["/usr/local/bin/andara-projector", {{ $name | quote }}]
+          # Its own principal (ADR-0011 decision 6, AW-INF-056): env beats envFrom, so the server's
+          # ANDARA_KAFKA_SASL_USERNAME in andara-config never reaches it. The name is its own
+          # Secret's, which `make kafka-creds` names after the principal; none renders "", which
+          # no SASL listener accepts.
+          env:
+            - name: ANDARA_KAFKA_SASL_USERNAME
+              value: {{ ($spec.kafkaCreds | default dict).secretName | default "" | quote }}
           envFrom:
             - configMapRef:
                 name: {{ include "andara.name" $ }}-config
