@@ -20,9 +20,10 @@ LIMITS = kafka_acl_probe.max_message_bytes(REAL)
 class FakeBroker:
     """Answers each probe as the declaration says it should, unless told otherwise."""
 
-    def __init__(self, override=None, group_state="absent"):
+    def __init__(self, override=None, group_state="absent", live=None):
         self.override = override or {}
         self.group_state = group_state
+        self.live = live or {}  # {topic: live max.message.bytes}; the declared value otherwise
         self.calls = []
         self.stdins = []
 
@@ -33,6 +34,10 @@ class FakeBroker:
         if key in self.override:
             return self.override[key]
         if principal == "andara-operator":
+            if args[:2] == ["topic", "describe"]:
+                topic = args[2]
+                value = self.live.get(topic, LIMITS[topic.split(".", 1)[1]])
+                return 0, '[{"summary": {}, "configs": [{"key": "max.message.bytes", "value": "%d"}]}]' % value
             if args[:2] == ["group", "describe"]:
                 return {"absent": (0, "STATE Dead\nERROR GROUP_ID_NOT_FOUND: The group id does not exist."),
                         "exists": (0, "STATE Empty\nMEMBERS 0"),
@@ -48,7 +53,10 @@ class FakeBroker:
 
     def want_for(self, principal, args):
         for p in kafka_acl_probe.probes(REAL):
-            if p.principal == principal and p.args == list(args):
+            same = p.args == list(args)
+            if p.topic and args[:3] == p.args[:3]:
+                same = True  # the size flag follows the live limit
+            if p.principal == principal and same:
                 return p.want
         raise AssertionError("unexpected rpk %s %r" % (principal, args))
 
@@ -103,6 +111,28 @@ class NeverWrites(unittest.TestCase):
             self.assertFalse(args[:2] == ["topic", "delete"] and principal == "andara-operator")
             if args[:2] == ["topic", "produce"]:
                 self.assertGreater(len(stdin), LIMITS[args[2].split(".", 1)[1]])
+
+
+class LiveLimit(unittest.TestCase):
+    """Reviewer round 2: the record must exceed the limit the broker applies, not only the declared one."""
+
+    def test_a_live_limit_above_the_declared_one_sizes_the_record_past_it(self):
+        b = FakeBroker(live={"dev.andara.commands.v1": 50 << 20})
+        code, _, err = run(b)
+        self.assertEqual(code, 0, err)
+        i = next(i for i, (pr, a) in enumerate(b.calls)
+                 if pr == "andara-server-dev" and a[:3] == ["topic", "produce", "dev.andara.commands.v1"])
+        self.assertGreater(len(b.stdins[i]), 50 << 20)
+        args = b.calls[i][1]
+        self.assertGreaterEqual(int(args[args.index("--max-message-bytes") + 1]), len(b.stdins[i]) - 1)
+
+    def test_an_unreadable_live_limit_produces_nothing_and_fails(self):
+        b = FakeBroker(override={("andara-operator", ("topic", "describe", "dev.andara.state.v1", "--format", "json")):
+                                 (1, "boom")})
+        code, _, err = run(b)
+        self.assertEqual(code, 1)
+        self.assertFalse([c for c in b.calls if c[1][:3] == ["topic", "produce", "dev.andara.state.v1"]])
+        self.assertIn("couldn't read dev.andara.state.v1's live max.message.bytes", err)
 
 
 class Probes(unittest.TestCase):
@@ -176,6 +206,7 @@ class Main(unittest.TestCase):
     def test_group_state_reads_the_describe(self):
         for text, code, want in (("STATE Dead\nERROR GROUP_ID_NOT_FOUND: x", 0, "absent"),
                                  ("STATE Empty\nMEMBERS 0", 0, "exists"),
+                                 ("STATE Dead", 0, "unknown"),
                                  ("STATE Stable\nMEMBERS 1", 0, "exists"),
                                  ("timed out after 90s", 124, "unknown"),
                                  ("GROUP_AUTHORIZATION_FAILED", 1, "unknown"),
@@ -184,6 +215,13 @@ class Main(unittest.TestCase):
                 def rpk(self, *a, **k):
                     return code, text
             self.assertEqual(kafka_acl_probe.group_state(B(), "g"), want, text)
+
+    def test_a_refused_group_cleanup_that_exits_0_is_reported(self):
+        b = FakeBroker(override={("andara-operator", ("group", "delete", "andara-sim-local-acl-probe")):
+                                 (0, "GROUP_AUTHORIZATION_FAILED: no")})
+        code, _, err = run(b)
+        self.assertEqual(code, 1)
+        self.assertIn("left behind: deleting probe group andara-sim-local-acl-probe failed", err)
 
     def test_a_failed_group_cleanup_is_reported_as_left_behind(self):
         b = FakeBroker(override={("andara-operator", ("group", "delete", "andara-sim-dev-acl-probe")): (1, "boom")})

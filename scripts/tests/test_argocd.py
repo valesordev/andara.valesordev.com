@@ -759,7 +759,9 @@ class KafkaOperator(unittest.TestCase):
     def test_install_on_a_sasl_broker_leaves_the_registry_alone(self):
         p, made = self.run_install_on("scram-sha-512")
         self.assertEqual(p.returncode, 0, p.stderr)
-        self.assertFalse([c for c in made if "andara-schema-registry" in c and (" scale " in c or " apply " in c)], made)
+        touched = [c for c in made if "apply -f deploy/k8s/schema-registry/" in c
+                   or "deploy/andara-schema-registry" in c]
+        self.assertEqual(touched, [], "a broker already on SASL needs no registry restart")
 
     def test_bounce_refuses_local_before_any_call(self):
         # local's server runs on memory until AW-INF-060, so a bounce would pass proving nothing.

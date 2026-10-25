@@ -125,6 +125,8 @@ def rotate(env, principal, run=subprocess.run, doc=None, sleep=time.sleep, now=t
             raise Failed("PRINCIPAL=%s is platform-wide; give no ENV" % principal, 2)
         name = principal
     else:
+        if not env:
+            raise Failed("PRINCIPAL=%s needs ENV=<%s>" % (principal, "|".join(sorted(kafka_users.environments(doc)))), 2)
         names = principals(env, doc)
         name = principal if principal.endswith("-" + env) else "%s-%s" % (principal, env)
         if name not in names:

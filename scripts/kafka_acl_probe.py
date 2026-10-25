@@ -16,9 +16,11 @@ rpk's exit code is not used: some refusals exit 0.
 
 **It never writes a record.** The topics it probes are the World's: the command log is its WAL,
 kept forever, and any record a reader can't decode stalls a partition. So every produce probe sends
-one record larger than its topic's max.message.bytes (from topics.yaml; the broker's default when
-none is declared). The broker authorizes a Produce before it sizes it: an authorized principal gets
-MESSAGE_TOO_LARGE and nothing is appended, a refused one TOPIC_AUTHORIZATION_FAILED.
+one record larger than its topic accepts: past the larger of the declared max.message.bytes and the
+live topic's effective one, which the operator reads first (an environment override, drift, or a
+broker default all show there). A probe whose live limit can't be read fails without producing.
+The broker authorizes a Produce before it sizes it: an authorized principal gets MESSAGE_TOO_LARGE
+and nothing is appended, a refused one TOPIC_AUTHORIZATION_FAILED.
 
 What is probed, per environment <env> (the other is <o>):
   AC-2   andara-server-<env> may produce to <env>.andara.commands.v1 and commit offsets on it in a
@@ -46,6 +48,7 @@ kubectl or the cluster missing.
 """
 
 import base64
+import json
 import os
 import subprocess
 import sys
@@ -65,9 +68,9 @@ OVERSIZE = 1 << 20
 
 
 class Probe:
-    def __init__(self, ac, principal, what, args, want, size=0, cleanup=None):
+    def __init__(self, ac, principal, what, args, want, size=0, cleanup=None, topic=None):
         self.ac, self.principal, self.what, self.args, self.want = ac, principal, what, args, want
-        self.size, self.cleanup = size, cleanup or []
+        self.size, self.cleanup, self.topic = size, cleanup or [], topic
 
 
 def classify(code, text):
@@ -93,7 +96,7 @@ def produce(ac, principal, prefix, topic, limits, want):
     name = "%s.%s" % (prefix, topic)
     return Probe(ac, principal, "produce " + name,
                  ["topic", "produce", name, "-k", PROBE_KEY, "--compression", "none",
-                  "--max-message-bytes", str(2 * size)], want, size=size)
+                  "--max-message-bytes", str(2 * size)], want, size=size, topic=name)
 
 
 def probes(doc):
@@ -177,6 +180,27 @@ class Broker:
         return p.returncode, (p.stdout or "") + (p.stderr or "")
 
 
+def live_limit(broker, topic):
+    """The live topic's effective max.message.bytes, read as the operator; None when unreadable."""
+    code, text = broker.rpk(kafka_auth.OPERATOR, ["topic", "describe", topic, "--format", "json"])
+    if code != 0 or DENIED in text:
+        return None
+    try:
+        rows = json.loads(text)
+        configs = (rows[0] if isinstance(rows, list) and rows else {}).get("configs") or []
+        return int(next(c["value"] for c in configs if c.get("key") == "max.message.bytes"))
+    except (ValueError, StopIteration, KeyError, TypeError):
+        return None
+
+
+def sized(p, live):
+    """p's args and size with the record past the larger of its declared and live limits."""
+    size = max(p.size, live + OVERSIZE)
+    args = list(p.args)
+    args[args.index("--max-message-bytes") + 1] = str(2 * size)
+    return args, size
+
+
 def group_state(broker, group):
     """'absent', 'exists' or 'unknown', as the operator sees it. Only 'absent' lets the projector's
     own-group probe run: a group with no members loses its offsets to a DeleteGroups."""
@@ -203,7 +227,7 @@ def clean(broker, step, out):
 def main(argv=None, broker=None, doc=None, out=sys.stdout, err=sys.stderr):
     doc = doc or kafka_users.load()
     broker = broker or Broker(topics.kafka_namespace())
-    failed, leftovers, cleanups = [], [], []
+    failed, leftovers, cleanups, limits = [], [], [], {}
     for p in probes(doc):
         if any(c[0] == "own-group" for c in p.cleanup):
             state = group_state(broker, p.principal)
@@ -217,7 +241,17 @@ def main(argv=None, broker=None, doc=None, out=sys.stdout, err=sys.stderr):
                 failed.append("%s %s %s: not run: the operator couldn't tell whether %s exists"
                               % (p.ac, p.principal, p.what, p.principal))
                 continue
-        code, text = broker.rpk(p.principal, p.args, payload(p.size) + "\n" if p.size else "")
+        args, size = p.args, p.size
+        if p.topic:
+            live = limits.setdefault(p.topic, live_limit(broker, p.topic))
+            if live is None:
+                out.write("kafka-acl-probe: %s %s %s: not run, the topic's live max.message.bytes couldn't be "
+                          "read FAIL\n" % (p.ac, p.principal, p.what))
+                failed.append("%s %s %s: not run: couldn't read %s's live max.message.bytes, so the record "
+                              "might fit" % (p.ac, p.principal, p.what, p.topic))
+                continue
+            args, size = sized(p, live)
+        code, text = broker.rpk(p.principal, args, payload(size) + "\n" if size else "")
         got = classify(code, text)
         verdict = "ok" if got == p.want else "FAIL"
         out.write("kafka-acl-probe: %s %s %s: %s (want %s) %s\n" % (p.ac, p.principal, p.what, got, p.want, verdict))

@@ -200,12 +200,31 @@ class Rotate(Base):
         self.assertEqual(self.kube.secrets["andara-dev"], {})
         self.assertEqual(self.kube.secrets["andara-local"], {})
         self.assertIn(("andara-shared", ["rollout", "restart", "deploy/andara-schema-registry"]), self.kube.calls)
+        self.assertIn(("andara-shared", ["rollout", "status", "deploy/andara-schema-registry", "--timeout=180s"]),
+                      self.kube.calls)
         self.assertIn("andara-schema-registry: restarted on the new password", out)
+
+    def test_a_registry_that_doesnt_come_back_fails(self):
+        self.kube.secrets["andara-shared"]["andara-schema-registry"] = {"data": {"password": b64("reg")}}
+        real = self.kube.__call__
+
+        def stuck(argv, capture_output=True, text=True, input=None):
+            if argv[argv.index("-n") + 2:][:2] == ["rollout", "status"]:
+                return SimpleNamespace(returncode=1, stdout="", stderr="timed out waiting")
+            return real(argv, input=input)
+        code, _, err = self.run_main_with(stuck, kafka_creds.rotate, "", "andara-schema-registry", sleep=lambda s: None)
+        self.assertEqual(code, 1)
+        self.assertIn("timed out waiting", err)
 
     def test_a_platform_principal_with_an_env_is_refused(self):
         code, _, err = self.run_main(kafka_creds.rotate, "dev", "andara-operator", sleep=lambda s: None)
         self.assertEqual(code, 2)
         self.assertFalse([c for c in self.kube.calls if c[1][0] in ("delete", "annotate")])
+
+    def test_an_environment_principal_without_env_says_to_give_one(self):
+        code, _, err = self.run_main(kafka_creds.rotate, "", "andara-server", sleep=lambda s: None)
+        self.assertEqual(code, 2)
+        self.assertIn("PRINCIPAL=andara-server needs ENV=<dev|local>", err)
 
     def test_another_environments_principal_is_refused(self):
         code, _, err = self.run_main(kafka_creds.rotate, "dev", "andara-server-local", sleep=lambda s: None)
