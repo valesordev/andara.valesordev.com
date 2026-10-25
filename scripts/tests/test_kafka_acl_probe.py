@@ -165,6 +165,10 @@ class Probes(unittest.TestCase):
         self.assertIn(("andara-projector-state-local", "DeleteGroups andara-projector-state-dev", "denied"), whats)
         self.assertIn(("andara-projector-state-local", "DeleteGroups andara-projector-state-dev-acl-probe-absent",
                        "denied"), whats)
+        # AC-3's allowed half: the projector may delete under its own prefix (`--rebuild`).
+        for env in ("dev", "local"):
+            proj = "andara-projector-state-" + env
+            self.assertIn((proj, "DeleteGroups %s-acl-probe-absent (its own prefix)" % proj, "allowed"), whats)
         self.assertIn(("andara-projector-state-dev", "read dev.andara.audit.v1", "denied"), whats)
         self.assertIn(("andara-server-dev", "commit offsets on dev.andara.commands.v1 in group andara-sim-local-acl-probe",
                        "denied"), whats)
