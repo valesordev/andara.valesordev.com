@@ -459,6 +459,11 @@ func principalFor(acc *accountsv1.Account, exp time.Time) Principal {
 // ActAs returns the Principal for a Session opened as target (AC-10). Only
 // an operator or game master may; the result carries the actor's identity,
 // the target's roles and scope, and is audited whether or not it succeeds.
+//
+// The Ceiling (AW-SRV-062): only an operator may act as an operator, so
+// acting-as never grants a game master the Roles it was refused. Its
+// refusal is ErrPermissionDenied, as the role refusal is, and the gateway
+// sends all three refusals with one code and message.
 func (s *Store) ActAs(ctx context.Context, p Principal, target string) (Principal, error) {
 	if !p.Has(RoleOperator) && !p.Has(RoleGameMaster) {
 		s.audit.Record(ctx, Entry{Actor: p, Action: ActionActAs, Target: target, Outcome: AuditDenied, Detail: "requires operator or game_master"})
@@ -468,6 +473,10 @@ func (s *Store) ActAs(ctx context.Context, p Principal, target string) (Principa
 	if !ok || acc.GetStatus() != accountsv1.AccountStatus_ACTIVE {
 		s.audit.Record(ctx, Entry{Actor: p, Action: ActionActAs, Target: target, Outcome: AuditDenied, Detail: "no such active account"})
 		return Principal{}, ErrActAsNoAccount
+	}
+	if slices.Contains(RolesFromProto(acc.GetRoles()), RoleOperator) && !p.Has(RoleOperator) {
+		s.audit.Record(ctx, Entry{Actor: p, Action: ActionActAs, Target: target, Outcome: AuditDenied, Detail: "target holds operator; actor does not"})
+		return Principal{}, ErrPermissionDenied
 	}
 	out := principalFor(acc, p.SessionExp)
 	out.AccountID = p.AccountID

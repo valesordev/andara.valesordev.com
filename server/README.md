@@ -948,6 +948,21 @@ a Session as another Account: the Session gets the target's roles, and every aud
 carries both `actor_account_id` and `acting_as_account_id`. Anyone else setting the field gets
 `PERMISSION_DENIED`, audited.
 
+On the Admin service the same check runs per call, from `andara-act-as: <account_id>` metadata
+(`AW-SRV-039`). Game RPCs ignore the metadata. The token still speaks for the caller, the
+handler sees the target's roles, and `andara_admin_act_as_total{outcome}` counts each use
+(`ok`, `denied`, `unknown_account`). A version published this way records `author` as the
+target and `ContentVersion.publisher` as the real actor. The self-approval check reads both,
+so a version you published `--as` someone else is still yours to approve, or not. A manifest
+written before `publisher` existed reads back with `publisher` equal to `author`.
+
+**The Ceiling** (`AW-SRV-062`): only an `operator` may act as an Account holding `operator`, on
+either path. A `game_master` naming an Operator gets `PERMISSION_DENIED`, audited `denied`
+with detail `target holds operator; actor does not`. The caller receives exactly the
+refusal an unknown `account_id` gets, so it can't use the refusal to find Operators. Checks run
+in order: the actor's Role, then the target's existence (`unknown_account`), then the Ceiling.
+Sessions opened before the Ceiling shipped aren't swept.
+
 **Authorize.** `auth.Authorizer` is the `authorize` stage's decision: a verb table column
 (`VerbRoles`, verb → required role; roles are a set, not a ladder) and the agent scope check
 (`AuthorizeBind`: an agent may bind only Entities whose Template comes from its own pack). A
