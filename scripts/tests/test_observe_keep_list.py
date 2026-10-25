@@ -11,6 +11,8 @@ import sys
 import tempfile
 import unittest
 
+import yaml
+
 REPO = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 sys.path.insert(0, os.path.join(REPO, "scripts"))
 import observe_keep_list as kl  # noqa: E402
@@ -112,15 +114,13 @@ class Sources(unittest.TestCase):
     def test_fault_only_are_named_by_the_rules(self):
         self.assertTrue(set(kl.FAULT_ONLY) <= kl.source_names())
 
-    def test_keep_pipeline_names_the_fault_only_series(self):
-        """The allow-list half: runs once AW-INF-051's pipeline source exists."""
-        if not os.path.exists(kl.KEEP_PIPELINE):
-            self.skipTest("notice: %s does not exist yet (AW-INF-051); the allow-list half is skipped"
-                          % os.path.relpath(kl.KEEP_PIPELINE, REPO))
+    def test_keep_list_names_the_fault_only_series(self):
+        """The allow-list half (AW-INF-065 AC-10): keep-list.yaml exists and keeps both names."""
+        self.assertTrue(kl.KEEP_PIPELINE.endswith(os.path.join("collectors", "keep-list.yaml")))
         with open(kl.KEEP_PIPELINE) as f:
-            text = f.read()
+            names = {e["name"] for e in yaml.safe_load(f)["metrics"]}
         for name in kl.FAULT_ONLY:
-            self.assertIn(name, text)
+            self.assertIn(name, names)
 
 
 class KeepList(unittest.TestCase):

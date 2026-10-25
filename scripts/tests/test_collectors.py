@@ -1,0 +1,420 @@
+# SPDX-License-Identifier: Apache-2.0
+# Copyright 2026 Valesor Development
+
+"""AW-INF-065's render and keep-list tests (AC-4, AC-5, AC-8, AC-9): `helm template` of the pinned
+k8s-monitoring chart with each profile, read back by scripts/collectors_check.py. Each invariant passes on
+the committed files and fails, naming itself, on a fixture that breaks it. Both profiles are rendered once
+(the chart is pulled into .local/charts/ on first use); a fixture edits a copy of that render, so the
+check reads what Helm produced, not what the values asked for."""
+import copy
+import glob
+import os
+import re
+import subprocess
+import sys
+import tempfile
+import unittest
+
+import yaml
+
+REPO = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+sys.path.insert(0, os.path.join(REPO, "scripts"))
+import collectors  # noqa: E402
+import collectors_check as check  # noqa: E402
+import tf  # noqa: E402
+
+_RENDERS = {}
+
+
+def renders():
+    """{profile: (values, docs)} for the committed files, rendered once per test run."""
+    if not _RENDERS:
+        for p in ("box", "ci"):
+            vals = collectors.values(p)
+            _RENDERS[p] = (vals, collectors.template(vals))
+    return copy.deepcopy(_RENDERS)
+
+
+def edit_config(rs, profile, collector, old, new, count=1):
+    """rs with collector's rendered config.alloy edited: old replaced by new, which must occur."""
+    vals, docs = rs[profile]
+    for d in docs:
+        if d.get("kind") == "ConfigMap" and d["metadata"]["name"] == "k8s-monitoring-" + collector:
+            text = d["data"]["config.alloy"]
+            assert text.count(old) >= count, (collector, old)
+            d["data"]["config.alloy"] = text.replace(old, new)
+            return rs
+    raise AssertionError("no collector %s in %s" % (collector, profile))
+
+
+class Base(unittest.TestCase):
+
+    def problems(self, rs=None, profiles=None, envs=None, kind_text=None, prod_tfvars=None):
+        rs = rs or renders()
+        profiles = profiles or {p: collectors.profile_doc(p) for p in rs}
+        return check.render_problems(rs, envs or collectors.environments(), profiles, collectors.chart(),
+                                     kind_text=kind_text, prod_tfvars=prod_tfvars)
+
+    def assertProblem(self, pattern, problems):
+        self.assertTrue([p for p in problems if re.search(pattern, p)],
+                        "no problem matches %r in:\n%s" % (pattern, "\n".join(problems) or "(none)"))
+
+
+class Committed(Base):
+
+    def test_the_committed_render_has_no_problems(self):
+        self.assertEqual(self.problems(), [])
+
+    def test_every_collector_config_validates(self):
+        """The rendered Alloy parses (bin/alloy validate), so a values change can't ship a config the
+        collectors refuse."""
+        alloy = os.environ.get("ALLOY") or os.path.join(REPO, "bin", "alloy")
+        if not os.access(alloy, os.X_OK):
+            self.fail("%s not found; run `make bootstrap`" % alloy)
+        d = tempfile.mkdtemp()
+        for profile, (_, docs) in renders().items():
+            for name, cfg in collectors.alloy_configs(docs).items():
+                path = os.path.join(d, "%s-%s.alloy" % (profile, name))
+                with open(path, "w") as f:
+                    f.write(cfg)
+                p = subprocess.run([alloy, "validate", path], capture_output=True, text=True)
+                self.assertEqual(p.returncode, 0, "%s/%s: %s" % (profile, name, p.stderr or p.stdout))
+
+    def test_the_rendered_values_are_the_same_on_every_run(self):
+        """AC-1: platform-up compares the merged values, so they must render identically."""
+        self.assertEqual(yaml.safe_dump(collectors.values("box")), yaml.safe_dump(collectors.values("box")))
+
+    def test_the_alloy_crd_is_in_the_release(self):
+        """[verify 065] item 2: Helm installs a chart's crds/ before its templates, so the Alloy CRD
+        precedes every collector in one install."""
+        docs = renders()["box"][1]
+        crds = [d["metadata"]["name"] for d in docs if d.get("kind") == "CustomResourceDefinition"]
+        self.assertIn("alloys.collectors.grafana.com", crds)
+        self.assertEqual(sorted(d["metadata"]["name"] for d in docs if d.get("kind") == "Alloy"),
+                         ["k8s-monitoring-fleet", "k8s-monitoring-logs", "k8s-monitoring-metrics",
+                          "k8s-monitoring-receiver"])
+
+    def test_fleet_registers_with_cluster_and_stack_only(self):
+        """AC-3's attributes: cluster and stack, never environment, and each key once."""
+        cfg = collectors.alloy_configs(renders()["box"][1])["fleet"]
+        attrs = re.findall(r'^\s*"([^"]+)"\s*=\s*"([^"]*)",', check.component(cfg, "remotecfg", "") or
+                           cfg[cfg.index("remotecfg"):], re.M)
+        keys = [k for k, _ in attrs]
+        self.assertEqual(len(keys), len(set(keys)), keys)
+        self.assertEqual(dict(attrs).get("cluster"), "andara")
+        self.assertEqual(dict(attrs).get("stack"), "solo7dev")
+        self.assertNotIn("environment", keys)
+
+    def test_no_collector_holds_the_token_in_its_environment(self):
+        """Grafana's default Fleet pipelines write to the stack with sys.env("GCLOUD_RW_API_KEY"), past
+        the stamp and keep rule; fleet's is empty, and no collector env-references the Secret."""
+        for profile, (_, docs) in renders().items():
+            for d in docs:
+                if d.get("kind") != "Alloy":
+                    continue
+                env = ((d.get("spec") or {}).get("alloy") or {}).get("extraEnv") or []
+                for e in env:
+                    ref = ((e.get("valueFrom") or {}).get("secretKeyRef") or {})
+                    self.assertNotEqual(ref.get("name"), "grafana-telemetry", (profile, d["metadata"]["name"], e))
+                if d["metadata"]["name"] == "k8s-monitoring-fleet":
+                    self.assertIn({"name": "GCLOUD_RW_API_KEY", "value": ""}, env)
+
+    def test_the_destinations_read_the_secret_never_a_value(self):
+        for profile, (vals, _) in renders().items():
+            for name, dest in vals["destinations"].items():
+                self.assertEqual(dest["secret"], {"create": False, "name": "grafana-telemetry",
+                                                  "namespace": "observability"}, name)
+                self.assertEqual(dest["auth"]["passwordKey"], "token", name)
+                self.assertNotIn("password", dest["auth"], name)
+
+
+class Stamp(Base):
+    """AC-8: the stamp, its guard, and box/ci parity."""
+
+    def test_a_metrics_stamp_whose_table_differs_fails(self):
+        rs = edit_config(renders(), "box", "metrics", 'regex = "andara-dev"', 'regex = "andara-dex"')
+        self.assertProblem(r"box/metrics: solo7dev-metrics' stamp encodes", self.problems(rs))
+
+    def test_a_logs_stamp_whose_table_differs_fails(self):
+        rs = edit_config(renders(), "box", "logs", 'environment = "dev"', 'environment = "staging"')
+        self.assertProblem(r"box/logs: solo7dev-logs' stamp encodes", self.problems(rs))
+
+    def test_a_traces_stamp_whose_table_differs_fails(self):
+        rs = edit_config(renders(), "ci", "receiver", '== \\"andara-dev\\"', '== \\"andara-dex\\"')
+        self.assertProblem(r"ci/receiver: solo7dev-traces' stamp encodes", self.problems(rs))
+
+    def test_a_stamp_against_another_table_fails(self):
+        envs = dict(collectors.environments(), **{"andara-qa": "staging"})
+        self.assertProblem(r"stamp encodes", self.problems(envs=envs))
+
+    def test_a_metrics_destination_without_the_guard_fails(self):
+        rs = edit_config(renders(), "box", "metrics", 'replacement = "unknown"', 'replacement = "local"')
+        self.assertProblem(r"box/metrics: solo7dev-metrics has no unknown guard", self.problems(rs))
+
+    def test_a_logs_destination_without_the_guard_fails(self):
+        rs = edit_config(renders(), "box", "receiver", 'environment = "unknown"', 'environment = "local"')
+        self.assertProblem(r"box/receiver: solo7dev-logs has no unknown guard", self.problems(rs))
+
+    def test_a_traces_destination_without_the_guard_fails(self):
+        rs = edit_config(renders(), "box", "receiver", '== nil', '== \\"x\\"')
+        self.assertProblem(r"box/receiver: solo7dev-traces has no unknown guard", self.problems(rs))
+
+    def test_a_ci_block_that_differs_from_box_fails(self):
+        rs = edit_config(renders(), "ci", "metrics", 'regex = "andara-prod"', 'regex = "andara-prod|andara-x"')
+        self.assertProblem(r"ci: the stamp, guard and keep blocks differ from box's", self.problems(rs))
+
+    def test_a_kube_regex_that_differs_from_the_table_fails(self):
+        """A1."""
+        rs = edit_config(renders(), "box", "receiver", 'drop;(andara-ci|', 'drop;(andara-shared|andara-ci|')
+        self.assertProblem(r"kube_ namespace rule keeps .*\(A1\)", self.problems(rs))
+
+    def test_a_keep_rule_that_is_not_last_fails(self):
+        rs = renders()
+        vals, docs = rs["box"]
+        for d in docs:
+            if d.get("kind") == "ConfigMap" and d["metadata"]["name"] == "k8s-monitoring-metrics":
+                cfg = d["data"]["config.alloy"]
+                keep = '|traefik_router_requests_total|up"\n      action = "keep"\n    }\n'
+                self.assertIn(keep, cfg)
+                d["data"]["config.alloy"] = cfg.replace(
+                    keep, keep + '    write_relabel_config {\n      source_labels = ["job"]\n'
+                    '      target_label = "x"\n    }\n', 1)
+        self.assertProblem(r"box/metrics: solo7dev-metrics' keep rule is not its last rule", self.problems(rs))
+
+
+class Collection(Base):
+    """AC-8: the include-lists, the remap, the receiver, the OTLP-log drop, cluster.name, the profiles."""
+
+    def test_an_include_list_naming_andara_shared_fails(self):
+        rs = edit_config(renders(), "box", "metrics", '"andara-local","andara-dev","traefik"',
+                         '"andara-local","andara-dev","traefik","andara-shared"')
+        self.assertProblem(r"box: annotation autodiscovery includes andara-shared", self.problems(rs))
+
+    def test_autodiscovery_without_the_remap_fails(self):
+        rs = edit_config(renders(), "box", "metrics", "__meta_kubernetes_pod_annotation_prometheus_io_port",
+                         "__meta_kubernetes_pod_annotation_k8s_grafana_com_metrics_portNumber", count=1)
+        self.assertProblem(r"does not read prometheus.io/port", self.problems(rs))
+
+    def test_a_job_read_from_another_annotation_fails(self):
+        rs = edit_config(renders(), "box", "metrics", '"__meta_kubernetes_pod_annotation_k8s_grafana_com_job"',
+                         '"__meta_kubernetes_pod_annotation_app_job"')
+        self.assertProblem(r"reads job from .*app_job", self.problems(rs))
+
+    def test_a_receiver_service_with_another_name_fails(self):
+        rs = renders()
+        for d in rs["box"][1]:
+            if d.get("kind") == "Service" and d["metadata"]["name"] == check.RECEIVER_SERVICE:
+                d["metadata"]["name"] = "k8s-monitoring-alloy"
+        self.assertProblem(r"box: no Service k8s-monitoring-alloy-receiver", self.problems(rs))
+
+    def test_a_receiver_service_without_a_port_fails(self):
+        for port in check.RECEIVER_PORTS:
+            with self.subTest(port=port):
+                rs = renders()
+                for d in rs["ci"][1]:
+                    if d.get("kind") == "Service" and d["metadata"]["name"] == check.RECEIVER_SERVICE:
+                        d["spec"]["ports"] = [p for p in d["spec"]["ports"] if p["port"] != port]
+                self.assertProblem(r"ci: Service k8s-monitoring-alloy-receiver has no port %d" % port, self.problems(rs))
+
+    def test_a_missing_otlp_log_drop_fails(self):
+        rs = edit_config(renders(), "box", "receiver", 'log_record = [\n        "true",\n      ]', 'log_record = []')
+        self.assertProblem(r"box: the receiver does not drop every OTLP log record", self.problems(rs))
+
+    def test_ci_without_cluster_name_ci_fails(self):
+        """A3."""
+        rs = renders()
+        for name in ("metrics", "logs", "receiver"):
+            rs = edit_config(rs, "ci", name, '"cluster" = "ci"', '"cluster" = "andara"')
+        self.assertProblem(r'ci/metrics: the destinations carry cluster=\[\'andara\'\], not "ci"', self.problems(rs))
+
+    def test_values_ci_sets_cluster_name_ci(self):
+        self.assertEqual(collectors.profile_doc("ci")["cluster"]["name"], "ci")
+
+    def test_a_profile_setting_another_key_fails(self):
+        profiles = {p: collectors.profile_doc(p) for p in ("box", "ci")}
+        profiles["ci"]["clusterMetrics"] = {"enabled": False}
+        self.assertProblem(r"ci: values-ci.yaml sets clusterMetrics.enabled, outside the keys",
+                           self.problems(profiles=profiles))
+
+    def test_the_profiles_differ_only_in_the_allowed_keys(self):
+        for p in ("box", "ci"):
+            self.assertEqual(collectors.profile_problems(collectors.profile_doc(p)), [])
+
+    def test_a_default_allow_list_left_on_fails(self):
+        rs = renders()
+        rs["box"][0]["clusterMetrics"]["kube-state-metrics"]["metricsTuning"]["useDefaultAllowList"] = True
+        self.assertProblem(r"box: clusterMetrics.kube-state-metrics.metricsTuning.useDefaultAllowList is True",
+                           self.problems(rs))
+
+    def test_a_chart_default_not_set_false_fails(self):
+        rs = renders()
+        del rs["ci"][0]["clusterMetrics"]["cadvisor"]
+        self.assertProblem(r"ci: clusterMetrics.cadvisor.metricsTuning.useDefaultAllowList is not set false",
+                           self.problems(rs))
+
+    def test_a_sixth_log_stream_label_fails(self):
+        rs = edit_config(renders(), "box", "logs", '"job", "container"]', '"job", "container", "pod"]')
+        self.assertProblem(r"box/logs: solo7dev-logs keeps stream labels .*pod", self.problems(rs))
+
+    def test_otlp_records_naming_a_label_outside_the_allow_list_fail(self):
+        rs = edit_config(renders(), "box", "receiver", 'cluster, namespace, job, container', 'cluster, namespace, job, pod')
+        self.assertProblem(r"OTLP log records name stream labels outside the allow-list: pod", self.problems(rs))
+
+    def test_a_ci_include_list_that_misses_a_kind_namespace_fails(self):
+        with open(check.KIND_WORKFLOW) as f:
+            kind = f.read() + "\n          NS=andara-lifecycle\n"
+        self.assertProblem(r"ci: annotation autodiscovery misses andara-lifecycle", self.problems(kind_text=kind))
+
+    def test_a_ci_include_list_naming_a_namespace_kind_never_uses_fails(self):
+        rs = edit_config(renders(), "ci", "metrics", '"andara-local","andara-ci","traefik"',
+                         '"andara-local","andara-ci","traefik","andara-dev"')
+        self.assertProblem(r"includes andara-dev, which kind.yaml never deploys into", self.problems(rs))
+
+    def test_the_ci_include_list_covers_kind_yaml(self):
+        with open(check.KIND_WORKFLOW) as f:
+            self.assertEqual(check.kind_namespaces(f.read()), ["andara-local"])
+
+
+class Prod(Base):
+    """AC-5: no prod (solo7) credential name or endpoint is rendered for this cluster."""
+
+    def test_the_committed_render_names_no_prod_endpoint(self):
+        self.assertTrue(check.prod_values())
+        self.assertFalse([p for p in self.problems() if "prod" in p])
+
+    def test_prods_fleet_endpoint_in_the_render_fails(self):
+        fleet = check.prod_values()["fleet_url"]
+        rs = renders()
+        rs["box"][0]["collectors"]["fleet"]["remoteConfig"]["url"] = fleet
+        self.assertProblem(r"box: the render names prod's fleet_url", self.problems(rs))
+
+    def test_a_prod_credential_name_in_the_render_fails(self):
+        rs = edit_config(renders(), "ci", "metrics", 'name      = "grafana-telemetry"', 'name      = "GRAFANA_SOLO7_TELEMETRY"')
+        self.assertProblem(r"ci: the render names GRAFANA_SOLO7_", self.problems(rs))
+
+
+class KeepList(Base):
+    """AC-9."""
+
+    def test_the_committed_keep_list_has_no_problems(self):
+        self.assertEqual(check.keep_problems(collectors.keep_list(), check.source_names(), check.pipelines()), [])
+
+    def test_every_dashboard_is_read(self):
+        dashboards = sorted(glob.glob(os.path.join(check.DASHBOARDS, "*.json")))
+        self.assertTrue(dashboards)
+        names = check.source_names()
+        for path in dashboards:
+            self.assertLessEqual(check._dashboard_names(path), names, path)
+
+    def test_a_name_a_rule_reads_but_the_list_misses_fails(self):
+        keep = [e for e in collectors.keep_list() if e["name"] != "andara_snapshot_age_seconds"]
+        self.assertIn("andara_snapshot_age_seconds: read by a rule or dashboard panel, missing from keep-list.yaml",
+                      check.keep_problems(keep, check.source_names(), check.pipelines()))
+
+    def test_a_fleet_name_the_pipeline_does_not_keep_fails(self):
+        keep = collectors.keep_list() + [{"name": "kafka_server_brokertopicmetrics_messagesin_total",
+                                          "reader": "x", "owner": "fleet"}]
+        self.assertIn("kafka_server_brokertopicmetrics_messagesin_total: owner fleet, but shared_kafka.alloy does not keep it",
+                      check.keep_problems(keep, check.source_names(), check.pipelines()))
+
+    def test_a_name_the_pipeline_keeps_but_the_list_misses_fails(self):
+        keep = [e for e in collectors.keep_list() if e["name"] != "kafka_server_replicamanager_isrexpandspersec_total"]
+        self.assertIn("kafka_server_replicamanager_isrexpandspersec_total: shared_kafka.alloy keeps it, but keep-list.yaml "
+                      "does not list it with owner: fleet, so the destination drops it",
+                      check.keep_problems(keep, check.source_names(), check.pipelines()))
+
+    def test_a_pg_name_with_no_pipeline_fails(self):
+        keep = collectors.keep_list() + [{"name": "pg_up", "reader": "x", "owner": "fleet"}]
+        self.assertIn("pg_up: owner fleet, but no pipeline shared_postgres.alloy keeps it",
+                      check.keep_problems(keep, check.source_names(), check.pipelines()))
+
+    def test_ownership_follows_the_prefix(self):
+        d = tempfile.mkdtemp()
+        path = os.path.join(d, "keep-list.yaml")
+        for entry, why in (({"name": "kafka_x", "reader": "r"}, "owner: fleet"),
+                           ({"name": "andara_x", "reader": "r", "owner": "fleet"}, "owner: fleet"),
+                           ({"name": "andara_x"}, "names no reader"),
+                           ({"name": "up", "reader": "r", "extra": 1}, "unknown field")):
+            with self.subTest(entry=entry):
+                with open(path, "w") as f:
+                    yaml.safe_dump({"metrics": [entry]}, f)
+                with self.assertRaisesRegex(collectors.Invalid, why):
+                    collectors.keep_list(path)
+
+    def test_up_is_listed_once_and_shared(self):
+        ups = [e for e in collectors.keep_list() if e["name"] == "up"]
+        self.assertEqual(len(ups), 1)
+        self.assertNotIn("owner", ups[0])
+
+
+class Environments(unittest.TestCase):
+
+    def write(self, doc):
+        d = tempfile.mkdtemp()
+        path = os.path.join(d, "environments.yaml")
+        with open(path, "w") as f:
+            yaml.safe_dump(doc, f)
+        return path
+
+    def test_the_committed_table_is_decision_9s(self):
+        self.assertEqual(collectors.environments(), {"andara-local": "local", "andara-ci": "local",
+                                                     "andara-dev": "dev", "andara-staging": "staging",
+                                                     "andara-prod": "prod"})
+
+    def test_unknown_is_reserved_and_values_are_bounded(self):
+        for doc, why in (({"andara-x": "unknown"}, "reserved"), ({"andara-x": "qa"}, "not one of"),
+                         ({"Andara": "dev"}, "not a namespace"), ({}, "non-empty")):
+            with self.subTest(doc=doc), self.assertRaisesRegex(collectors.Invalid, why):
+                collectors.environments(self.write(doc))
+
+
+class Runbooks(unittest.TestCase):
+    """AC-8: the runbooks' LogQL selects on allow-listed stream labels only."""
+
+    def test_the_committed_runbooks_pass(self):
+        self.assertEqual(check.runbook_problems(), [])
+
+    def test_a_service_name_selector_fails(self):
+        d = tempfile.mkdtemp()
+        with open(os.path.join(d, "x.md"), "w") as f:
+            f.write('```\n{service_name="andara-server"} |= "refused"\n```\n'
+                    'PromQL is not LogQL: `up{job="andara-server", pod="andara-0"}`\n')
+        problems = check.runbook_problems(d)
+        self.assertEqual(len(problems), 1, problems)
+        self.assertIn("names service_name, outside the stream-label allow-list", problems[0])
+
+    def test_a_pod_selector_with_a_parser_fails(self):
+        d = tempfile.mkdtemp()
+        with open(os.path.join(d, "y.md"), "w") as f:
+            f.write('`{namespace="andara-dev", pod="andara-0"} | json`\n')
+        self.assertIn("names pod", check.runbook_problems(d)[0])
+
+
+class Token(unittest.TestCase):
+    """AC-4: the telemetry token is in no tracked file."""
+
+    def tracked(self):
+        out = subprocess.run(["git", "-C", REPO, "ls-files", "-z"], capture_output=True, text=True, check=True).stdout
+        for rel in out.split("\0"):
+            path = os.path.join(REPO, rel)
+            if rel and os.path.isfile(path) and not os.path.islink(path):
+                try:
+                    with open(path, encoding="utf-8") as f:
+                        yield rel, f.read()
+                except UnicodeDecodeError:
+                    continue
+
+    def test_no_tracked_file_holds_a_grafana_cloud_token(self):
+        pattern = re.compile(r"glc_[A-Za-z0-9+/=_-]{32,}")
+        self.assertEqual([rel for rel, text in self.tracked() if pattern.search(text)], [])
+
+    def test_no_tracked_file_holds_the_tokens_value(self):
+        """Read from the environment or .local/box.env when either has it; nothing to compare otherwise."""
+        value = tf.load_box_env(dict(os.environ)).get(collectors.TOKEN, "")
+        if len(value) < 16:
+            return
+        self.assertEqual([rel for rel, text in self.tracked() if value in text], [])
+
+
+if __name__ == "__main__":
+    unittest.main()

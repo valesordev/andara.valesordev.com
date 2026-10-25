@@ -12,11 +12,12 @@ PromQL itself, so the list cannot go stale. Each name is one of two kinds:
                    one series through gcx (`metrics series`). These rows gate adding ENV to the
                    stack's required_environments.
   fault-only       FAULT_ONLY (‡ in the ADR): absent on a clean rebuild until the event they describe.
-                   Not queried; the `keep` pipeline's allow-list (KEEP_PIPELINE, AW-INF-051) must name
-                   them, which is checked offline (scripts/tests) once that source exists, and the
-                   first drill that produces the fault must then see them.
+                   Not queried; the keep-list (KEEP_PIPELINE, deploy/platform/collectors/keep-list.yaml,
+                   which the chart's metrics destination enforces: ADR-0014 §5, AW-INF-065) must name
+                   them, which is checked offline (scripts/tests), and the first drill that produces
+                   the fault must then see them.
 
-The compose dashboard also reads broker series (NOT_SHIPPED, redpanda_*), which the `keep` pipeline
+The compose dashboard also reads broker series (NOT_SHIPPED, redpanda_*), which the keep-list
 drops by design; they are reported and not queried, and no rule may name one. A name in no set
 fails a unit test, so a new rule decides its row when it is written.
 
@@ -50,8 +51,8 @@ REPO = os.path.dirname(HERE)
 ALERTS = os.path.join(REPO, "deploy", "helm", "andara", "files", "alerts.yaml")
 # The source Terraform deploys to both stacks (ADR-0012 decision 11, AW-INF-049).
 DASHBOARD = os.path.join(REPO, "deploy", "grafana", "dashboards", "tick-health.json")
-# AW-INF-051's Fleet `keep` pipeline: the allow-list the fault-only names must appear in.
-KEEP_PIPELINE = os.path.join(REPO, "deploy", "terraform", "grafana", "pipelines", "keep.alloy")
+# The chart's keep-list (ADR-0014 §5): the allow-list the fault-only names must appear in.
+KEEP_PIPELINE = os.path.join(REPO, "deploy", "platform", "collectors", "keep-list.yaml")
 
 FAULT_ONLY = ("kube_pod_container_status_last_terminated_exitcode", "andara_recovery_state_hash_match")
 PLATFORM_SERIES = ("certmanager_", "traefik_")
@@ -174,7 +175,7 @@ def run(env, ctx, q=gcx, names=None):
         if name in FAULT_ONLY:
             continue
         if not_shipped(name):
-            say("--   not-shipped    %-56s not queried: the keep pipeline drops broker series" % name)
+            say("--   not-shipped    %-56s not queried: the keep-list drops broker series" % name)
             continue
         for row, tmpl in rows_for(name) or []:
             series = q.metrics_series(ctx, tmpl.format(m=name, env=env, ns=ns), since=SINCE)
@@ -183,7 +184,7 @@ def run(env, ctx, q=gcx, names=None):
             counts["always-present"][0 if ok else 1] += 1
             say("%-4s always-present %-56s %d series" % ("ok" if ok else "FAIL", row, len(series)))
     for name in FAULT_ONLY:
-        say("--   fault-only     %-56s not queried: the keep pipeline must name it; the first drill "
+        say("--   fault-only     %-56s not queried: the keep-list must name it; the first drill "
             "that produces the fault must see it" % name)
     # Decision 9: a sender that sets environment outside the four values (and the reserved unknown) is a defect.
     # `metrics labels` has no window, so a value is a failure only while it still has series in SINCE;
