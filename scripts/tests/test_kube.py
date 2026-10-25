@@ -273,6 +273,8 @@ SWEEP = [
     ("topics.py", [PY, "scripts/topics.py", "diff", "--env", "dev"]),
     # dev's registry is the shared Karapace, reached by a port-forward (AW-INF-057).
     ("schemas.py", [PY, "scripts/schemas.py", "diff", "--env", "dev"]),
+    # check and probe poll the cluster and Grafana Cloud; logs is one call through the same helper.
+    ("collectors_live.py", [PY, "scripts/collectors_live.py", "logs", "metrics"]),
 ]
 
 

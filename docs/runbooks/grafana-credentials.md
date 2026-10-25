@@ -126,13 +126,19 @@ entry.
   - `solo7dev`: not made yet.
   - `solo7`: not made yet.
 - **Stored:**
-  - `solo7dev`: `.local/box.env`; a repository secret for CI's kind and `stack` jobs; and the
-    `k8s-monitoring` secret made from `.local/box.env` for `local`, `dev` and `staging`.
-  - `solo7`: `.local/box.env` and that secret only, never a repository secret.
-  - **Not made yet.** The cluster rebuild (`AW-INF-066`) is the first thing that ships with it.
-- **Read by:** the collectors (`k8s-monitoring`) and CI's kind and `stack` jobs.
-- **Check after a rotation:** `make observe-check` finds fresh series from the stack whose token changed:
-  `ENV=dev` for `solo7dev`, `ENV=prod` for `solo7`.
+  - `solo7dev`: `.local/box.env`, and the Secret `observability/grafana-telemetry` on the box's cluster,
+    key `token`, which `make platform-up` writes from it (`AW-INF-065`). CI holds none yet, so CI's kind
+    job installs the collectors with an empty token and ships nothing; the repository secret that changes
+    that is a later SRE change.
+  - `solo7`: `.local/box.env` and prod's cluster's copy of that Secret only, never a repository secret
+    (`AW-INF-078`).
+- **Read by:** the `k8s-monitoring` collectors, through the Secret: each destination's `passwordKey: token`
+  and `fleet`'s `remoteConfig`. No collector holds it in its environment (`fleet`'s `GCLOUD_RW_API_KEY` is
+  set empty on purpose, so Grafana's default Fleet pipelines can't use it).
+- **Check after a rotation:** `make platform-up` rewrites the Secret (`secret observability/grafana-telemetry
+  written`); the collectors re-read it within a minute, with no restart. Then `make collectors-check` says
+  `token set`, and `make observe-check` finds fresh series from the stack whose token changed: `ENV=dev` for
+  `solo7dev`, `ENV=prod` for `solo7`.
 
 ### `GRAFANA_SOLO7DEV_FLEET_READ_TOKEN`, `GRAFANA_SOLO7_FLEET_READ_TOKEN`
 
@@ -244,6 +250,23 @@ entry.
 - the read token and `SLACK_WEBHOOK_DEV`.
 
 Each is described above. No `solo7` apply or IRM token belongs on the box.
+
+## The collectors and the telemetry token
+
+The `k8s-monitoring` release in `observability` is `make platform-up`'s (`ADR-0014`). Its values are
+`deploy/platform/collectors/`, and the token reaches it only through the Secret above.
+
+- **A hand `helm upgrade` doesn't stay.** The next `make platform-up` compares the release's values with
+  what it renders and reinstalls on any difference (`k8s-monitoring 4.5.3 installed (values differ)`).
+  Change the files instead.
+- **Without the token** the release still installs, the Secret holds an empty `token`, the collectors run
+  and ship nothing, and `platform-up`'s last line says so (`ADR-0012` decision 14).
+- **A collector can't report its own failure through itself.** `observability` is in no pod-log list, so a
+  failed send, pull or forward is read on the cluster: `make collectors-logs COLLECTOR=<metrics|logs|receiver|fleet>`
+  prints that collector's warnings and errors. A `401 Unauthorized` there is a lapsed, revoked or empty
+  token.
+- **The release's state:** `make collectors-check` (each collector Ready, the Secret's keys, whether `token`
+  is set, and on the box the one active Fleet collector).
 
 ## Retiring
 

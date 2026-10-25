@@ -90,14 +90,28 @@ jobs:
           version: v0.33.0
           node_image: ${{ steps.pins.outputs.node_image }}
           config: deploy/kind/config.yaml
-      - name: platform-up PROFILE=ci (cert-manager, andara-ca, Traefik with PROXY trust)
+      - name: platform-up PROFILE=ci (cert-manager, andara-ca, Traefik with PROXY trust, the collectors)
         run: |
           set -euo pipefail
           make platform-up PROFILE=ci
-          # AW-INF-054 AC-12: ci installs those and nothing else.
+          # AW-INF-054 AC-12 and AW-INF-065: ci installs those and nothing else.
           releases="$(helm --kube-context "$ANDARA_KUBE_CONTEXT" list -A -o json | python3 -c 'import json,sys; print(" ".join(sorted(r["name"] for r in json.load(sys.stdin))))')"
-          [[ "$releases" == "cert-manager traefik" ]] \
-            || { echo "::error::platform-up PROFILE=ci installed '$releases', not 'cert-manager traefik'"; exit 1; }
+          [[ "$releases" == "cert-manager k8s-monitoring traefik" ]] \
+            || { echo "::error::platform-up PROFILE=ci installed '$releases', not 'cert-manager k8s-monitoring traefik'"; exit 1; }
+      - name: the collectors without the telemetry token (AW-INF-065 AC-1, AC-2)
+        run: |
+          set -euo pipefail
+          # CI holds no GRAFANA_SOLO7DEV_TELEMETRY_TOKEN: the Secret's token is empty and nothing ships
+          # (ADR-0012 decision 14, [verify 065] item 6). A second platform-up changes nothing.
+          make collectors-check PROFILE=ci
+          out="$(make platform-up PROFILE=ci)"
+          echo "$out"
+          grep -q 'platform: k8s-monitoring [^ ]* unchanged' <<<"$out" \
+            || { echo "::error::a second platform-up PROFILE=ci changed the k8s-monitoring release"; exit 1; }
+          grep -q 'secret observability/grafana-telemetry unchanged' <<<"$out" \
+            || { echo "::error::a second platform-up PROFILE=ci rewrote the telemetry Secret"; exit 1; }
+          tail -n 1 <<<"$out" | grep -q 'GRAFANA_SOLO7DEV_TELEMETRY_TOKEN' \
+            || { echo "::error::platform-up's last line does not say the collectors ship nothing"; exit 1; }
       - name: image
         run: make image
       - name: kind-load

@@ -42,10 +42,11 @@ So:
 ## How to confirm
 
 The divergence is in the projector's `error` line. Read it from Loki, because the pod that logged
-it has been replaced:
+it has been replaced. The stream is the pod log the `logs` collector ships from stderr, selected by the
+allow-listed labels only (AW-INF-065):
 
 ```
-{service_name="andara-projector-state"} |= "state projector diverged"
+{namespace="andara-<env>", container="projector"} |= "state projector diverged"
 ```
 
 It carries:
