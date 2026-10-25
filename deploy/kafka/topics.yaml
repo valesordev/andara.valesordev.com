@@ -227,3 +227,33 @@ quotas:
   local:
     producerByteRate: 2097152     # 2 MiB/s
     consumerByteRate: 8388608     # 8 MiB/s: a projector rebuild reads the whole log
+
+# Platform topics: operator-owned, outside every environment prefix, applied once to the shared
+# broker by `scripts/topics.py apply --platform` (`make shared-up`). Names are literal: no prefix
+# is ever added, and none may start with `andara.` (shared-check fails an unprefixed `andara.`
+# topic). `make shared-check` prints each on its own line, not as local's or dev's bytes.
+platform_topics:
+  - name: _schemas
+    partitions: 1
+    replication_factor: 3
+    cleanup.policy: compact
+    min.insync.replicas: 2
+    owner: AW-INF-057
+    why: |
+      Karapace keeps every registered schema here (ADR-0013 decision 8): compacted, so a
+      registry restart reads them back with no PVC or database, and one partition, so the
+      schema IDs it assigns are ordered.
+
+# Platform principals: one each for the whole shared broker, not per environment, rendered as a
+# KafkaUser `<name>` (no environment suffix) by scripts/kafka_users.py. Their topic ACLs are LITERAL
+# and may name platform topics only; their groups are LITERAL. Applied with the environment
+# principals by AW-INF-056.
+platform_principals:
+  - name: andara-schema-registry
+    topics:
+      # Read and Write imply Describe. (Karapace's reader also uses a generated group and sends
+      # CreateTopics at start: routed to architecture on AW-INF-057, 2026-10-24.)
+      _schemas: [Read, Write]
+    groups:
+      # KARAPACE_GROUP_ID: its leader election and its reader of _schemas.
+      andara-schema-registry: [Read]

@@ -319,7 +319,8 @@ def rpk_runner(env, broker=None):
 
 
 def existing_topics(run):
-    """Return {name: {"partitions": int, "config": {..}}} for topics the broker has."""
+    """Return {name: {"partitions": int, "replicas": int or None, "config": {..}}} for topics the
+    broker has; replicas is None when the listing doesn't carry it."""
     res = run(["topic", "list", "--format", "json"])
     if res.returncode != 0:
         die("could not list topics: %s" % (res.stderr or res.stdout).strip())
@@ -333,14 +334,17 @@ def existing_topics(run):
         rows = parsed if isinstance(parsed, list) else parsed.get("topics", [])
         for row in rows:
             out[row.get("name") or row.get("topic")] = {
-                "partitions": int(row.get("partitions", 0)), "config": {}
+                "partitions": int(row.get("partitions", 0)),
+                "replicas": int(row["replicas"]) if row.get("replicas") is not None else None, "config": {}
             }
     else:
         # Tabular fallback: NAME PARTITIONS REPLICAS
         for line in text.split("\n")[1:]:
             parts = line.split()
             if len(parts) >= 2 and not parts[0].startswith("NAME"):
-                out[parts[0]] = {"partitions": int(parts[1]), "config": {}}
+                out[parts[0]] = {"partitions": int(parts[1]),
+                                 "replicas": int(parts[2]) if len(parts) >= 3 and parts[2].isdigit() else None,
+                                 "config": {}}
     return out
 
 
@@ -541,15 +545,124 @@ def run_action(action, env, allow_data_loss, run, decl=DECL, out=sys.stdout, err
     return 0
 
 
+PLATFORM_KEYS = ("name", "partitions", "replication_factor", "owner")
+
+
+def parse_platform_topics(path):
+    """`platform_topics`: a list of flat mappings, as narrow as `topics` (prose `|` blocks skipped).
+    Every key other than PLATFORM_KEYS is a topic config."""
+    out, current, in_section, skip_indent = [], None, False, None
+    with open(path, "r", encoding="utf-8") as fh:
+        for raw in fh.read().split("\n"):
+            line = raw.split(" #")[0].rstrip() if not raw.strip().startswith("#") else ""
+            if not line.strip():
+                continue
+            indent = len(line) - len(line.lstrip())
+            if skip_indent is not None:
+                if indent > skip_indent:
+                    continue
+                skip_indent = None
+            if indent == 0:
+                in_section = line.strip().rstrip(":") == "platform_topics"
+                continue
+            if not in_section:
+                continue
+            stripped = line.strip()
+            if stripped.startswith("- "):
+                current = {}
+                out.append(current)
+                stripped = stripped[2:]
+            key, _, val = stripped.partition(":")
+            key, val = key.strip(), val.strip()
+            if val == "|":
+                skip_indent = indent
+                continue
+            if current is not None and val:
+                current[key] = val.strip("'\"")
+    for t in out:
+        if "name" not in t or "partitions" not in t or "replication_factor" not in t:
+            die("platform_topics entry needs 'name', 'partitions' and 'replication_factor': %r" % t)
+    return out
+
+
+def run_platform(action, run, decl=DECL, out=sys.stdout, err=sys.stderr):
+    """The platform topics on the shared broker: created if missing, compared settings altered on
+    apply, drift reported on diff. Literal names; a partition change is refused, as for every topic."""
+    prefixes = {e["prefix"] for e in parse_environments(decl).values() if e["prefix"]}
+    topics = parse_platform_topics(decl)
+    for t in topics:
+        if t["name"].startswith("andara.") or t["name"].split(".")[0] in prefixes:
+            die("platform topic '%s' must be outside every environment prefix and not start with "
+                "`andara.`" % t["name"])
+    live = existing_topics(run)
+    drift, alters = [], []
+    for t in topics:
+        name, parts, rf = t["name"], int(t["partitions"]), int(t["replication_factor"])
+        cfg = {k: v for k, v in t.items() if k not in PLATFORM_KEYS}
+        if name not in live:
+            if action == "diff":
+                drift.append("%s: does not exist (declared %d partition(s), RF %d)" % (name, parts, rf))
+                continue
+            cmd = ["topic", "create", name, "-p", str(parts), "-r", str(rf)]
+            for key, val in sorted(cfg.items()):
+                cmd += ["-c", "%s=%s" % (key, val)]
+            res = run(cmd)
+            if res.returncode != 0:
+                die("could not create %s: %s" % (name, (res.stderr or res.stdout).strip()))
+            out.write("topics: created %s (platform)\n" % name)
+            continue
+        if live[name]["partitions"] != parts:
+            die("%s has %d partitions, declared %d; repartitioning is refused"
+                % (name, live[name]["partitions"], parts))
+        # Refused before any config change: a min.insync.replicas raised past a topic's real
+        # replication would fail every acks=all write while the settings read as matching.
+        have_rf = live[name].get("replicas")
+        if have_rf is None:
+            die("could not read %s's replication factor from `rpk topic list`; refusing to compare or "
+                "alter it" % name)
+        if have_rf != rf:
+            die("%s has replication factor %d, declared %d; changing replication is refused (it is a "
+                "partition reassignment, done by hand)" % (name, have_rf, rf))
+        have = describe_config(run, name)
+        for key in sorted(k for k in cfg if k in COMPARED):
+            if key in have and same(key, have[key], cfg[key]):
+                continue
+            if action == "apply":
+                alters.append((name, key, have.get(key), cfg[key]))
+            else:
+                drift.append("%s: %s is '%s', declaration says '%s'" % (name, key, have.get(key), cfg[key]))
+    for name, key, was, want in alters:
+        if destructive(key, was, want):
+            err.write("make: topics: %s %s %s -> %s can delete data; change it by hand\n" % (name, key, was, want))
+            return 1
+        res = run(["topic", "alter-config", name, "--set", "%s=%s" % (key, want)])
+        if res.returncode != 0:
+            die("the broker refused %s %s=%s: %s" % (name, key, want, (res.stderr or res.stdout).strip()))
+        out.write("topics: altered %s %s %s -> %s (platform)\n" % (name, key, was, want))
+    if drift:
+        for line in drift:
+            err.write("topics-%s: %s\n" % (action, line))
+        err.write("make: topics-%s: %d drift(s) in platform_topics\n" % (action, len(drift)))
+        return 1
+    out.write("topics-%s: %d platform topic(s) match deploy/kafka/topics.yaml\n" % (action, len(topics)))
+    return 0
+
+
 def main():
     ap = argparse.ArgumentParser()
     ap.add_argument("action", choices=["apply", "diff"])
+    ap.add_argument("--platform", action="store_true",
+                    help="the platform topics (outside every prefix) on the shared broker")
     ap.add_argument("--env", default=os.environ.get("ANDARA_ENV", "local"))
     ap.add_argument("--broker", default="", help="local only: compose or cluster (default %s)"
                     % default_broker())
     ap.add_argument("--allow-data-loss", default="",
                     help="comma-separated topics whose destructive change the operator accepts")
     args = ap.parse_args()
+    if args.platform:
+        if args.allow_data_loss or args.broker:
+            die("--platform takes neither --allow-data-loss nor --broker: it is the shared broker's", 2)
+        return run_platform(args.action, rpk_runner("dev", "cluster"))
     if args.allow_data_loss and args.action != "apply":
         die("--allow-data-loss applies only to `apply`")
     if args.env == "prod":

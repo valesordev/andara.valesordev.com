@@ -31,6 +31,12 @@ one refuses (ADR-0013 amendment 19).
     principals carry another's quotas (dev's have none);
   - a principal's topic is not one the declaration's `topics` names.
 
+Platform principals (`platform_principals`, AW-INF-057) are rendered once, as `<name>` with the
+label andara.valesor/scope=platform and no environment, and checked on their own: every topic ACL
+LITERAL on a declared platform topic (never an environment's), every group ACL LITERAL, no
+wildcard, nothing the operator alone may do (Create, Alter, AlterConfigs, Delete, All), no
+cluster ACL, and no name an environment principal uses.
+
 Exit codes: 0 ok; 1 a check failed; 2 usage.
 """
 
@@ -52,6 +58,9 @@ IT_PREFIXES = {"andara.test.", "it"}
 IT_ALLOWED = {"Create", "Delete"}
 IT_GROUP_PREFIX = "it-"
 GROUP_DELETER = "andara-projector-state"
+SCOPE_LABEL = "andara.valesor/scope"
+PLATFORM = "platform"
+GROUP_FORBIDDEN = {"All", "Alter", "AlterConfigs", "Create", "Delete"}
 
 
 def load(path=DECL):
@@ -89,7 +98,52 @@ def render(doc):
                              "labels": {"strimzi.io/cluster": CLUSTER, ENV_LABEL: env}},
                 "spec": spec,
             })
+    for p in doc.get("platform_principals") or []:
+        acls = [{"resource": {"type": "topic", "name": topic, "patternType": "literal"}, "operations": list(ops)}
+                for topic, ops in (p.get("topics") or {}).items()]
+        acls += [{"resource": {"type": "group", "name": group, "patternType": "literal"}, "operations": list(ops)}
+                 for group, ops in (p.get("groups") or {}).items()]
+        users.append({
+            "apiVersion": API,
+            "kind": "KafkaUser",
+            "metadata": {"name": p["name"], "labels": {"strimzi.io/cluster": CLUSTER, SCOPE_LABEL: PLATFORM}},
+            "spec": {"authentication": {"type": "scram-sha-512"},
+                     "authorization": {"type": "simple", "acls": acls}},
+        })
     return users
+
+
+def platform(user):
+    return user["metadata"].get("labels", {}).get(SCOPE_LABEL) == PLATFORM
+
+
+def check_platform(users, doc):
+    """Platform principals: LITERAL ACLs on declared platform topics and their own groups only."""
+    errors = []
+    platform_topics = {t["name"] for t in doc.get("platform_topics") or []}
+    env_names = {p["name"] for p in doc.get("principals") or []}
+    for u in users:
+        name = u["metadata"]["name"]
+        if name in env_names or name == IT_PRINCIPAL:
+            errors.append("%s: a platform principal can't share an environment principal's name" % name)
+        for acl in (u.get("spec", {}).get("authorization") or {}).get("acls") or []:
+            r = acl.get("resource", {})
+            rtype, rname, pattern = r.get("type"), str(r.get("name", "")), r.get("patternType", "literal")
+            ops = set(acl.get("operations") or [])
+            what = "%s: %s %s %s %s" % (name, rtype, pattern, rname or "-", ",".join(sorted(ops)))
+            if rtype not in ("topic", "group"):
+                errors.append("%s: a platform principal holds no %s ACL" % (what, rtype))
+            elif "*" in rname:
+                errors.append("%s: a wildcard name" % what)
+            elif pattern != "literal":
+                errors.append("%s: a platform principal's ACLs are LITERAL" % what)
+            elif rtype == "topic" and rname not in platform_topics:
+                errors.append("%s: not a declared platform topic" % what)
+            elif rtype == "topic" and ops & TOPIC_FORBIDDEN:
+                errors.append("%s: %s on a topic is the operator's alone" % (what, ",".join(sorted(ops & TOPIC_FORBIDDEN))))
+            elif rtype == "group" and ops & GROUP_FORBIDDEN:
+                errors.append("%s: %s on a group" % (what, ",".join(sorted(ops & GROUP_FORBIDDEN))))
+    return errors
 
 
 def principal_of(user):
@@ -110,6 +164,8 @@ def check(users, doc):
     for p in doc.get("principals") or []:
         for topic in sorted(set(p.get("topics") or {}) - topic_names):
             errors.append("%s: an ACL on %s, which the declaration's topics don't name" % (p["name"], topic))
+    errors += check_platform([u for u in users if platform(u)], doc)
+    users = [u for u in users if not platform(u)]
     seen = set()
     for u in users:
         name = u["metadata"]["name"]
@@ -183,8 +239,9 @@ def main(argv):
         print("make: kafka-users-check: %d finding(s) in the KafkaUsers rendered from deploy/kafka/topics.yaml"
               % len(errors), file=sys.stderr)
         return 1
-    print("kafka-users-check: %d KafkaUsers across %s, each scoped to its prefix"
-          % (len(users), ", ".join(sorted(environments(doc)))))
+    n_platform = len([u for u in users if platform(u)])
+    print("kafka-users-check: %d KafkaUsers across %s, each scoped to its prefix, and %d platform principal(s)"
+          % (len(users) - n_platform, ", ".join(sorted(environments(doc))), n_platform))
     return 0
 
 

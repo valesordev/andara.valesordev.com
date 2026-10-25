@@ -59,6 +59,7 @@ REPO = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 KAFKA = "andara-log"
 KAFKA_MANIFESTS = os.path.join(REPO, "deploy", "k8s", "kafka")
 OBJECTSTORE_MANIFEST = os.path.join(REPO, "deploy", "k8s", "objectstore", "shared.yaml")
+REGISTRY_MANIFESTS = os.path.join(REPO, "deploy", "k8s", "schema-registry")
 THRESHOLD = 80
 # The integration suite's own topics (ADR-0013 amendment 17): reported, never a stray.
 SUITE = re.compile(r"^(andara\.test\.|it[0-9]+\.)")
@@ -264,6 +265,19 @@ NET_PORT = "9092"
 OBJECTSTORE_SERVICE = "andara-objectstore"
 OBJECTSTORE_HOST = OBJECTSTORE_SERVICE + ".%s.svc"
 OBJECTSTORE_PORT = "9000"
+REGISTRY_SERVICE = "andara-schema-registry"
+REGISTRY_HOST = REGISTRY_SERVICE + ".%s.svc"
+REGISTRY_PORT = "8081"
+C, B = "connected", "blocked"
+# What each listener's NetworkPolicy admits, by probe: the andara pods in the labelled application
+# namespaces reach Kafka and the object store, never the registry (no workload reads it, AW-INF-057);
+# the toolbox in andara-shared reaches Kafka and the registry, not the object store (which admits its
+# own tool pods only); nothing else reaches any of them.
+NET_WANTS = {
+    "kafka":       {"local": C, "dev": C, "scratch": B, "other": B, "tools": C},
+    "objectstore": {"local": C, "dev": C, "scratch": B, "other": B, "tools": B},
+    "registry":    {"local": B, "dev": B, "scratch": B, "other": B, "tools": C},
+}
 # What runs in each probe pod, as `bash -c NET_SCRIPT <host> <anchor host/port> <port>`: a marker
 # first, so a probe that never ran can't read as refused; then the anchor; then the verdict.
 NET_SCRIPT = ('echo probe-ran; getent hosts "$0" >/dev/null && echo resolved; '
@@ -308,19 +322,25 @@ def probe_once(ns, name, host, run=subprocess.run, anchor=NET_ANCHOR, port=NET_P
 
 def netcheck(ns=None, run=subprocess.run, sleep=None, clock=None, suffix=None, image=None,
              deadline=60, refusals=3):
-    """AW-INF-055 AC-5, AW-INF-058 AC-5: an andara pod in andara-local and in andara-dev reaches the
-    Kafka bootstrap, and the object store when it is installed; an andara pod in an unlabelled
-    namespace, and an unlabelled pod in andara-dev, reach neither."""
+    """The shared services' NetworkPolicies, each against the peers it admits (NET_WANTS):
+    AW-INF-055 AC-5 (the Kafka listener), AW-INF-058 AC-5 (the object store) and AW-INF-057 AC-1
+    (the schema registry, which admits the toolbox only). A service that isn't installed is said
+    so and not checked."""
     import time
     sleep, clock = sleep or time.sleep, clock or time.monotonic
     ns = ns or topics.kafka_namespace()
-    # (what, host, port): the listener and the gateway apply the same peer rule.
-    targets = [("the Kafka listener (kafka.yaml)", BOOTSTRAP % (KAFKA, ns), NET_PORT)]
-    if run(kube.kubectl("-n", ns, "get", "service", OBJECTSTORE_SERVICE, "-o", "name"),
-           capture_output=True, text=True).returncode == 0:
-        targets.append(("the object store (objectstore/shared.yaml)", OBJECTSTORE_HOST % ns, OBJECTSTORE_PORT))
-    else:
-        say("netcheck: no object store in %s (`make objectstore-up`); its policy is not checked" % ns)
+    # (what, host, port, wants): each listener's own peer rule.
+    targets = [("the Kafka listener (kafka.yaml)", BOOTSTRAP % (KAFKA, ns), NET_PORT, NET_WANTS["kafka"])]
+    for key, what, service, host, port in (
+            ("objectstore", "the object store (objectstore/shared.yaml)", OBJECTSTORE_SERVICE,
+             OBJECTSTORE_HOST % ns, OBJECTSTORE_PORT),
+            ("registry", "the schema registry (schema-registry/registry.yaml)", REGISTRY_SERVICE,
+             REGISTRY_HOST % ns, REGISTRY_PORT)):
+        if run(kube.kubectl("-n", ns, "get", "service", service, "-o", "name"),
+               capture_output=True, text=True).returncode == 0:
+            targets.append((what, host, port, NET_WANTS[key]))
+        else:
+            say("netcheck: no %s in %s; its policy is not checked" % (what.split(" (")[0][4:], ns))
     suffix = suffix or os.urandom(3).hex()
     image = image or tools_image()
     for env in ("local", "dev"):
@@ -334,11 +354,12 @@ def netcheck(ns=None, run=subprocess.run, sleep=None, clock=None, suffix=None, i
                          % (env, NET_ENV_LABEL, env))
     scratch = "%s-%s" % (NET_PROBE, suffix)
     name = "%s-%s" % (NET_PROBE, suffix)
-    # (namespace, pod, app label, expected, what it proves)
-    cases = [("andara-local", name, "andara", "connected", "an andara pod in andara-local"),
-             ("andara-dev", name, "andara", "connected", "an andara pod in andara-dev"),
-             (scratch, name, "andara", "blocked", "an andara pod in an unlabelled namespace"),
-             ("andara-dev", name + "-other", None, "blocked", "a pod not labelled andara in andara-dev")]
+    # (namespace, pod, app label, key in NET_WANTS, what it proves)
+    cases = [("andara-local", name, "andara", "local", "an andara pod in andara-local"),
+             ("andara-dev", name, "andara", "dev", "an andara pod in andara-dev"),
+             (scratch, name, "andara", "scratch", "an andara pod in an unlabelled namespace"),
+             ("andara-dev", name + "-other", None, "other", "a pod not labelled andara in andara-dev"),
+             (ns, name + "-tools", "andara-kafka-tools", "tools", "a toolbox pod in %s" % ns)]
     made_ns = False
     try:
         kubectl("", "create", "namespace", scratch, run=run)
@@ -359,14 +380,15 @@ def netcheck(ns=None, run=subprocess.run, sleep=None, clock=None, suffix=None, i
                 except Failed:
                     why = None
                 raise Failed("probe %s/%s not Ready within 120s (%s)" % (pns, pod, why or "reason unknown"))
-        say("netcheck: probes Ready; %s" % ", ".join("%s:%s" % (h, p) for _, h, p in targets))
+        say("netcheck: probes Ready; %s" % ", ".join("%s:%s" % (h, p) for _, h, p, _ in targets))
         failed, unproven = [], []
         # Rule 1 of docs/specs/testing/live-assertions.md: the admitted probes are polled to a
         # deadline (a new pod's policy can lag its readiness); the refused ones are tried
         # `refusals` times after, and a single connection is a failure, as is a refusal from a
         # probe that couldn't resolve the host or reach NET_ANCHOR (rule 3).
-        for target, host, port in targets:
-            for pns, pod, _, want, what in cases:
+        for target, host, port, wants in targets:
+            for pns, pod, _, key, what in cases:
+                want = wants[key]
                 if want == "connected":
                     end = clock() + deadline
                     verdict = probe_once(pns, pod, host, run, port=port)
@@ -395,8 +417,8 @@ def netcheck(ns=None, run=subprocess.run, sleep=None, clock=None, suffix=None, i
                         "(its DNS or egress, not the policy): %s" % (NET_ANCHOR, "; ".join(unproven)))
         if msgs:
             raise Failed(". ".join(msgs))
-        say("netcheck: ok — admitted andara pods in andara-local and andara-dev only, on %s"
-            % " and ".join(t[0] for t in targets))
+        say("netcheck: ok — each listener admits only its declared peers: %s"
+            % ", ".join(t[0] for t in targets))
     finally:
         for pns, pod, _, _, _ in cases:
             if pns != scratch:
@@ -411,9 +433,12 @@ def down(confirm, ns=None, run=subprocess.run):
     ns = ns or topics.kafka_namespace()
     if confirm != ns:
         raise Usage("CONFIRM=%s is not %s; nothing was removed. This deletes the shared Kafka and "
-                    "every environment's Command history on it, and the shared object store and every "
+                    "every environment's Command history on it, the schema registry, and the shared object store and every "
                     "environment's snapshots" % (confirm or "(missing)", ns))
     kube.require()
+    # The schema registry first (AW-INF-057): its schemas are in _schemas on the broker below.
+    kubectl(ns, "delete", "-f", REGISTRY_MANIFESTS, "--ignore-not-found", "--wait=true", "--timeout=5m", run=run)
+    say("deleted the schema registry from %s" % ns)
     kubectl(ns, "delete", "-f", KAFKA_MANIFESTS, "--ignore-not-found", "--wait=true", "--timeout=5m", run=run)
     say("deleted deploy/k8s/kafka/ from %s" % ns)
     kubectl(ns, "delete", "pvc", "-l", "strimzi.io/cluster=%s" % KAFKA, "--ignore-not-found",

@@ -120,13 +120,13 @@ topics-diff:
 # ENV on the command line, else ANDARA_ENV (default local), as before AW-INF-055.
 TOPICS_ENV = $(if $(filter command line,$(origin ENV)),$(ENV),$(ANDARA_ENV))
 
-## schemas-apply: register protobuf schemas with the schema registry
+## schemas-apply: register ENV's prefixed subjects (`dev.andara.commands.v1-value`) in the schema registry; refuses an incompatible change, registering nothing — ENV=<local|dev> [BROKER=cluster] (the shared Karapace in andara-shared; local defaults to compose's while deploy/compose/ exists) (AW-INF-057)
 schemas-apply:
-	@$(PY) $(SCRIPTS)/schemas.py apply --env $(ANDARA_ENV)
+	@$(PY) $(SCRIPTS)/schemas.py apply --env "$(TOPICS_ENV)" $(if $(BROKER),--broker "$(BROKER)")
 
-## schemas-diff: fail if the registry has drifted from deploy/kafka/schemas.yaml
+## schemas-diff: fail if ENV's subjects in the registry have drifted from deploy/kafka/schemas.yaml, or any subject has no environment prefix — ENV=<local|dev> [BROKER=cluster] (AW-INF-057)
 schemas-diff:
-	@$(PY) $(SCRIPTS)/schemas.py diff --env $(ANDARA_ENV)
+	@$(PY) $(SCRIPTS)/schemas.py diff --env "$(TOPICS_ENV)" $(if $(BROKER),--broker "$(BROKER)")
 
 ## schemas-check: verify the subject declaration — offline, no broker needed
 schemas-check:
@@ -411,7 +411,7 @@ cluster-down:
 cluster-rebuild:
 	@$(PY) $(SCRIPTS)/cluster.py rebuild "$(CONFIRM)"
 
-## shared-up: the shared services in andara-shared — Kafka `andara-log` (3 brokers, KRaft) and both environments' prefixed topics, then the object store and each environment's bucket and pair; labels andara-local and andara-dev; idempotent (AW-INF-055, AW-INF-058)
+## shared-up: the shared services in andara-shared — Kafka `andara-log` (3 brokers, KRaft) and both environments' prefixed topics, the platform topics and the schema registry, then the object store and each environment's bucket and pair; labels andara-local and andara-dev; idempotent (AW-INF-055, AW-INF-057, AW-INF-058)
 shared-up:
 	@PY=$(PY) $(SCRIPTS)/kafka.sh up
 

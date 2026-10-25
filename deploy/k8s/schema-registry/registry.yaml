@@ -1,0 +1,122 @@
+# The shared schema registry (AW-INF-057, ADR-0013 decision 8): Karapace in andara-shared, serving
+# local and dev. Subjects carry the environment prefix of the topic they describe
+# (`dev.andara.commands.v1-value`); `make schemas-apply ENV=<local|dev>` registers them. Applied by
+# `make shared-up` after the platform topic `_schemas` exists.
+#
+# Its schemas live in the compacted topic `_schemas` on andara-log (deploy/kafka/topics.yaml's
+# platform_topics), so a restart loses nothing and the pod needs no volume. It speaks to the broker
+# as the platform principal andara-schema-registry once AW-INF-056 turns SASL on.
+#
+# NetworkPolicy: no application namespace reaches it, because no workload reads the registry at
+# runtime (AC-5); only the toolbox in andara-shared is admitted. `scripts/schemas.py` reaches it
+# through `kubectl port-forward`, which no NetworkPolicy governs. The registry has no auth of its
+# own; this is what stands in for it.
+#
+# Metrics: Karapace 6.2.4 serves Prometheus metrics on GET /metrics, port 8081 (karapace_* and
+# HTTP request series; verified 2026-10-24), and also offers StatsD and OpenTelemetry settings.
+# Nothing scrapes it and no annotation asks to: andara-shared carries no environment, nothing in
+# the player path depends on the registry (AW-INF-057 AC-5), and ADR-0014 ships a shared
+# service's own metrics only once a reader exists.
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: andara-schema-registry
+  labels:
+    app.kubernetes.io/name: andara-schema-registry
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app.kubernetes.io/name: andara-schema-registry
+  template:
+    metadata:
+      labels:
+        app.kubernetes.io/name: andara-schema-registry
+    spec:
+      automountServiceAccountToken: false
+      securityContext:
+        runAsNonRoot: true
+        runAsUser: 999
+        runAsGroup: 0
+        seccompProfile:
+          type: RuntimeDefault
+      containers:
+        - name: karapace
+          image: ghcr.io/aiven-open/karapace:6.2.4@sha256:005eda40272a09f34e60605ae40b1c205c0a5119164b8a090a51ad7f939f79f3
+          command: [python3, -m, karapace]
+          workingDir: /opt/karapace
+          env:
+            - {name: KARAPACE_KARAPACE_REGISTRY, value: "true"}
+            - {name: KARAPACE_HOST, value: "0.0.0.0"}
+            - {name: KARAPACE_PORT, value: "8081"}
+            - {name: KARAPACE_ADVERTISED_HOSTNAME, value: andara-schema-registry.andara-shared.svc}
+            - {name: KARAPACE_ADVERTISED_PORT, value: "8081"}
+            - {name: KARAPACE_BOOTSTRAP_URI, value: andara-log-kafka-bootstrap.andara-shared.svc:9092}
+            - {name: KARAPACE_CLIENT_ID, value: andara-schema-registry}
+            - {name: KARAPACE_GROUP_ID, value: andara-schema-registry}
+            - {name: KARAPACE_TOPIC_NAME, value: _schemas}
+            # The topic is the operator's (platform_topics); these match it, in case Karapace ever
+            # creates it, which it does only when it's missing.
+            - {name: KARAPACE_REPLICATION_FACTOR, value: "3"}
+            - {name: KARAPACE_PRODUCER_ACKS, value: all}
+            - {name: KARAPACE_COMPATIBILITY, value: BACKWARD}
+            - {name: KARAPACE_LOG_LEVEL, value: INFO}
+          ports:
+            - name: http
+              containerPort: 8081
+          readinessProbe:
+            httpGet: {path: /_health, port: http}
+            periodSeconds: 5
+          livenessProbe:
+            httpGet: {path: /_health, port: http}
+            initialDelaySeconds: 30
+            periodSeconds: 10
+          resources:
+            requests: {cpu: 50m, memory: 192Mi}
+            limits: {memory: 512Mi}
+          securityContext:
+            allowPrivilegeEscalation: false
+            readOnlyRootFilesystem: true
+            capabilities:
+              drop: [ALL]
+          volumeMounts:
+            # Karapace compiles protobuf schemas here (protobuf_runtime_directory), and Python wants /tmp.
+            - {name: runtime, mountPath: /opt/karapace/runtime}
+            - {name: tmp, mountPath: /tmp}
+      volumes:
+        - {name: runtime, emptyDir: {}}
+        - {name: tmp, emptyDir: {}}
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: andara-schema-registry
+  labels:
+    app.kubernetes.io/name: andara-schema-registry
+spec:
+  selector:
+    app.kubernetes.io/name: andara-schema-registry
+  ports:
+    - name: http
+      port: 8081
+      targetPort: http
+---
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: andara-schema-registry
+  labels:
+    app.kubernetes.io/name: andara-schema-registry
+spec:
+  podSelector:
+    matchLabels:
+      app.kubernetes.io/name: andara-schema-registry
+  policyTypes: [Ingress]
+  ingress:
+    - from:
+        - podSelector:
+            matchLabels:
+              app.kubernetes.io/name: andara-kafka-tools
+      ports:
+        - port: http
+          protocol: TCP

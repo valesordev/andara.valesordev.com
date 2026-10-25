@@ -103,10 +103,12 @@ DECL = textwrap.dedent("""\
 class FakeBroker:
     """rpk as far as topics.py uses it: list, describe, create, alter-config, cluster set."""
 
-    def __init__(self, topics, refuse=None):
+    def __init__(self, topics, refuse=None, replicas=None):
         # topics: {name: (partitions, {key: value})}. A key the broker "doesn't report" is
-        # simply absent, as on Redpanda.
+        # simply absent, as on Redpanda. replicas: {name: n}, listed as rpk lists it (3 when not
+        # given; None leaves the field out, as a listing of another shape would).
         self.topics = {n: (p, dict(c)) for n, (p, c) in topics.items()}
+        self.replicas = replicas or {}
         self.refuse = refuse or set()   # {(topic, key)} the broker rejects
         self.calls = []
 
@@ -114,7 +116,13 @@ class FakeBroker:
         self.calls.append(list(args))
         ok = lambda out="": SimpleNamespace(returncode=0, stdout=out, stderr="")  # noqa: E731
         if args[:2] == ["topic", "list"]:
-            return ok(json.dumps([{"name": n, "partitions": p} for n, (p, _) in self.topics.items()]))
+            rows = []
+            for n, (p, _) in self.topics.items():
+                row = {"name": n, "partitions": p}
+                if self.replicas.get(n, 3) is not None:
+                    row["replicas"] = self.replicas.get(n, 3)
+                rows.append(row)
+            return ok(json.dumps(rows))
         if args[:2] == ["topic", "describe"]:
             _, cfg = self.topics[args[2]]
             return ok("KEY  VALUE  SOURCE\n" + "\n".join(
@@ -513,3 +521,119 @@ class Usage(unittest.TestCase):
         code, err = self.main("apply", "--env", "local", "--broker", "laptop")
         self.assertEqual(code, 2)
         self.assertIn("compose or cluster", err)
+
+
+class Platform(unittest.TestCase):
+    """AW-INF-057: `topics.py apply --platform`, the platform topics on the shared broker (literal
+    names, outside every prefix), from the real declaration."""
+
+    def run_platform(self, broker, action="apply", decl=topics.DECL):
+        out, err = io.StringIO(), io.StringIO()
+        with mock.patch("sys.exit", side_effect=SystemExit) as _:
+            try:
+                code = topics.run_platform(action, broker, decl=decl, out=out, err=err)
+            except SystemExit as e:
+                code = e.code if e.code is not None else 1
+        return code, out.getvalue(), err.getvalue()
+
+    def test_the_declaration_has_the_registry_topic(self):
+        got = {t["name"]: t for t in topics.parse_platform_topics(topics.DECL)}
+        self.assertEqual(got["_schemas"]["partitions"], "1")
+        self.assertEqual(got["_schemas"]["replication_factor"], "3")
+        self.assertEqual(got["_schemas"]["cleanup.policy"], "compact")
+        self.assertNotIn("why", got["_schemas"])  # prose is skipped
+
+    def test_a_missing_topic_is_created_literally_with_its_settings(self):
+        b = FakeBroker({})
+        code, out, _ = self.run_platform(b)
+        self.assertEqual(code, 0)
+        create = [c for c in b.calls if c[:2] == ["topic", "create"]][0]
+        # Exactly these: a `why: |` line leaking in as a config would show up here.
+        self.assertEqual(create, ["topic", "create", "_schemas", "-p", "1", "-r", "3",
+                                  "-c", "cleanup.policy=compact", "-c", "min.insync.replicas=2"])
+        self.assertIn("created _schemas (platform)", out)
+
+    def test_a_matching_topic_is_left(self):
+        b = FakeBroker({"_schemas": (1, {"cleanup.policy": "compact", "min.insync.replicas": "2"})})
+        code, out, _ = self.run_platform(b)
+        self.assertEqual(code, 0)
+        self.assertFalse([c for c in b.calls if c[1] in ("create", "alter-config")])
+        self.assertIn("1 platform topic(s) match", out)
+
+    def test_a_drifted_setting_is_altered_on_apply_and_reported_on_diff(self):
+        b = FakeBroker({"_schemas": (1, {"cleanup.policy": "compact", "min.insync.replicas": "1"})})
+        code, _, err = self.run_platform(b, "diff")
+        self.assertEqual(code, 1)
+        self.assertIn("_schemas: min.insync.replicas is '1', declaration says '2'", err)
+        code, out, _ = self.run_platform(b)
+        self.assertEqual((code, b.topics["_schemas"][1]["min.insync.replicas"]), (0, "2"))
+
+    def test_a_replication_factor_other_than_declared_is_refused_before_any_change(self):
+        """Codex on #650: an RF-1 `_schemas` with min ISR 1 must not have its min ISR raised to 2
+        (the registry's acks=all writes would then all fail) and then be reported as matching."""
+        for action in ("apply", "diff"):
+            for rf in (1, 5):
+                b = FakeBroker({"_schemas": (1, {"cleanup.policy": "compact", "min.insync.replicas": "1"})},
+                               replicas={"_schemas": rf})
+                with contextlib.redirect_stderr(io.StringIO()) as died:
+                    code, _, err = self.run_platform(b, action)
+                self.assertEqual(code, 1, (action, rf))
+                self.assertIn("_schemas has replication factor %d, declared 3; changing replication is refused" % rf,
+                              err + died.getvalue())
+                self.assertFalse([c for c in b.calls if c[1] == "alter-config"], (action, rf))
+
+    def test_a_listing_without_replicas_is_refused_not_skipped(self):
+        """Pre-review: the shared broker's listing always carries replicas; one that doesn't changed
+        shape, and reading it as 'nothing to compare' would let the min ISR change through."""
+        b = FakeBroker({"_schemas": (1, {"cleanup.policy": "compact", "min.insync.replicas": "1"})},
+                       replicas={"_schemas": None})
+        with contextlib.redirect_stderr(io.StringIO()) as died:
+            code, _, _ = self.run_platform(b)
+        self.assertEqual(code, 1)
+        self.assertIn("could not read _schemas's replication factor", died.getvalue())
+        self.assertFalse([c for c in b.calls if c[1] == "alter-config"])
+
+    def test_the_declared_replication_factor_matches(self):
+        b = FakeBroker({"_schemas": (1, {"cleanup.policy": "compact", "min.insync.replicas": "2"})},
+                       replicas={"_schemas": 3})
+        code, out, _ = self.run_platform(b, "diff")
+        self.assertEqual(code, 0)
+        self.assertIn("1 platform topic(s) match", out)
+
+    def test_the_tabular_listing_carries_replicas(self):
+        run = lambda args: SimpleNamespace(returncode=0, stdout="NAME  PARTITIONS  REPLICAS\n_schemas  1  1\n",  # noqa: E731
+                                           stderr="")
+        self.assertEqual(topics.existing_topics(run)["_schemas"]["replicas"], 1)
+
+    def test_adding_delete_to_the_compacted_topic_is_refused(self):
+        # Anchored on the platform entry: the first `cleanup.policy: compact` in the file is an
+        # environment topic's.
+        decl = self.decl_with("    cleanup.policy: compact\n    min.insync.replicas: 2\n    owner: AW-INF-057",
+                              "    cleanup.policy: delete\n    min.insync.replicas: 2\n    owner: AW-INF-057")
+        b = FakeBroker({"_schemas": (1, {"cleanup.policy": "compact", "min.insync.replicas": "2"})})
+        code, _, err = self.run_platform(b, decl=decl)
+        self.assertEqual(code, 1)
+        self.assertIn("_schemas cleanup.policy compact -> delete can delete data", err)
+        self.assertFalse(b.alters())
+
+    def test_repartitioning_is_refused(self):
+        code, _, _ = self.run_platform(FakeBroker({"_schemas": (3, {"cleanup.policy": "compact"})}))
+        self.assertEqual(code, 1)
+
+    def test_a_platform_topic_inside_a_prefix_or_andara_is_refused(self):
+        for name in ("dev.schemas", "andara.schemas.v1"):
+            with self.subTest(name=name):
+                code, _, _ = self.run_platform(FakeBroker({}), decl=self.decl_with("- name: _schemas", "- name: " + name))
+                self.assertEqual(code, 1)
+
+    def decl_with(self, old, new):
+        import tempfile
+        with open(topics.DECL) as f:
+            text = f.read()
+        assert old in text
+        d = tempfile.mkdtemp()
+        self.addCleanup(__import__("shutil").rmtree, d)
+        path = os.path.join(d, "topics.yaml")
+        with open(path, "w") as f:
+            f.write(text.replace(old, new, 1))
+        return path
