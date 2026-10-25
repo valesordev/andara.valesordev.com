@@ -142,8 +142,14 @@ func TestActAs_ThroughTheGateway(t *testing.T) {
 		t.Fatal(err)
 	}
 	version := pv.Msg.GetVersion()
-	if _, err := asOper.ApproveVersion(ctx, connect.NewRequest(&adminv1.ApproveVersionRequest{PackId: "town", Version: version})); err != nil {
-		t.Fatalf("the Operator's self-approval: %v", err)
+	// Approving as alice is the Operator approving their own publish without
+	// the operator Role, so it is refused; as themselves it is a self-approval.
+	if _, err := asAlice.ApproveVersion(ctx, connect.NewRequest(&adminv1.ApproveVersionRequest{PackId: "town", Version: version})); connect.CodeOf(err) != connect.CodePermissionDenied {
+		t.Fatalf("approving as alice: %v, want PERMISSION_DENIED (self-approval)", err)
+	}
+	ap, err := asOper.ApproveVersion(ctx, connect.NewRequest(&adminv1.ApproveVersionRequest{PackId: "town", Version: version}))
+	if err != nil || !ap.Msg.GetSelfApproval() {
+		t.Fatalf("the Operator's self-approval: %v, %v", ap, err)
 	}
 	if _, err := asAlice.ActivateVersion(ctx, connect.NewRequest(&adminv1.ActivateVersionRequest{PackId: "town", Version: version})); err != nil {
 		t.Fatal(err)
@@ -155,8 +161,9 @@ func TestActAs_ThroughTheGateway(t *testing.T) {
 	if m := got.Msg.GetVersion(); m.GetAuthor() != ids["alice"] || m.GetPublisher() != ids["oper"] {
 		t.Fatalf("manifest author %s, publisher %s; want %s, %s", m.GetAuthor(), m.GetPublisher(), ids["alice"], ids["oper"])
 	}
-	// One per acted-as call: each blob's stream, the publish, the activation.
-	if got, want := actAsTotal(t, reg, "ok")-okBefore, float64(len(paths)+2); got != want {
+	// One per acted-as call: each blob's stream, the publish, the refused
+	// approval (its act-as succeeded; the approval didn't), the activation.
+	if got, want := actAsTotal(t, reg, "ok")-okBefore, float64(len(paths)+3); got != want {
 		t.Errorf("act_as_total{ok} rose by %v, want %v", got, want)
 	}
 
