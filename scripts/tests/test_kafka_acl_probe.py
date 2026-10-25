@@ -160,6 +160,8 @@ class Probes(unittest.TestCase):
         whats = {(p.principal, p.what, p.want) for p in kafka_acl_probe.probes(REAL)}
         self.assertIn(("andara-server-dev", "produce local.andara.commands.v1", "denied"), whats)
         self.assertIn(("andara-projector-state-local", "DeleteGroups andara-projector-state-dev", "denied"), whats)
+        self.assertIn(("andara-projector-state-local", "DeleteGroups andara-projector-state-dev-acl-probe-absent",
+                       "denied"), whats)
         self.assertIn(("andara-projector-state-dev", "read dev.andara.audit.v1", "denied"), whats)
         self.assertIn(("andara-server-dev", "commit offsets on dev.andara.commands.v1 in group andara-sim-local-acl-probe",
                        "denied"), whats)
@@ -202,6 +204,30 @@ class Main(unittest.TestCase):
         self.assertFalse([c for c in b.calls if c[0].startswith("andara-projector-state")
                           and c[1] == ["group", "delete", c[0]]])
         self.assertIn("couldn't tell whether andara-projector-state-dev exists", err)
+
+    def test_no_real_projector_group_is_ever_deleted_unless_seen_absent(self):
+        """Codex on #654: the cross-environment DeleteGroups named the other projector's real group,
+        so drift granting that Delete (what the probe exists to catch) would erase its checkpoint."""
+        real = {"andara-projector-state-dev", "andara-projector-state-local"}
+        for state in ("exists", "unknown"):
+            b = FakeBroker(group_state=state)
+            run(b)
+            deleted = [(pr, a[2]) for pr, a in b.calls if a[:2] == ["group", "delete"] and pr != "andara-operator"]
+            self.assertFalse([d for d in deleted if d[1] in real], (state, deleted))
+
+    def test_a_disposable_group_under_the_other_projectors_prefix_is_always_probed(self):
+        b = FakeBroker(group_state="exists")
+        run(b)
+        self.assertIn(("andara-projector-state-dev", ["group", "delete", "andara-projector-state-local-acl-probe-absent"]),
+                      b.calls)
+        self.assertIn(("andara-projector-state-local", ["group", "delete", "andara-projector-state-dev-acl-probe-absent"]),
+                      b.calls)
+
+    def test_the_real_other_group_is_probed_when_absent(self):
+        b = FakeBroker(group_state="absent")
+        code, _, err = run(b)
+        self.assertEqual(code, 0, err)
+        self.assertIn(("andara-projector-state-dev", ["group", "delete", "andara-projector-state-local"]), b.calls)
 
     def test_group_state_reads_the_describe(self):
         for text, code, want in (("STATE Dead\nERROR GROUP_ID_NOT_FOUND: x", 0, "absent"),

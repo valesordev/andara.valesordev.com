@@ -29,7 +29,8 @@ What is probed, per environment <env> (the other is <o>):
          andara-sim-<o> are denied.
   AC-3   every environment principal is denied CreateTopics, DeleteTopics and AlterConfigs on a name
          that doesn't exist, and DeleteGroups on another group; andara-projector-state-<env> may
-         delete its own group and not <o>'s.
+         delete its own group and not <o>'s: a disposable group under <o>'s prefix always, and <o>'s
+         real group only when the operator has seen it absent.
   AC-12  every declared principal but andara-projector-state-<env> (and the superuser) is denied
          producing to <env>.andara.state.v1; andara-projector-state-<env> is allowed.
   AC-13  andara-projector-state-<env> is denied producing to <env>.andara.content.* and
@@ -39,9 +40,11 @@ Nothing is left behind:
   - a create, delete or alter-config probe names a topic that doesn't exist;
   - a group probe uses a group under the granted prefix (`<group>-acl-probe`), never the real one,
     and the operator deletes it afterwards;
-  - the projector deleting its own group runs only when the operator has seen that group absent;
-    when it exists (deleting it is `andara-projector --rebuild`) the probe is skipped, and when the
-    operator can't tell, the run fails without deleting it.
+  - a probe that names a projector's real group (its own, or the other environment's) runs only when
+    the operator has seen that group absent: when it exists (deleting it is
+    `andara-projector --rebuild`) the probe is skipped, and when the operator can't tell, the run
+    fails without deleting it. A probe that is meant to be denied is guarded too, since drift that
+    allows it is exactly what it detects (Codex on #654).
 
 Exit codes: 0 every probe answered as declared; 1 one didn't, or a cleanup failed; 3 a Secret,
 kubectl or the cluster missing.
@@ -136,10 +139,13 @@ def probes(doc):
             out.append(Probe("AC-3", principal, "DeleteGroups andara-sim-%s-acl-probe-absent" % env,
                              ["group", "delete", "andara-sim-%s-acl-probe-absent" % env], "denied"))
         out.append(Probe("AC-3", proj, "DeleteGroups its own " + proj, ["group", "delete", proj], "allowed",
-                         cleanup=[("own-group", proj)]))
+                         cleanup=[("guard", proj)]))
         if other:
-            out.append(Probe("AC-3", proj, "DeleteGroups andara-projector-state-" + other,
-                             ["group", "delete", "andara-projector-state-" + other], "denied"))
+            oproj = "andara-projector-state-" + other
+            out.append(Probe("AC-3", proj, "DeleteGroups %s-acl-probe-absent" % oproj,
+                             ["group", "delete", oproj + "-acl-probe-absent"], "denied"))
+            out.append(Probe("AC-3", proj, "DeleteGroups " + oproj, ["group", "delete", oproj], "denied",
+                             cleanup=[("guard", oproj)]))
         # AC-12
         for principal in ["%s-%s" % (n, e) for n in env_principals for e, _ in envs] + platform:
             p = produce("AC-12", principal, prefix, state, limits, "allowed" if principal == proj else "denied")
@@ -203,7 +209,7 @@ def sized(p, live):
 
 def group_state(broker, group):
     """'absent', 'exists' or 'unknown', as the operator sees it. Only 'absent' lets the projector's
-    own-group probe run: a group with no members loses its offsets to a DeleteGroups."""
+    guarded probe run: a group with no members loses its offsets to a DeleteGroups."""
     code, text = broker.rpk(kafka_auth.OPERATOR, ["group", "describe", group])
     if DENIED in text:
         return "unknown"
@@ -229,8 +235,9 @@ def main(argv=None, broker=None, doc=None, out=sys.stdout, err=sys.stderr):
     broker = broker or Broker(topics.kafka_namespace())
     failed, leftovers, cleanups, limits = [], [], [], {}
     for p in probes(doc):
-        if any(c[0] == "own-group" for c in p.cleanup):
-            state = group_state(broker, p.principal)
+        guard = next((c[1] for c in p.cleanup if c[0] == "guard"), None)
+        if guard:
+            state = group_state(broker, guard)
             if state == "exists":
                 out.write("kafka-acl-probe: %s %s %s: skipped, the group exists and deleting it is a rebuild\n"
                           % (p.ac, p.principal, p.what))
@@ -239,7 +246,7 @@ def main(argv=None, broker=None, doc=None, out=sys.stdout, err=sys.stderr):
                 out.write("kafka-acl-probe: %s %s %s: not run, the operator couldn't tell whether the group "
                           "exists FAIL\n" % (p.ac, p.principal, p.what))
                 failed.append("%s %s %s: not run: the operator couldn't tell whether %s exists"
-                              % (p.ac, p.principal, p.what, p.principal))
+                              % (p.ac, p.principal, p.what, guard))
                 continue
         args, size = p.args, p.size
         if p.topic:
@@ -258,7 +265,7 @@ def main(argv=None, broker=None, doc=None, out=sys.stdout, err=sys.stderr):
         if verdict == "FAIL":
             failed.append("%s %s %s: %s, want %s: %s" % (p.ac, p.principal, p.what, got, p.want,
                                                           " ".join(text.split())[:200]))
-        cleanups += [s for s in p.cleanup if s[0] != "own-group" and s not in cleanups]
+        cleanups += [s for s in p.cleanup if s[0] != "guard" and s not in cleanups]
     for step in cleanups:
         problem = clean(broker, step, out)
         if problem:
