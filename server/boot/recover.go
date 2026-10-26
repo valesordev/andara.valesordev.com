@@ -188,7 +188,13 @@ func (rt *Runtime) HoldMismatch(ctx context.Context, ln net.Listener, linger tim
 
 // EngineConfig is the Engine's configuration for this process: what recovery
 // builds and restores with.
-func (rt *Runtime) EngineConfig() sim.Config { return engineConfig(rt.Cfg, rt.Content) }
+func (rt *Runtime) EngineConfig() sim.Config {
+	c := engineConfig(rt.Cfg, rt.Content)
+	if rt.handlers != nil {
+		c.Handlers = rt.handlers
+	}
+	return c
+}
 
 // ExitOnStartError is the exit code of a StartTickLoop failure, after the
 // mismatch linger when the refusal earns one (AC-14): a hash or restore

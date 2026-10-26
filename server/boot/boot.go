@@ -181,6 +181,9 @@ type Runtime struct {
 	recOnce    sync.Once
 	// orphans, when set, stands in for the roster in releaseOrphans: a test.
 	orphans orphanReleaser
+	// handlers, when set, replaces the Engine's verb handlers: a test runs a
+	// mutant handler through the boot path. Nil outside tests.
+	handlers map[sim.CommandKind]sim.Apply
 	// deploy is the interruption measurement (AW-SRV-054), registered by
 	// StartTickLoop; now is its clock, nil for time.Now (a test sets it).
 	deployOnce sync.Once
