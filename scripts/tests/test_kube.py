@@ -30,7 +30,7 @@ import kube_check  # noqa: E402
 FIXTURE = os.path.join(REPO, "scripts", "tests", "fixtures", "kubeconfig")
 STUB = textwrap.dedent("""\
     #!/bin/sh
-    echo "$(basename "$0") $*" >> "$STUB_LOG"
+    printf '%s\\n' "$(basename "$0") $*" >> "$STUB_LOG"
     echo "Error from server (NotFound): stub" >&2
     exit 1
     """)

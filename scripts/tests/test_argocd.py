@@ -599,7 +599,9 @@ def stub_bin(d, log, tools):
     for tool, body in tools.items():
         p = os.path.join(d, tool)
         with open(p, "w") as f:
-            f.write('#!/bin/sh\necho "%s $*" >> "%s"\n'
+            # printf, not echo: dash's echo (CI's /bin/sh) expands a \n inside an argument, which
+            # splits one call across log lines (kafka_auth.BROKER_SCRIPT carries one).
+            f.write('#!/bin/sh\nprintf "%%s\\n" "%s $*" >> "%s"\n'
                     'case "$1" in --context|--kube-context) shift 2;; esac\n%s\n' % (tool, log, body))
         os.chmod(p, os.stat(p).st_mode | stat.S_IEXEC)
     # The fixture kubeconfig and no ANDARA_KUBE_CONTEXT, whatever the caller's shell has (AW-INF-053).
