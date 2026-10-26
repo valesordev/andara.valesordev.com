@@ -853,6 +853,27 @@ def test_kafka_sasl_credentials():
              % (env_value(proj, "ANDARA_KAFKA_SASL_USERNAME"), kafka_creds_volume(proj)))
 
 
+def test_secret_mounts_readable():
+    """Codex on #654: a Secret volume at defaultMode 0400 is root's alone unless the pod sets fsGroup,
+    which the kubelet makes the file's group and grants read; a non-root workload without it can't
+    read its own Kafka password. Every pod mounting a Secret sets fsGroup to its runAsGroup."""
+    for env in ("local", "dev"):
+        code, out, err = render(env, "--set", "projectors.state.enabled=true")
+        if code:
+            fail("%s render failed: %s" % (env, err.strip()))
+            continue
+        for d in docs(out):
+            if d.get("kind") not in ("StatefulSet", "Deployment"):
+                continue
+            pod = d["spec"]["template"]["spec"]
+            secrets = [v["name"] for v in pod.get("volumes", []) if "secret" in v]
+            sc = pod.get("securityContext") or {}
+            if secrets and sc.get("fsGroup") != sc.get("runAsGroup"):
+                fail("%s: %s/%s mounts Secret volumes %s as uid %s with fsGroup %r, want %r"
+                     % (env, d["kind"], d["metadata"]["name"], secrets, sc.get("runAsUser"),
+                        sc.get("fsGroup"), sc.get("runAsGroup")))
+
+
 def main():
     for env in ENVS:
         test_pvc_retained(env)
@@ -881,6 +902,7 @@ def main():
     test_content_checksum()
     test_snapshot_s3_and_projector_creds()
     test_kafka_sasl_credentials()
+    test_secret_mounts_readable()
     if failures:
         print("helm-test: %d failure(s)" % len(failures), file=sys.stderr)
         sys.exit(1)
