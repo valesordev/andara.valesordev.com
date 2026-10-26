@@ -38,7 +38,7 @@ server:
     brokers: andara-log-kafka-bootstrap.andara-shared.svc:9092
     topic_prefix: local
     # No sasl_username or secrets.kafkaCreds yet: nothing here dials the broker until AW-INF-060,
-    # which names andara-server-local in both. A required Secret that only a cluster with the
+    # which must set both to andara-server-local (the Secret alone is no SASL). A required Secret that only a cluster with the
     # shared Kafka holds would stop andara-0 at FailedMount everywhere else, CI's lifecycle job
     # among them (ADR-0013 decision 12). `make kafka-creds ENV=local` copies it all the same.
 # The box's Traefik holds :80/:443 on the kind control plane (the kind port mapping was

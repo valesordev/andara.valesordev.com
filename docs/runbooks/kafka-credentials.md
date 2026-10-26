@@ -23,7 +23,7 @@ A workload's copy holds `password` only. The chart mounts it at `/etc/andara/sec
 - the server's from `server.kafka.sasl_username`;
 - each projector's from its own `projectors.<name>.kafkaCreds.secretName`, never the server's.
 
-`local`'s server is the exception until `AW-INF-060`: it runs on the memory source, never dials the broker, and renders neither the username nor the mount, because the Secret exists only where the shared Kafka runs. `make kafka-creds ENV=local` still copies the pair, and AW-INF-060 names `andara-server-local` in both values.
+`local`'s server is the exception until `AW-INF-060`: it runs on the memory source, never dials the broker, and renders neither the username nor the mount, because the Secret exists only where the shared Kafka runs. `make kafka-creds ENV=local` still copies both of local's principals (`andara-server-local`, `andara-projector-state-local`). When AW-INF-060 puts local's server on the broker, it sets both `server.kafka.sasl_username` and `secrets.kafkaCreds.secretName` to `andara-server-local`: the Secret alone leaves the username empty, which is no SASL.
 
 Clients read the password file on each new connection.
 
@@ -66,7 +66,7 @@ Rotate a platform principal the same way, with no `ENV`: `make kafka-creds-rotat
 ## A client can't authenticate, or is refused
 
 - **`reason="sasl_failed"`** in a server or projector log, or in `andara_kafka_client_auth_failures_total`: the username and password don't match the broker's. In order:
-  1. Is the environment's copy there? `kubectl --context kind-andara -n andara-<env> get secret andara-server-<env>`. If not, `make kafka-creds ENV=<env>`.
+  1. Is the environment's copy there? `kubectl --context kind-andara -n andara-<env> get secret <workload>-<env>`. If not, `make kafka-creds ENV=<env>`.
   2. Was it rotated since the copy? Run `make kafka-creds ENV=<env>` again. It's idempotent and prints `unchanged` when the copy is current.
   3. Does the username name the right principal? The pod's `ANDARA_KAFKA_SASL_USERNAME` must be `<workload>-<env>`. `make helm-test` holds that for every workload that dials the broker (not `local`'s server, until AW-INF-060).
 - **`reason="topic_unauthorized"`**, or an `rpk` error `TOPIC_AUTHORIZATION_FAILED` or `GROUP_AUTHORIZATION_FAILED`: authentication worked, and the ACL refused the operation.
