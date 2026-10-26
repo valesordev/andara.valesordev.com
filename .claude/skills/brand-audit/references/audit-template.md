@@ -7,13 +7,14 @@
 **Status:** draft | approved <YYYY-MM-DD> (PR #<n>)
 
 Classes: **core** (persists across the brand) · **candidate** (test before adopting) · **hero** (this composition only).
-Every line is `[PROPOSED]` until the owner decides it at PR review, then `[DECIDED <date>]`.
+Every line is `[PROPOSED P<n>]` (one ID per line, unique in `brands/<slug>/`, never reused) until the owner checks its
+box on the PR, then `[DECIDED <YYYY-MM-DD>, PR #<pr>, P<n>]` after the merge. Unchecked IDs stay proposed.
 
 ## Palette
 | Role (observed) | Hex | Area ≈ | Where | Class | Status | Why |
 |---|---|---|---|---|---|---|
-| paper | #FAFAF7 | 70% | page ground | core | [PROPOSED] | carries the editorial surface |
-| accent | #D2412C | <1% | CTAs, row arrows | core | [PROPOSED] | the only colour; links and direction marks |
+| paper | #FAFAF7 | 70% | page ground | core | [PROPOSED P1] | carries the editorial surface |
+| accent | #D2412C | <1% | CTAs, row arrows | core | [PROPOSED P2] | the only colour; links and direction marks |
 
 Artefacts (not colours): <noise greys, compression fringes>
 

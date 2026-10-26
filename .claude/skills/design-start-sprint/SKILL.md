@@ -52,7 +52,8 @@ For each story:
 - `story start <ID>` when you begin
 - use the skill the work calls for (`/brand-audit`, `/art-direction`,
   `/art-slot`, `/brand-qa seed`) and meet the Acceptance criteria in the
-  issue body exactly. A decision that's the owner's stays theirs: the PR asks for it.
+  issue body exactly. A decision that's the owner's stays theirs: the PR asks for it as
+  `[PROPOSED P<n>]` with a checkbox (the role's Proposals section).
 - put `Story: <ID>` in the PR body and in a commit trailer, and label the PR
   `role:visual-designer`. The merge moves the story to `review`. Never move it
   there yourself.

@@ -43,10 +43,14 @@ Request: `$ARGUMENTS`
 5. **Draft** `art-direction/illustration-system.md`, plus `prompt-template.md`
    (the slot prompt skeleton for this imprint) and `negative-examples.md`
    (what drifted and why, with images). Attribute decisions to the owner, and
-   mark undecided items `[PROPOSED]`.
-6. **Version.** When the owner approves (in the session or at PR review; quote
-   them), set `**Status:** AD v<n> — approved <YYYY-MM-DD>` and add a changelog
-   line: what changed, why, and which images motivated it.
+   mark undecided items `[PROPOSED P<n>]`, each with its checkbox in the PR body
+   (the role's Proposals section).
+6. **Version.** The owner approves the system as a whole, in the session or at
+   PR review; quote them. Merging the PR isn't that approval, and neither is
+   checking some of its IDs. Only then set
+   `**Status:** AD v<n> — approved <YYYY-MM-DD>` and add a changelog line: what
+   changed, why, and which images motivated it. A rule still
+   `[PROPOSED P<n>]` stays out of the rendered instructions.
 7. **Render** the ChatGPT project instructions (below).
 
 ## Export
@@ -57,7 +61,7 @@ AD v<n>." The owner never edits the instructions in ChatGPT, or the two drift.
 Never render from a draft.
 
 ## Output
-Decisions made, `[PROPOSED]` items, the new version (if any), the rendered
+Decisions made, `[PROPOSED P<n>]` items, the new version (if any), the rendered
 block (if approved), and one next action, usually "`/art-slot <slug> <slot>`
 with AD v<n>", or "re-run <slot> to compare" after a revision. Changed files go
 on a `design/` branch, with a PR labeled `role:visual-designer` after `/pre-pr`.
