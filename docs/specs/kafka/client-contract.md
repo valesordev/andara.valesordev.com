@@ -209,6 +209,20 @@ contract pins and asserts it. The ingress never queries a broker config for this
   retired (ADR-0013), the value is read at boot and every 60 s, and an **absent value is a `warn`**, not a silent 1;
   AC 7 is scoped to Kafka. The implementation reads this today as 1 on every broker, silently; the change is a
   follow-up of `AW-SRV-052`, and this text is the target it is held to.
+  **How the server knows (ruled 2026-10-26, for `AW-SRV-064`):**
+  - **Configuration, set once at boot.** The bool key `kafka.min_insync_unsupported` (env
+    `ANDARA_KAFKA_MIN_INSYNC_UNSUPPORTED`, flag `--kafka-min-insync-unsupported`) defaults to `false`. Only the compose
+    stack's server environment sets it to `true`. The chart doesn't expose it, because every cluster runs Kafka.
+  - **Why not the answer itself:** neither the absent value nor sniffing the vendor from `ApiVersions` or broker
+    configs is used. Either would put an undocumented Redpanda behaviour in the contract, and would make "a Kafka
+    that dropped the property" read as Redpanda.
+  - **With the key `true`:** the property isn't asked for, the probe uses 1, and the only line is one `info` per
+    process.
+  - **With it `false`:** an answer with no `min.insync.replicas` entry is a `warn` (`min.insync.replicas absent`,
+    with `topic` and `broker`). A failed read, whether an error or an authorization refusal, is a `warn`
+    (`min.insync.replicas read failed`, passing through `kafkaclient.Config.Check`, `AW-SRV-044`). In both cases
+    the probe keeps the last value it read. Before any value has been read it uses 1, so ISR-below-min isn't
+    marked until a read succeeds. The key goes away with compose (`ADR-0013`).
 - Entering and leaving log at `info` with `partition` and the cause (`produce_error` or `probe`, and the
   error name or `leader_absent` / `isr_below_min`).
 
