@@ -857,7 +857,7 @@ def test_secret_mounts_readable():
     """Codex on #654: a Secret volume at defaultMode 0400 is root's alone unless the pod sets fsGroup,
     which the kubelet makes the file's group and grants read; a non-root workload without it can't
     read its own Kafka password. Every pod mounting a Secret sets fsGroup to its runAsGroup."""
-    for env in ("local", "dev"):
+    for env in ENVS:
         code, out, err = render(env, "--set", "projectors.state.enabled=true")
         if code:
             fail("%s render failed: %s" % (env, err.strip()))
@@ -868,8 +868,9 @@ def test_secret_mounts_readable():
             pod = d["spec"]["template"]["spec"]
             secrets = [v["name"] for v in pod.get("volumes", []) if "secret" in v]
             sc = pod.get("securityContext") or {}
-            if secrets and sc.get("fsGroup") != sc.get("runAsGroup"):
-                fail("%s: %s/%s mounts Secret volumes %s as uid %s with fsGroup %r, want %r"
+            # Neither set is no fsGroup at all, root:root 0400: equal but unreadable.
+            if secrets and (sc.get("fsGroup") is None or sc.get("fsGroup") != sc.get("runAsGroup")):
+                fail("%s: %s/%s mounts Secret volumes %s as uid %s with fsGroup %r, want one, equal to runAsGroup %r"
                      % (env, d["kind"], d["metadata"]["name"], secrets, sc.get("runAsUser"),
                         sc.get("fsGroup"), sc.get("runAsGroup")))
 
