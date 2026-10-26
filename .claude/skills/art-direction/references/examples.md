@@ -10,7 +10,8 @@ stipple, no gray wash; value is ink-only on transparency, painted with the ink t
 `brands/_tools/treat/ink.py`. Composition types: `hero-wide` 2.4:1 (left third empty for type), `banner-wide`,
 `square-specimen`, `vertical-plate`. Recommends each section with one alternative (e.g. "flat silhouette instead of
 hatch: repeats more reliably, loses the engraving quality"). Keeps the specific juniper out of the system: that's
-the hero slot's prompt. Marks open items `[PROPOSED]`. Renders nothing until the owner approves.
+the hero slot's prompt. Marks open items `[PROPOSED P<n>]` with one PR checkbox each. Renders nothing until the owner
+approves the system.
 
 **Prompt:** "Approved, ship AD v1."
 **Behavior:** Sets `**Status:** AD v1 — approved 2026-10-08`, adds the changelog line, and outputs the rendered
