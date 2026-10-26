@@ -102,7 +102,7 @@ than discovering it from a burn-rate alert two weeks after launch.
 
 ## Alert
 
-**`WorldReadOnly`**: `max by (namespace) (andara_ingress_degraded) == 1` for 30 s, with `keep_firing_for: 2m`
+**`WorldReadOnly`**: `max by (environment, namespace) (andara_ingress_degraded) == 1` for 30 s, with `keep_firing_for: 2m`
 over the sawtooth's gap (ruling 3). Severity `page`, `slo: world-write-availability`. The `for:` and
 `ingress.degraded_hold` change together: `make check` fails if the hold's default or minimum is below
 `2 × for + 30 s` (`docs/specs/kafka/client-contract.md`; `scripts/degraded_hold.py`).

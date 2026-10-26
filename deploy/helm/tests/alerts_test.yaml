@@ -904,3 +904,78 @@ tests:
             exp_annotations:
               summary: "The state projector's replica disagreed with the World's recorded State Hash — a possible determinism failure; the evidence is the projector's error line"
               runbook: docs/runbooks/state-projector-diverged.md
+
+  # Every row of decision 9's table, for both platform-series rules (pre-PR review): a mapping that
+  # mistypes its namespace or its environment would leave the alert at `unknown`.
+  - name: cluster — an expiring Certificate takes each environment of the table
+    interval: 1m
+    input_series:
+      - series: 'certmanager_certificate_expiration_timestamp_seconds{name="andara-edge", exported_namespace="andara-local", environment="unknown", namespace="cert-manager"}'
+        values: '86400x30'
+      - series: 'certmanager_certificate_expiration_timestamp_seconds{name="andara-edge", exported_namespace="andara-ci", environment="unknown", namespace="cert-manager"}'
+        values: '86400x30'
+      - series: 'certmanager_certificate_expiration_timestamp_seconds{name="andara-edge", exported_namespace="andara-staging", environment="unknown", namespace="cert-manager"}'
+        values: '86400x30'
+      - series: 'certmanager_certificate_expiration_timestamp_seconds{name="andara-edge", exported_namespace="andara-prod", environment="unknown", namespace="cert-manager"}'
+        values: '86400x30'
+    alert_rule_test:
+      - eval_time: 20m
+        alertname: CertificateExpiringSoon
+        exp_alerts:
+          - exp_labels: {name: andara-edge, exported_namespace: andara-local, environment: local, namespace: andara-local, severity: page, slo: edge-availability}
+            exp_annotations:
+              summary: "Certificate andara-local/andara-edge expires in under 7 days and has not renewed"
+              runbook: docs/runbooks/certificate-expiring.md
+          - exp_labels: {name: andara-edge, exported_namespace: andara-ci, environment: local, namespace: andara-ci, severity: page, slo: edge-availability}
+            exp_annotations:
+              summary: "Certificate andara-ci/andara-edge expires in under 7 days and has not renewed"
+              runbook: docs/runbooks/certificate-expiring.md
+          - exp_labels: {name: andara-edge, exported_namespace: andara-staging, environment: staging, namespace: andara-staging, severity: page, slo: edge-availability}
+            exp_annotations:
+              summary: "Certificate andara-staging/andara-edge expires in under 7 days and has not renewed"
+              runbook: docs/runbooks/certificate-expiring.md
+          - exp_labels: {name: andara-edge, exported_namespace: andara-prod, environment: prod, namespace: andara-prod, severity: page, slo: edge-availability}
+            exp_annotations:
+              summary: "Certificate andara-prod/andara-edge expires in under 7 days and has not renewed"
+              runbook: docs/runbooks/certificate-expiring.md
+
+  # Every environment's router erroring at 10 % (> 1 %): each pages as itself, in both halves of the ratio.
+  - name: cluster — edge 5xx pages as each environment of the table
+    interval: 1m
+    input_series:
+      - series: 'traefik_router_requests_total{router="andara-local-andara-andara-local@kubernetes", code="500", environment="unknown", namespace="traefik"}'
+        values: '0+10x30'
+      - series: 'traefik_router_requests_total{router="andara-local-andara-andara-local@kubernetes", code="200", environment="unknown", namespace="traefik"}'
+        values: '0+100x30'
+      - series: 'traefik_router_requests_total{router="andara-ci-andara-andara-ci@kubernetes", code="500", environment="unknown", namespace="traefik"}'
+        values: '0+10x30'
+      - series: 'traefik_router_requests_total{router="andara-ci-andara-andara-ci@kubernetes", code="200", environment="unknown", namespace="traefik"}'
+        values: '0+100x30'
+      - series: 'traefik_router_requests_total{router="andara-staging-andara-andara-staging@kubernetes", code="500", environment="unknown", namespace="traefik"}'
+        values: '0+10x30'
+      - series: 'traefik_router_requests_total{router="andara-staging-andara-andara-staging@kubernetes", code="200", environment="unknown", namespace="traefik"}'
+        values: '0+100x30'
+      - series: 'traefik_router_requests_total{router="andara-prod-andara-andara-prod@kubernetes", code="500", environment="unknown", namespace="traefik"}'
+        values: '0+10x30'
+      - series: 'traefik_router_requests_total{router="andara-prod-andara-andara-prod@kubernetes", code="200", environment="unknown", namespace="traefik"}'
+        values: '0+100x30'
+    alert_rule_test:
+      - eval_time: 25m
+        alertname: IngressErrorRateHigh
+        exp_alerts:
+          - exp_labels: {environment: local, namespace: andara-local, severity: page, slo: edge-availability}
+            exp_annotations:
+              summary: "More than 1% of requests through the Andara edge are 5xx for 10 minutes"
+              runbook: docs/runbooks/ingress-error-rate.md
+          - exp_labels: {environment: local, namespace: andara-ci, severity: page, slo: edge-availability}
+            exp_annotations:
+              summary: "More than 1% of requests through the Andara edge are 5xx for 10 minutes"
+              runbook: docs/runbooks/ingress-error-rate.md
+          - exp_labels: {environment: staging, namespace: andara-staging, severity: page, slo: edge-availability}
+            exp_annotations:
+              summary: "More than 1% of requests through the Andara edge are 5xx for 10 minutes"
+              runbook: docs/runbooks/ingress-error-rate.md
+          - exp_labels: {environment: prod, namespace: andara-prod, severity: page, slo: edge-availability}
+            exp_annotations:
+              summary: "More than 1% of requests through the Andara edge are 5xx for 10 minutes"
+              runbook: docs/runbooks/ingress-error-rate.md

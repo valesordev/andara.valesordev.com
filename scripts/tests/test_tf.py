@@ -506,6 +506,12 @@ class RulesRenderTest(unittest.TestCase):
         self.assertTrue(any("AndaraServerUnavailable: rendered expr differs" in p for p in problems), problems)
         self.assertTrue(any("names environment(s) dev outside" in p for p in problems), problems)
 
+    def test_a_regex_matcher_naming_an_unrequired_environment_fails(self):
+        groups = planned_from_file(self.doc, [])
+        self.set_expr(groups, "SimulationLagging", 'andara_simulation_lag_seconds{environment=~"dev"} > 0.5')
+        problems = tf.rule_problems(groups, [], self.doc)
+        self.assertTrue(any("SimulationLagging: names environment(s) dev outside" in p for p in problems), problems)
+
     def test_a_line_dropped_that_is_required_fails(self):
         groups = planned_from_file(self.doc, [])
         problems = tf.rule_problems(groups, ["dev"], self.doc)

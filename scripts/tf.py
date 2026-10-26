@@ -463,9 +463,9 @@ RULE_RUNS = {
     "solo7": {"rules_required_none": [], "rules_required_prod": ["prod"], "rules_required_every": None},
 }
 ENV_MARKER = re.compile(r"#\s*env:([A-Za-z0-9_-]+)\s*$")
-# An equality matcher on environment inside a selector. label_replace's arguments ("environment",
-# "dev") are not one.
-ENV_MATCHER = re.compile(r'\benvironment\s*=\s*"([^"]*)"')
+# An equality or regex matcher on environment inside a selector (pre-PR review: =~ too). label_replace's
+# arguments ("environment", "dev") are not one.
+ENV_MATCHER = re.compile(r'\benvironment\s*=~?\s*"([^"]*)"')
 DURATION = re.compile(r"^([0-9]+)([smh])$")
 UNITS = {"s": 1, "m": 60, "h": 3600}
 GROUP_ADDRESS = "module.stack.grafana_rule_group.andara"

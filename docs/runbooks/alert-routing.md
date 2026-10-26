@@ -135,8 +135,9 @@ The rest of this section describes how the ruler was delivered, for the diff and
 
 ### Credentials
 
-`ANDARA_ALERTS_CI_READ` (repository secret) and `ANDARA_RULES_CI_WRITE` (secret of `andara-main`) are on
-`grafana-credentials.md`'s Retiring list, which gives their click paths and scopes. The address and
+`ANDARA_ALERTS_CI_READ` (repository secret) and `ANDARA_RULES_CI_WRITE` (secret of `andara-main`) are in
+`grafana-credentials.md`'s "Unused, still to delete by hand" section, which gives their click paths, scopes
+and who deletes each, and when. The address and
 tenant are the repository variables `GRAFANA_CLOUD_PROM_URL` and `GRAFANA_CLOUD_PROM_USER`.
 `alerts_sync.py` strips `/api/prom` from the URL for `mimirtool`, and uses the user as the tenant.
 
