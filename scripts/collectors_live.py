@@ -189,6 +189,8 @@ def check(r, profile, env, sleep=time.sleep, now=time.time):
     for kind, name in [("deployment", n) for n in DEPLOYMENTS[profile]] + [("daemonset", n) for n in DAEMONSETS]:
         ok, have, want = wait_ready(env, kind, "%s-%s" % (RELEASE, name), sleep=sleep, now=now)
         r.check(ok, "%s %s-%s Ready %s/%s" % (kind, RELEASE, name, have, want))
+        if not ok:
+            diagnose(r, env, name)
     pods = kjson(env, "get", "pods", "-A")
     pod_checks(r, pods)
     secret = kjson(env, "-n", NS, "get", "secret", collectors.SECRET)
@@ -205,6 +207,29 @@ def check(r, profile, env, sleep=time.sleep, now=time.time):
             return None if doc is None else fleet_pods(doc)
         fleet_inventory(r, env, list_pods, sleep=sleep, now=now)
     return r
+
+
+def diagnose(r, env, name):
+    """Why collector `name` isn't Ready, printed where CI can show it: each of its pods' phase, Ready
+    condition and container states, then the pod's events and its last log lines."""
+    prefix = "%s-%s-" % (RELEASE, name)
+    doc = kjson(env, "-n", NS, "get", "pods")
+    pods = [p for p in (doc or {}).get("items") or [] if p["metadata"]["name"].startswith(prefix)]
+    if not pods:
+        r.say("%s: no pods%s" % (name, "" if doc is not None else " (the pod list could not be read)"))
+    for p in pods:
+        pname, st = p["metadata"]["name"], p.get("status") or {}
+        ready = [c for c in st.get("conditions") or [] if c.get("type") == "Ready"]
+        r.say("%s: phase %s, Ready=%s%s" % (pname, st.get("phase"), ready[0].get("status") if ready else "?",
+                                           " (%s)" % ready[0]["reason"] if ready and ready[0].get("reason") else ""))
+        for c in st.get("containerStatuses") or []:
+            state = c.get("state") or {}
+            how = next(("%s %s" % (k, (v or {}).get("reason", "")) for k, v in state.items()), "unknown")
+            r.say("%s: %s: %s, %d restart(s)" % (pname, c.get("name"), how.strip(), c.get("restartCount", 0)))
+        for what, args in (("events", ("get", "events", "--field-selector", "involvedObject.name=" + pname)),
+                           ("last log lines", ("logs", pname, "--all-containers", "--tail=20"))):
+            out = kubectl(env, "-n", NS, *args)
+            r.say("%s: %s:\n%s" % (pname, what, (out.stdout if out.returncode == 0 else out.stderr).rstrip()))
 
 
 def pod_checks(r, doc):

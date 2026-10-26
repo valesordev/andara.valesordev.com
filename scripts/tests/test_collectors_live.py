@@ -65,6 +65,42 @@ class PodInventory(unittest.TestCase):
         self.assertTrue([f for f in r.failures if "outside the release: andara-dev/a" in f], r.failures)
 
 
+class NotReady(unittest.TestCase):
+    """A collector that isn't Ready prints why: its pods' states, their events and their last log lines
+    (lifecycle run 40387333385: receiver 0/1 with nothing to read)."""
+
+    def test_the_pods_states_events_and_logs_are_printed(self):
+        stuck = pod("observability", "k8s-monitoring-receiver-abc-1")
+        stuck["status"] = {"phase": "Running",
+                           "conditions": [{"type": "Ready", "status": "False", "reason": "ContainersNotReady"}],
+                           "containerStatuses": [{"name": "alloy", "ready": False, "restartCount": 4,
+                                                  "state": {"waiting": {"reason": "CrashLoopBackOff"}}}]}
+        other = pod("observability", "k8s-monitoring-metrics-abc-1")
+
+        def kubectl(env, *args):
+            if args[2:4] == ("get", "events"):
+                return mock.Mock(returncode=0, stdout="Warning BackOff restarting failed container\n", stderr="")
+            if args[2] == "logs":
+                return mock.Mock(returncode=0, stdout="level=error msg=\"failed to bind\"\n", stderr="")
+            return mock.Mock(returncode=1, stdout="", stderr="unexpected")
+        out = io.StringIO()
+        with mock.patch.object(live, "kjson", lambda env, *a: {"items": [stuck, other]}), \
+                mock.patch.object(live, "kubectl", kubectl), redirect_stdout(out):
+            live.diagnose(live.Run(), {}, "receiver")
+        text = out.getvalue()
+        self.assertIn("k8s-monitoring-receiver-abc-1: phase Running, Ready=False (ContainersNotReady)", text)
+        self.assertIn("alloy: waiting CrashLoopBackOff, 4 restart(s)", text)
+        self.assertIn("Warning BackOff restarting failed container", text)
+        self.assertIn('level=error msg="failed to bind"', text)
+        self.assertNotIn("metrics-abc-1", text)
+
+    def test_no_pods_says_so(self):
+        out = io.StringIO()
+        with mock.patch.object(live, "kjson", lambda env, *a: {"items": []}), redirect_stdout(out):
+            live.diagnose(live.Run(), {}, "receiver")
+        self.assertIn("receiver: no pods", out.getvalue())
+
+
 class Readiness(unittest.TestCase):
 
     def test_a_daemonset_and_a_deployment_are_read_by_their_own_fields(self):
