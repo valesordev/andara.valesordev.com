@@ -6,7 +6,7 @@
 # release.rolled_back_to and server.recovery.pin_round. main's `tag: dev` is never what runs.
 image:
   repository: ghcr.io/valesordev/andara-server
-  tag: dev
+  tag: sha-e7b8d8e852c6@sha256:edfa7c60393139cf8ceb36b6412a59d3d7002ba07ba47b86e543610741d6b137
   pullPolicy: Always
 
 server:
