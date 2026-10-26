@@ -526,9 +526,11 @@ func purgeACrashedBody(t testing.TB, linkdead bool, handlers map[sim.CommandKind
 	if tr := ls[0]["trace_id"]; tr == "" || tr == nil || tr != ls[1]["trace_id"] {
 		t.Fatalf("trace_id %v and %v: want one, non-empty", ls[0]["trace_id"], ls[1]["trace_id"])
 	}
-	if p := s2.lines(id, lineProduced); len(p) != 1 || p[0]["zone"] != "town" {
-		t.Fatalf("produced lines %v: want one, to town", p)
-	}
+	// The sweep logs it after MarkPurged, which the sim does not wait on.
+	eventually.Observed(t, 10*time.Second, "one purge produced, to town", func() (bool, string) {
+		p := s2.lines(id, lineProduced)
+		return len(p) == 1 && p[0]["zone"] == "town", fmt.Sprint(p)
+	})
 	purgedAt := sim.Tick(ls[1]["tick"].(float64))
 
 	if linkdead {
