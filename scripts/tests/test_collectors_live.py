@@ -111,7 +111,9 @@ class NotReady(unittest.TestCase):
                                                    "message": "quota exceeded"}]}}
             if args[2:4] == ("get", "events") and events:
                 return {"items": [self.RS_EVENT,
-                                  {"involvedObject": {"kind": "Pod", "name": "k8s-monitoring-metrics-x"},
+                                  {"involvedObject": {"kind": "Deployment", "name": "k8s-monitoring-receiver"},
+                                   "type": "Normal", "reason": "ScalingReplicaSet", "message": "scaled up to 1"},
+                                  {"involvedObject": {"kind": "Pod", "name": "k8s-monitoring-receiverx-1"},
                                    "type": "Normal", "reason": "Pulled", "message": "unrelated"}]}
             return None
         out = io.StringIO()
@@ -126,7 +128,9 @@ class NotReady(unittest.TestCase):
         self.assertIn("receiver: no pods", text)
         self.assertIn("alloy k8s-monitoring-receiver: Deployed=False (InstallFailed: quota exceeded)", text)
         self.assertIn("ReplicaSet/k8s-monitoring-receiver-85579d4f9f: Warning FailedCreate: exceeded quota", text)
-        self.assertNotIn("unrelated", text)
+        self.assertIn("Deployment/k8s-monitoring-receiver: Normal ScalingReplicaSet: scaled up to 1", text,
+                      "the workload's own events (a DaemonSet's FailedCreate) match by exact name")
+        self.assertNotIn("unrelated", text, "a name that only shares the prefix, with no '-', is another object")
 
     def test_unreadable_alloy_resource_and_events_say_so(self):
         text = self.no_pods({"items": []}, alloy=False, events=False)
