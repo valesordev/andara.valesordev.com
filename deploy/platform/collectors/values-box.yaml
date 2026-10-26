@@ -1,0 +1,38 @@
+# The box's cluster `andara` (PROFILE=box): andara-local and andara-dev, the shared services' Fleet
+# collector, and andara-shared's pod logs (ADR-0014 §1, §3). Only the collector list, the namespace lists
+# and cluster.name may differ from values-ci.yaml (make check).
+
+annotationAutodiscovery:
+  namespaces: [andara-local, andara-dev, traefik]
+
+podLogsViaLoki:
+  namespaces: [andara-local, andara-dev, andara-shared]
+
+collectors:
+  # Pulls the Fleet pipelines (shared_kafka) and forwards into the receiver. No chart feature runs here,
+  # so a bad pipeline can crash or starve only this collector. The only one that registers with Fleet;
+  # environment is never an attribute (ADR-0012 decision 15). Its attributes are cluster and stack: the
+  # chart sets `cluster` from cluster.name itself, so naming it here too would render the key twice.
+  fleet:
+    presets: [deployment]
+    remoteConfig:
+      enabled: true
+      auth:
+        type: basic
+        usernameKey: fleet
+        passwordKey: token
+      secret:
+        create: false
+        name: grafana-telemetry
+        namespace: observability
+      extraAttributes:
+        stack: solo7dev
+    alloy:
+      # The chart would set GCLOUD_RW_API_KEY from the Secret's token. Grafana's default Fleet pipelines
+      # (self-monitoring-metrics, self-monitoring-logs-kubernetes) match every collector and write
+      # straight to the stack with sys.env("GCLOUD_RW_API_KEY"), past the destinations' stamp and keep
+      # rule. Empty, they authenticate as nobody and ship nothing, and no pipeline can read the token
+      # from the environment (ADR-0014 §3). remotecfg reads the token from the Secret, not from here.
+      extraEnv:
+        - name: GCLOUD_RW_API_KEY
+          value: ""

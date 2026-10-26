@@ -123,16 +123,28 @@ entry.
   collector's `remotecfg` needs the last scope to pull its pipelines.
 - **Expiry:** at most 90 days. When it is made, record it in `credentials.yaml` with `warn_days: 30`: a
   lapsed telemetry token blinds every SLO at once (`AW-INF-065`).
-  - `solo7dev`: not made yet.
+  - `solo7dev`: recorded in `credentials.yaml`.
   - `solo7`: not made yet.
 - **Stored:**
-  - `solo7dev`: `.local/box.env`; a repository secret for CI's kind and `stack` jobs; and the
-    `k8s-monitoring` secret made from `.local/box.env` for `local`, `dev` and `staging`.
-  - `solo7`: `.local/box.env` and that secret only, never a repository secret.
-  - **Not made yet.** The cluster rebuild (`AW-INF-066`) is the first thing that ships with it.
-- **Read by:** the collectors (`k8s-monitoring`) and CI's kind and `stack` jobs.
-- **Check after a rotation:** `make observe-check` finds fresh series from the stack whose token changed:
-  `ENV=dev` for `solo7dev`, `ENV=prod` for `solo7`.
+  - `solo7dev`: `.local/box.env`, and the Secret `observability/grafana-telemetry` on the box's cluster,
+    key `token`, which `make platform-up` writes from it (`AW-INF-065`). CI holds none yet, so CI's kind
+    job installs the collectors with an empty token and ships nothing; the repository secret that changes
+    that is a later SRE change.
+  - `solo7`: `.local/box.env` and prod's cluster's copy of that Secret only, never a repository secret
+    (`AW-INF-078`).
+- **Read by:** the `k8s-monitoring` collectors, through the Secret: the metrics and logs destinations'
+  `passwordKey: token`, the traces destination's `passwordFrom`, and `fleet`'s `remoteConfig`. No collector
+  holds it in its environment (`fleet`'s `GCLOUD_RW_API_KEY` is set empty on purpose, so Grafana's default
+  Fleet pipelines can't use it).
+  - Alloy's traces auth refuses an empty password, which would keep a fresh `receiver` from loading. So when
+    the token is empty, traces send the placeholder `unset` instead. The Secret's token stays empty.
+  - The receiver's `Unauthenticated` errors from Tempo on an empty-token run (CI, or `make platform-up`
+    without the token) are expected, like the other destinations' 401s.
+- **Check after a rotation:** `make platform-up` rewrites the Secret (`secret observability/grafana-telemetry
+  written`). The destinations re-read it within a minute; `fleet`'s remote config keeps the token it started
+  with, so `platform-up` replaces its pod (`collector fleet restarted to read the new token`). Then
+  `make collectors-check` says `token set`, and `make observe-check` finds fresh series from the stack whose token changed: `ENV=dev` for
+  `solo7dev`, `ENV=prod` for `solo7`.
 
 ### `GRAFANA_SOLO7DEV_FLEET_READ_TOKEN`, `GRAFANA_SOLO7_FLEET_READ_TOKEN`
 
@@ -244,6 +256,40 @@ entry.
 - the read token and `SLACK_WEBHOOK_DEV`.
 
 Each is described above. No `solo7` apply or IRM token belongs on the box.
+
+## The collectors and the telemetry token
+
+The `k8s-monitoring` release in `observability` is `make platform-up`'s (`ADR-0014`). Its values are
+`deploy/platform/collectors/`, and the token reaches it only through the Secret above.
+
+- **A hand `helm upgrade` doesn't stay.** The next `make platform-up` compares the release's values with
+  what it renders and reinstalls on any difference (`k8s-monitoring 4.5.3 installed (values differ)`).
+  Change the files instead.
+- **Without the token** the release still installs, the Secret holds an empty `token`, the collectors run
+  and ship nothing, and `platform-up`'s last line says so (`ADR-0012` decision 14).
+- **A collector can't report its own failure through itself.** `observability` is in no pod-log list, so a
+  failed send, pull or forward is read on the cluster: `make collectors-logs COLLECTOR=<metrics|logs|receiver|fleet>`
+  prints that collector's warnings and errors. A `401 Unauthorized` there is a lapsed, revoked or empty
+  token.
+- **The release's state:** `make collectors-check` (each collector Ready, the Secret's keys, whether `token`
+  is set, and on the box the one active Fleet collector of the running `fleet` pod). A replaced pod that
+  couldn't unregister, after a revoked or empty token, stays active in Fleet for up to about 3 hours; the
+  check prints it and doesn't count it.
+- **What `solo7dev` may hold.** The stack is on Grafana Cloud's Pro tier, on an employee account, so
+  overages aren't billed today. Brian's rule (2026-10-26): don't go far past the allowance; how far over is
+  tolerated is still being checked. Other Grafana products share the same allowance.
+
+  | Allowance | Included per month | Ours, read 2026-10-25 |
+  |---|---|---|
+  | Active series | 20k | 41 (Kafka 24) |
+  | Logs ingested | 50 GB | first week owed (`AW-INF-065`) |
+  | Traces ingested | 50 GB | none yet: no server runs on the box |
+  | Profiles ingested | 50 GB | none: nothing sends profiles |
+  | Host hours | 2k | none: node-exporter isn't deployed |
+  | Container hours | 37k | not read yet |
+
+  Grafana Cloud's usage pages for the stack have the current figures; `AW-INF-065`'s §8 record holds the
+  measured ones.
 
 ## Retiring
 

@@ -61,7 +61,7 @@ HAS_GO := $(shell find . -name '*.go' -not -path './.git/*' -not -path './bin/*'
         proto proto-check adr \
         k8s-dry check-targets clean build build-info goldens \
         values-schema values-schema-check helm-test image image-publish image-check cli-release cli-release-check cli-release-publish kind-load helm-install measure-tick stack-smoke stack-play stack-linkdead stack-recover stack-recover-mismatch \
-        platform-up platform-check kube-context-check cluster-up cluster-down cluster-rebuild stream-soak content-grammar-check observe-check slo-report dashboard-check observe-unavailable gcx-config gcx-check gcx-only-check scripts-test kafka-install kafka-broker-bounce shared-up shared-down shared-check shared-netcheck kafka-users kafka-users-check kafka-creds kafka-creds-rotate kafka-acl-probe \
+        platform-up platform-check collectors-check collectors-probe collectors-logs kube-context-check cluster-up cluster-down cluster-rebuild stream-soak content-grammar-check observe-check slo-report dashboard-check observe-unavailable gcx-config gcx-check gcx-only-check scripts-test kafka-install kafka-broker-bounce shared-up shared-down shared-check shared-netcheck kafka-users kafka-users-check kafka-creds kafka-creds-rotate kafka-acl-probe \
         argocd-install promote promote-log argocd-status argocd-ui argocd-recover argocd-uninstall world-reset content-seed env-destroy env-recover \
         objectstore-up objectstore-install objectstore-check projector-stop projector-start projector-rebuild server-stop server-start core-versions-check \
         builder-reference builder-reference-check guide-check \
@@ -386,10 +386,22 @@ stack-recover-mismatch: build
 stack-projector-check: build
 	@$(SCRIPTS)/stack_projector_check.sh
 
-## platform-up: install and reconcile the platform at deploy/platform/versions.yaml's pins — [PROFILE=box|ci] [ANDARA_KUBE_CONTEXT=kind-andara] [REQUIRE_LETSENCRYPT=1]; the letsencrypt issuers need CLOUDFLARE_API_TOKEN, from .local/box.env (AW-INF-054)
+## platform-up: install and reconcile the platform at deploy/platform/versions.yaml's pins, the k8s-monitoring collectors last — [PROFILE=box|ci] [ANDARA_KUBE_CONTEXT=kind-andara] [REQUIRE_LETSENCRYPT=1]; the letsencrypt issuers need CLOUDFLARE_API_TOKEN and the collectors ship only with GRAFANA_SOLO7DEV_TELEMETRY_TOKEN, both from .local/box.env (AW-INF-054, AW-INF-065)
 # PROFILE defaults to box here, not to the compose profile `full` above.
 platform-up:
 	@$(PY) $(SCRIPTS)/platform_up.py up "$(if $(filter command line,$(origin PROFILE)),$(PROFILE),box)"
+
+## collectors-check: the k8s-monitoring release on the cluster — at its pin, the Alloy CRD before the collectors, every collector Ready, no node-exporter, the telemetry Secret's keys (token set or empty, never printed), only the release's pods read it, and on the box with the token exactly one active Fleet collector — [PROFILE=box|ci] (AW-INF-065)
+collectors-check:
+	@$(PY) $(SCRIPTS)/collectors_live.py check "$(if $(filter command line,$(origin PROFILE)),$(PROFILE),box)"
+
+## collectors-probe: push an unkept and a kept series to the receiver and prove solo7dev keeps only the kept one — the destination's keep rule applies to forwarded series; box only, needs the token (AW-INF-065 AC-7)
+collectors-probe:
+	@$(PY) $(SCRIPTS)/collectors_live.py probe
+
+## collectors-logs: a collector's warnings and errors over the last hour, read on the cluster because observability ships no logs — COLLECTOR=<metrics|logs|receiver|fleet> (AW-INF-065)
+collectors-logs:
+	@$(PY) $(SCRIPTS)/collectors_live.py logs "$(COLLECTOR)"
 
 ## platform-check: versions.yaml is valid, and no script or workflow pins a platform item outside it (AW-INF-054)
 platform-check:
@@ -407,7 +419,7 @@ cluster-up:
 cluster-down:
 	@$(PY) $(SCRIPTS)/cluster.py down "$(CONFIRM)"
 
-## cluster-rebuild: export the certificate Secrets to .local/tls/, delete `andara`, create it again, then platform-up (which restores the CA root), then shared-up — CONFIRM=andara
+## cluster-rebuild: export the certificate Secrets to .local/tls/, delete `andara`, create it again, then platform-up (which restores the CA root and installs the collectors with the telemetry Secret), then shared-up — CONFIRM=andara
 cluster-rebuild:
 	@$(PY) $(SCRIPTS)/cluster.py rebuild "$(CONFIRM)"
 

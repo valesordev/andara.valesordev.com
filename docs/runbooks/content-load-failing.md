@@ -40,10 +40,11 @@ curl -s http://<server>:8080/metrics | grep -E '^andara_content_(pending_seconds
 - `andara_content_load_failures_total{reason}` shows which reason is rising. It is the first
   column of the table below.
 
-Then the server's `error` line for the refusal, from Loki:
+Then the server's `error` line for the refusal, from Loki, in the pod log the `logs` collector ships
+from stderr (the allow-listed labels only, AW-INF-065):
 
 ```
-{service_name="andara-server"} |= "the previous version keeps serving"
+{namespace="andara-<env>", container="server"} |= "the previous version keeps serving"
 ```
 
 There are two messages, on purpose:

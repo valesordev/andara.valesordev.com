@@ -273,6 +273,8 @@ SWEEP = [
     ("topics.py", [PY, "scripts/topics.py", "diff", "--env", "dev"]),
     # dev's registry is the shared Karapace, reached by a port-forward (AW-INF-057).
     ("schemas.py", [PY, "scripts/schemas.py", "diff", "--env", "dev"]),
+    # check and probe poll the cluster and Grafana Cloud; logs is one call through the same helper.
+    ("collectors_live.py", [PY, "scripts/collectors_live.py", "logs", "metrics"]),
     # The shared broker's credentials (AW-INF-056).
     ("kafka_auth.py", [PY, "scripts/kafka_auth.py", "broker-exec", "andara-log-broker-0", "--", "true"]),
     ("kafka_creds.py", [PY, "scripts/kafka_creds.py", "copy", "dev"]),

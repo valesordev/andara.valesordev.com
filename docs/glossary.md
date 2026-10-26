@@ -847,14 +847,16 @@ Fleet Management's pipelines. They ship `andara-local` and `andara-dev` to `solo
 registered collectors. Here it carries only the collection of `andara-shared`'s services (today `shared_kafka`),
 deployed through Terraform per stack, on the one `fleet` collector. Its pipelines forward to the chart's `receiver`,
 so the chart's destinations stamp `environment` (a series nothing stamped carries `environment="unknown"`) and apply
-the keep-list (ADR-0014).
+the keep-list (ADR-0014). Grafana also creates default pipelines in every stack (`self-monitoring-*`); they match
+`fleet` too, and write past the destinations with the token from the environment, so `fleet`'s environment
+holds none (AW-INF-065).
 
 **Contact point** — Where Grafana sends a notification: a Slack channel, an IRM integration, or
 `blackhole`, which notifies no one (its one webhook never resolves, and its route is always muted). **Notification policy** — The tree that matches an alert's labels
 (`severity`) to contact points. One tree per stack, owned wholly by Terraform.
 
-**Keep-list** — The metric series a stack's ingest must not drop because a rule or the dashboard reads them
-(ADR-0012 §13). The allow-list is `deploy/platform/collectors/keep-list.yaml`. It is enforced at the
+**Keep-list** — The metric series a stack's ingest must not drop because a rule, a dashboard panel or a drill
+reads them (ADR-0012 §13). The allow-list is `deploy/platform/collectors/keep-list.yaml`. It is enforced at the
 `k8s-monitoring` chart's metrics destination, and each Fleet pipeline also keeps only its own names (ADR-0014 §5).
 A `kube_` name is kept only from the namespaces `environments.yaml` maps (ADR-0014 amendment A1).
 `make observe-check ENV=<env> KEEP_LIST=1` extracts the names from the rules and the dashboard and queries each

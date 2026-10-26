@@ -1,0 +1,13 @@
+# ADR-0012 decision 9's table, the only namespace -> environment mapping (ADR-0014 §4). The k8s-monitoring
+# chart's three destinations stamp `environment` from it: solo7dev-metrics' metricProcessingRules,
+# solo7dev-logs' logProcessingStages and solo7dev-traces' transform on k8s.namespace.name. A namespace not
+# listed here gets `environment="unknown"`, the guard. The keep rule's `kube_` namespace regex is built from
+# these keys too (amendment A1). scripts/collectors.py renders all of it at `make platform-up`, and
+# `make check` asserts that the rendered blocks encode this table (AW-INF-065).
+#
+# `unknown` is reserved: no namespace maps to it.
+andara-local: local
+andara-ci: local
+andara-dev: dev
+andara-staging: staging
+andara-prod: prod

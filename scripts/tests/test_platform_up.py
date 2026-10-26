@@ -43,12 +43,15 @@ class FakeCluster:
         self.ca_secret_err = ""  # a read error that isn't NotFound
         self.not_ready = set()   # names whose wait times out
         self.secret_err = ""     # stderr of a failed token Secret write
+        self.secret_get_err = "" # stderr of a failed token Secret read that isn't NotFound
+        self.delete_err = ""     # stderr of a failed pod delete
         self.context = "kind-andara"
         self.kubectl_path = "bin/kubectl"
         self.inspect = inspect
         self.releases = {}      # release -> {"chart", "status", "values"}
         self.namespaces = set()
         self.applied = []       # files applied, and "secret" for the token's
+        self.secrets = {}       # (namespace, name) -> the applied Secret document
         self.issuers_ready = issuers_ready
         self.bindings = bindings
         self.calls = []
@@ -81,15 +84,24 @@ class FakeCluster:
         if args[:2] == ("apply", "--server-side"):
             if self.secret_err:
                 return self.no(self.secret_err)
+            doc = json.loads(stdin)
+            self.secrets[(doc["metadata"]["namespace"], doc["metadata"]["name"])] = doc
             self.applied.append("secret")
-            return self.ok("secret/cloudflare-api-token serverside-applied\n")
+            return self.ok("secret/%s serverside-applied\n" % doc["metadata"]["name"])
+        if len(args) >= 6 and args[0] == "-n" and args[2:4] == ("get", "secret") and args[-2:] == ("-o", "json"):
+            if self.secret_get_err:
+                return self.no(self.secret_get_err)
+            doc = self.secrets.get((args[1], args[4]))
+            return self.ok(json.dumps(doc)) if doc else self.no('Error from server (NotFound): secrets "%s" not found' % args[4])
+        if args[2:4] == ("delete", "pod") and self.delete_err:
+            return self.no(self.delete_err)
         if "wait" in args:
             target = [a for a in args if "/" in a and not a.startswith("--")][0].split("/", 1)[1]
             if not self.issuers_ready or target in self.not_ready:
                 return self.no("timed out waiting for the condition")
             return self.ok()
-        if args[:3] == ("get", "namespace", platform_up.SHARED):
-            return self.ok() if platform_up.SHARED in self.namespaces else self.no("NotFound")
+        if args[:2] == ("get", "namespace"):
+            return self.ok() if args[2] in self.namespaces else self.no("NotFound")
         if args[:2] == ("create", "namespace"):
             self.namespaces.add(args[2])
             return self.ok()
@@ -126,13 +138,16 @@ class FakeCluster:
     def order(self):
         """The steps that change something, in order."""
         steps = []
+        stdins = iter(self.stdins)
         for c in self.calls:
             if c[:3] == ("helm", "upgrade", "--install"):
                 steps.append("helm " + c[3])
             elif c[:3] == ("kubectl", "apply", "-f"):
                 steps.append("apply " + os.path.basename(c[3]))
             elif c[:3] == ("kubectl", "apply", "--server-side"):
-                steps.append("secret")
+                # The Cloudflare token's Secret is "secret"; any other is named.
+                name = json.loads(next(stdins))["metadata"]["name"]
+                steps.append("secret" if name == "cloudflare-api-token" else "secret " + name)
             elif c[:2] == ("kubectl", "create"):
                 steps.append("namespace " + c[3])
             elif c[0] == "restore":
@@ -172,11 +187,12 @@ class Box(Base):
 
     def test_installs_in_dependency_order(self):
         """AC-1: cert-manager, the CA root restore, andara-ca, the issuers, Traefik, andara-shared,
-        Strimzi, Argo CD."""
+        Strimzi, Argo CD, then the collectors' namespace, Secret and release (AW-INF-065)."""
         self.up(CLOUDFLARE_API_TOKEN=TOKEN)
         self.assertEqual(self.fake.order(), [
             "helm cert-manager", "restore", "apply andara-ca.yaml", "secret", "apply letsencrypt.yaml",
-            "helm traefik", "namespace andara-shared", "helm strimzi", "helm argocd"])
+            "helm traefik", "namespace andara-shared", "helm strimzi", "helm argocd",
+            "namespace observability", "secret grafana-telemetry", "helm k8s-monitoring"])
 
     def test_the_restore_is_the_ca_root_only_and_before_the_first_apply(self):
         """AC-4's order: andara-ca.yaml applied without its Secret mints a new root."""
@@ -201,7 +217,8 @@ class Box(Base):
         out = self.up(CLOUDFLARE_API_TOKEN=TOKEN)
         self.assertEqual(len(self.fake.upgrades()), before)
         for item in platform_up.CHARTS:
-            self.assertRegex(out, r"platform: %s \S+ unchanged run=" % item)
+            label = "k8s-monitoring" if item == "collectors" else item
+            self.assertRegex(out, r"platform: %s \S+ unchanged run=" % label)
         self.assertIn("andara-ca unchanged", out)
         self.assertIn("letsencrypt, letsencrypt-staging unchanged", out)
         self.assertIn("namespace andara-shared unchanged", out)
@@ -401,10 +418,12 @@ class LetsEncrypt(Base):
 
 class CI(Base):
 
-    def test_ci_installs_cert_manager_andara_ca_and_traefik_only(self):
-        """AC-12."""
+    def test_ci_installs_cert_manager_andara_ca_traefik_and_the_collectors_only(self):
+        """AC-12, and AW-INF-065: the collectors with values-ci.yaml."""
         out = self.up("ci", CLOUDFLARE_API_TOKEN=TOKEN)
-        self.assertEqual(self.fake.order(), ["helm cert-manager", "apply andara-ca.yaml", "helm traefik"])
+        self.assertEqual(self.fake.order(), ["helm cert-manager", "apply andara-ca.yaml", "helm traefik",
+                                             "namespace observability", "secret grafana-telemetry",
+                                             "helm k8s-monitoring"])
         self.assertEqual(self.restored, [])
         self.assertIn("proxyProtocol", self.fake.releases["traefik"]["values"]["ports"]["websecure"])
         self.assertIn("(PROFILE=ci)", out.splitlines()[-1])
@@ -412,6 +431,121 @@ class CI(Base):
     def test_require_letsencrypt_does_not_apply_to_ci(self):
         self.up("ci", REQUIRE_LETSENCRYPT="1")
         self.assertIn("helm traefik", self.fake.order())
+
+
+TELEMETRY = "telemetry-test-token-not-real-0123456789"
+
+
+class Telemetry(Base):
+    """AW-INF-065: the Secret grafana-telemetry and the k8s-monitoring release."""
+
+    def secret(self):
+        doc = self.fake.secrets[("observability", "grafana-telemetry")]
+        return {k: base64.b64decode(v).decode() for k, v in doc["data"].items()}
+
+    def test_the_secret_holds_the_token_and_the_usernames(self):
+        self.up(GRAFANA_SOLO7DEV_TELEMETRY_TOKEN=TELEMETRY)
+        self.assertEqual(self.secret(), {"token": TELEMETRY, "prom": "3652529", "loki": "1821929",
+                                         "tempo": "1816230", "fleet": "1864153"})
+
+    def test_ci_has_no_fleet_username(self):
+        self.up("ci")
+        self.assertNotIn("fleet", self.secret())
+
+    def test_the_token_is_never_printed_or_in_argv(self):
+        """AC-4."""
+        out = self.up(GRAFANA_SOLO7DEV_TELEMETRY_TOKEN=TELEMETRY)
+        b64 = base64.b64encode(TELEMETRY.encode()).decode()
+        for c in self.fake.calls:
+            self.assertFalse([a for a in c if TELEMETRY in str(a) or b64 in str(a)], c)
+        self.assertNotIn(TELEMETRY, out)
+        self.assertNotIn(b64, out)
+        self.assertIn("secret observability/grafana-telemetry written from GRAFANA_SOLO7DEV_TELEMETRY_TOKEN", out)
+        for values in (r["values"] for r in self.fake.releases.values()):
+            self.assertNotIn(TELEMETRY, json.dumps(values))
+
+    def test_a_failed_secret_write_never_echoes_the_token(self):
+        b64 = base64.b64encode(TELEMETRY.encode()).decode()
+        self.fake.secret_err = "denied data.token=%s (%s)" % (b64, TELEMETRY)
+        out = io.StringIO()
+        with redirect_stdout(out), self.assertRaises(platform_up.Failed) as e:
+            platform_up.up(platform_up.Run(), "ci", env=self.env(GRAFANA_SOLO7DEV_TELEMETRY_TOKEN=TELEMETRY),
+                           restore=self.restore)
+        text = out.getvalue() + str(e.exception)
+        self.assertNotIn(TELEMETRY, text)
+        self.assertNotIn(b64, text)
+
+    def test_unset_writes_an_empty_token_exits_0_and_the_last_line_says_so(self):
+        """AC-2."""
+        out = self.up()
+        self.assertEqual(self.secret()["token"], "")
+        self.assertIn("helm k8s-monitoring", self.fake.order())
+        self.assertIn("written with an empty token (GRAFANA_SOLO7DEV_TELEMETRY_TOKEN unset)", out)
+        last = out.splitlines()[-1]
+        self.assertIn("the collectors ship nothing", last)
+        self.assertIn("GRAFANA_SOLO7DEV_TELEMETRY_TOKEN", last)
+
+    def test_a_second_run_reports_the_secret_and_release_unchanged(self):
+        """AC-1."""
+        self.up(GRAFANA_SOLO7DEV_TELEMETRY_TOKEN=TELEMETRY)
+        before = len(self.fake.upgrades())
+        out = self.up(GRAFANA_SOLO7DEV_TELEMETRY_TOKEN=TELEMETRY)
+        self.assertEqual(len(self.fake.upgrades()), before)
+        self.assertIn("platform: k8s-monitoring 4.5.3 unchanged run=", out)
+        self.assertIn("secret observability/grafana-telemetry unchanged", out)
+        self.assertIn("namespace observability unchanged", out)
+
+    def test_a_rotated_token_rewrites_the_secret_and_leaves_the_release(self):
+        self.up(GRAFANA_SOLO7DEV_TELEMETRY_TOKEN=TELEMETRY)
+        before = len(self.fake.upgrades())
+        out = self.up(GRAFANA_SOLO7DEV_TELEMETRY_TOKEN=TELEMETRY + "-rotated")
+        self.assertIn("secret observability/grafana-telemetry written", out)
+        self.assertEqual(len(self.fake.upgrades()), before)
+
+    def restarts(self):
+        return [c for c in self.fake.calls if c[:4] == ("kubectl", "-n", "observability", "delete")]
+
+    RESTART = ("kubectl", "-n", "observability", "delete", "pod", "-l", "app.kubernetes.io/instance=k8s-monitoring-fleet",
+               "--ignore-not-found")
+
+    def test_a_written_secret_restarts_fleet_which_reads_it_only_at_start(self):
+        """PR #657: fleet's remotecfg kept the empty token of an AC-2 run after the Secret was restored."""
+        self.up(GRAFANA_SOLO7DEV_TELEMETRY_TOKEN=TELEMETRY)
+        self.assertEqual(self.restarts(), [self.RESTART], "the first write: no pod yet, and --ignore-not-found")
+        out = self.up(GRAFANA_SOLO7DEV_TELEMETRY_TOKEN=TELEMETRY + "-rotated")
+        self.assertEqual(self.restarts(), [self.RESTART] * 2)
+        self.assertIn("collector fleet restarted to read the new token", out)
+
+    def test_a_secret_read_that_fails_still_restarts_fleet_after_the_write(self):
+        self.fake.secret_get_err = "Unable to connect to the server: connection refused"
+        self.up(GRAFANA_SOLO7DEV_TELEMETRY_TOKEN=TELEMETRY)
+        self.assertEqual(self.restarts(), [self.RESTART])
+
+    def test_a_failed_restart_fails_and_never_echoes_the_token(self):
+        b64 = base64.b64encode(TELEMETRY.encode()).decode()
+        self.fake.delete_err = "denied %s (%s)" % (b64, TELEMETRY)
+        out = io.StringIO()
+        with redirect_stdout(out), self.assertRaises(platform_up.Failed) as e:
+            platform_up.up(platform_up.Run(), "box", env=self.env(GRAFANA_SOLO7DEV_TELEMETRY_TOKEN=TELEMETRY),
+                           restore=self.restore)
+        self.assertIn("restart the collector fleet", str(e.exception))
+        text = out.getvalue() + str(e.exception)
+        self.assertNotIn(TELEMETRY, text)
+        self.assertNotIn(b64, text)
+
+    def test_an_unchanged_secret_or_ci_restarts_nothing(self):
+        self.up(GRAFANA_SOLO7DEV_TELEMETRY_TOKEN=TELEMETRY)
+        self.up(GRAFANA_SOLO7DEV_TELEMETRY_TOKEN=TELEMETRY)
+        self.up("ci")
+        self.up("ci", GRAFANA_SOLO7DEV_TELEMETRY_TOKEN=TELEMETRY)
+        self.assertEqual(self.restarts(), [self.RESTART], "only the box's first write")
+
+    def test_the_release_gets_the_profile_values(self):
+        self.up("ci")
+        values = self.fake.releases["k8s-monitoring"]["values"]
+        self.assertEqual(values["cluster"]["name"], "ci")
+        self.assertNotIn("fleet", values["collectors"])
+        self.assertEqual(self.fake.releases["k8s-monitoring"]["chart"], "k8s-monitoring-4.5.3")
 
 
 class Usage(unittest.TestCase):
@@ -461,7 +595,8 @@ class Versions(unittest.TestCase):
     def test_todays_pins_moved_over_unchanged(self):
         doc = self.doc()
         self.assertEqual({k: doc[k]["version"] for k in platform_up.CHARTS},
-                         {"certManager": "v1.21.1", "traefik": "41.4.0", "strimzi": "1.2.0", "argocd": "10.9.2"})
+                         {"certManager": "v1.21.1", "traefik": "41.4.0", "strimzi": "1.2.0", "argocd": "10.9.2",
+                      "collectors": "4.5.3"})
 
     def broken(self, mutate):
         doc = json.loads(json.dumps(self.doc()))

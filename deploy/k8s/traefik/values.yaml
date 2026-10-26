@@ -9,6 +9,10 @@
 # uses it and enabling it needs the Gateway CRDs installed first.
 deployment:
   replicas: 1
+  # The k8s-monitoring chart's annotation autodiscovery reads `job` from this annotation, beside the
+  # prometheus.io/* ones the chart sets for its metrics port (ADR-0014 amendment A2, AW-INF-065).
+  podAnnotations:
+    k8s.grafana.com/job: traefik
 updateStrategy:
   type: Recreate
   rollingUpdate: null
