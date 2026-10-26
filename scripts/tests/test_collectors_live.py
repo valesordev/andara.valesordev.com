@@ -39,6 +39,31 @@ class SecretReaders(unittest.TestCase):
         self.assertFalse(live.in_release(pod("observability", "a", {"app.kubernetes.io/instance": "debug"})))
 
 
+class PodInventory(unittest.TestCase):
+    """PR #657: a pod list that can't be read fails the checks that read it, never passes them empty."""
+
+    def run_with(self, doc):
+        r, out = live.Run(), io.StringIO()
+        with redirect_stdout(out):
+            live.pod_checks(r, doc)
+        r.out = out.getvalue()
+        return r
+
+    def test_an_unreadable_inventory_fails(self):
+        r = self.run_with(None)
+        self.assertTrue([f for f in r.failures if "pods in all namespaces could not be listed" in f], r.failures)
+        self.assertNotIn("ok   ", r.out)
+
+    def test_a_listed_empty_inventory_passes(self):
+        self.assertEqual(self.run_with({"items": []}).failures, [])
+
+    def test_a_node_exporter_and_an_outside_reader_fail(self):
+        r = self.run_with({"items": [pod("observability", "k8s-monitoring-node-exporter-x"),
+                                     pod("andara-dev", "a", volumes=[{"secret": {"secretName": "grafana-telemetry"}}])]})
+        self.assertTrue([f for f in r.failures if "node-exporter" in f], r.failures)
+        self.assertTrue([f for f in r.failures if "outside the release: andara-dev/a" in f], r.failures)
+
+
 class Readiness(unittest.TestCase):
 
     def test_a_daemonset_and_a_deployment_are_read_by_their_own_fields(self):

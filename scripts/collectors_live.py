@@ -189,9 +189,7 @@ def check(r, profile, env, sleep=time.sleep, now=time.time):
     for kind, name in [("deployment", n) for n in DEPLOYMENTS[profile]] + [("daemonset", n) for n in DAEMONSETS]:
         ok, have, want = wait_ready(env, kind, "%s-%s" % (RELEASE, name), sleep=sleep, now=now)
         r.check(ok, "%s %s-%s Ready %s/%s" % (kind, RELEASE, name, have, want))
-    pods = (kjson(env, "get", "pods", "-A") or {}).get("items") or []
-    exporters = [p["metadata"]["name"] for p in pods if "node-exporter" in p["metadata"]["name"]]
-    r.check(not exporters, "no node-exporter pod%s" % (": " + ", ".join(exporters) if exporters else ""))
+    pod_checks(r, kjson(env, "get", "pods", "-A"))
     secret = kjson(env, "-n", NS, "get", "secret", collectors.SECRET)
     data = (secret or {}).get("data") or {}
     missing = [k for k in SECRET_KEYS[profile] if k not in data]
@@ -200,15 +198,28 @@ def check(r, profile, env, sleep=time.sleep, now=time.time):
     shipping = bool(data.get("token"))
     r.say("token %s" % ("set: the collectors ship to %s" % STACK if shipping else
                         "empty: the collectors ship nothing (%s unset at platform-up)" % collectors.TOKEN))
+    if profile == "box" and shipping:
+        fleet_inventory(r, env)
+    return r
+
+
+def pod_checks(r, doc):
+    """No node-exporter, and no pod outside the release that mounts or env-references the Secret (AC-13).
+    doc is `get pods -A`'s JSON, or None when it couldn't be read: that fails, rather than passing both
+    checks on an empty list."""
+    if doc is None:
+        r.check(False, "pods in all namespaces could not be listed, so node-exporter's absence and the "
+                       "readers of %s are unchecked" % collectors.SECRET)
+        return
+    pods = doc.get("items") or []
+    exporters = [p["metadata"]["name"] for p in pods if "node-exporter" in p["metadata"]["name"]]
+    r.check(not exporters, "no node-exporter pod%s" % (": " + ", ".join(exporters) if exporters else ""))
     readers = [p for p in pods if references_secret(p, collectors.SECRET)]
     outside = ["%s/%s" % (p["metadata"]["namespace"], p["metadata"]["name"]) for p in readers if not in_release(p)]
     # The collectors read the Secret through the API (remote.kubernetes.secret), so a pod that mounts or
     # env-references it is an addition; none is the expected count.
     r.check(not outside, "pods that mount or env-reference %s: %d%s; the collectors read it through the API" % (
         collectors.SECRET, len(readers), "" if not outside else ", outside the release: " + ", ".join(outside)))
-    if profile == "box" and shipping:
-        fleet_inventory(r, env)
-    return r
 
 
 def fleet_inventory(r, env):
