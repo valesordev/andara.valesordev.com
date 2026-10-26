@@ -52,6 +52,7 @@ import subprocess
 import sys
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+import kafka_auth  # noqa: E402
 import kube  # noqa: E402
 import topics  # noqa: E402
 
@@ -238,8 +239,14 @@ def check(ns=None, run=subprocess.run, decl=topics.DECL):
     # The prefixes are read even when a claim is over, so the operator sees whose bytes they are.
     prefixes = sorted(e["prefix"] for e in topics.parse_environments(decl).values() if e["prefix"])
     pod = broker_pod(ns, run)
-    text = kubectl(ns, "exec", pod, "-c", "kafka", "--", "/opt/kafka/bin/kafka-log-dirs.sh",
-                   "--bootstrap-server", "localhost:9092", "--describe", run=run)
+    # As andara-operator, the password on stdin (AW-INF-056): the listener authenticates everyone.
+    password = kafka_auth.operator_password(ns, run=run)
+    p = run(kafka_auth.broker_argv(ns, pod, ["/opt/kafka/bin/kafka-log-dirs.sh", "--bootstrap-server",
+                                             "localhost:9092", "--describe"]),
+            capture_output=True, text=True, input=password + "\n")
+    if p.returncode != 0:
+        raise Failed("kafka-log-dirs in %s: %s" % (pod, (p.stderr or p.stdout).strip()))
+    text = p.stdout
     stray = prefix_report(log_dirs(text), prefixes)
 
     if over:

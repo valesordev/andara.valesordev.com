@@ -11,7 +11,7 @@ before `/pre-pr`, and records `--record "Brand QA"`.
 **Prompt:** (visual-designer) "/brand-qa system9studios seed"
 **Behavior:** No `qa.md` yet. Seeds it from the template, the approved S9 foundation, and the Notion v0.1
 acceptance criteria ("recognizable without the radio telescope", "no HUD brackets, neon, or interface cosplay"),
-marks two unsettled items `[PROPOSED]`, and opens a `design/` PR for the owner.
+marks two unsettled items `[PROPOSED P<n>]` with the next unused IDs and a checkbox each, and opens a `design/` PR for the owner.
 
 **Prompt:** (implementation) "/brand-qa solo7productions https://<preview-url>" with no `qa.md` in the kit
 **Behavior:** Stops: there are no approved rules to check against. Asks with `story comment <ID> --to

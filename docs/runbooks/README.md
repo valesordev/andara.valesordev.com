@@ -37,6 +37,7 @@ says "connect to the database" is a gap in the CLI (`CLAUDE.md` §10).
 | `grafana-credentials.md` | `AW-INF-076` | — (every hand-made Grafana Cloud credential: click path, scopes, expiry, storage, reader, rotation) |
 | `terraform-run-failed.md` | `AW-INF-076` | — (a red `apply`, `apply-prod`, `drift` or `drift-prod-irm` run: who looks, what first, the dev-box fallback) |
 | `promote.md` | `AW-INF-059` | — (moving `dev`: `make promote`, its rollback, a promotion that doesn't sync, the first tag on a rebuilt cluster) |
+| `kafka-credentials.md` | `AW-INF-056` | — (the shared broker's SCRAM principals: copying an environment's credentials, rotation, a client refused at authentication or by an ACL, undoing SASL) |
 
 ## Planned
 

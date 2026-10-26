@@ -35,6 +35,9 @@ server:
   kafka:
     brokers: andara-log-kafka-bootstrap.andara-shared.svc:9092
     topic_prefix: dev
+    # dev's server principal on the SASL listener (AW-INF-056); its password is the Secret of the
+    # same name that `make kafka-creds ENV=dev` copies into andara-dev (secrets.kafkaCreds).
+    sasl_username: andara-server-dev
   # Content comes from the namespace's content store (AW-INF-021): every pack with an Active
   # Pointer, the server's own andara.core (published at boot, AW-SRV-013) and the dev fixture
   # pack `town` (`make content-seed ENV=dev`). Nothing is mounted from git any more.
@@ -56,6 +59,9 @@ server:
 projectors:
   state:
     enabled: true
+    # Its own principal, never the server's (ADR-0011 decision 6); `make kafka-creds ENV=dev`.
+    kafkaCreds:
+      secretName: andara-projector-state-dev
 
 snapshots:
   size: 5Gi
@@ -94,6 +100,8 @@ secrets:
     secretName: andara-server-bootstrap
   snapshotS3:
     secretName: andara-snapshot-s3
+  kafkaCreds:
+    secretName: andara-server-dev
 
 # No content ConfigMaps: dev reads the content store (AW-INF-021). local still renders them.
 contentVolume:

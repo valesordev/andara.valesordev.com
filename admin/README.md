@@ -327,6 +327,13 @@ commands show approval state before a change and render the server's refusal.
   the directory name it was published from, where it compiles back to the same blobs.
 - **`server info`** prints `version`, `commit`, `environment`, `protocol <min>-<max>`, one
   `content <pack>@<version>` per pack, and `content_digest <hex>`.
+- **`--as <account-id>`** on `publish`, `approve`, `activate` and `rollback` sends
+  `andara-act-as` on every Admin call the command makes (`AW-SRV-039`). Only an Operator or Game
+  Master may use it, and every use is audited. The server applies the target's roles and pack
+  grants, and records you as the version's `publisher` with the target as `author`. Approving a
+  version you published `--as` a Builder is still your self-approval. A Game Master can't act
+  as an Operator (`AW-SRV-062`), and that refusal looks the same as an unknown account ID's:
+  `PERMISSION_DENIED`, exit 1.
 
 Accounts are named by ID, except your own, which is your username: no RPC reads another
 Account's name. Every `--output json` result and error carries `trace_id`.

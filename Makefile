@@ -61,7 +61,7 @@ HAS_GO := $(shell find . -name '*.go' -not -path './.git/*' -not -path './bin/*'
         proto proto-check adr \
         k8s-dry check-targets clean build build-info goldens \
         values-schema values-schema-check helm-test image image-publish image-check cli-release cli-release-check cli-release-publish kind-load helm-install measure-tick stack-smoke stack-play stack-linkdead stack-recover stack-recover-mismatch \
-        platform-up platform-check collectors-check collectors-probe collectors-logs kube-context-check cluster-up cluster-down cluster-rebuild stream-soak content-grammar-check observe-check slo-report dashboard-check observe-unavailable gcx-config gcx-check gcx-only-check scripts-test kafka-install kafka-broker-bounce shared-up shared-down shared-check shared-netcheck kafka-users kafka-users-check \
+        platform-up platform-check collectors-check collectors-probe collectors-logs kube-context-check cluster-up cluster-down cluster-rebuild stream-soak content-grammar-check observe-check slo-report dashboard-check observe-unavailable gcx-config gcx-check gcx-only-check scripts-test kafka-install kafka-broker-bounce shared-up shared-down shared-check shared-netcheck kafka-users kafka-users-check kafka-creds kafka-creds-rotate kafka-acl-probe \
         argocd-install promote promote-log argocd-status argocd-ui argocd-recover argocd-uninstall world-reset content-seed env-destroy env-recover \
         objectstore-up objectstore-install objectstore-check projector-stop projector-start projector-rebuild server-stop server-start core-versions-check \
         builder-reference builder-reference-check guide-check \
@@ -423,7 +423,7 @@ cluster-down:
 cluster-rebuild:
 	@$(PY) $(SCRIPTS)/cluster.py rebuild "$(CONFIRM)"
 
-## shared-up: the shared services in andara-shared — Kafka `andara-log` (3 brokers, KRaft) and both environments' prefixed topics, the platform topics and the schema registry, then the object store and each environment's bucket and pair; labels andara-local and andara-dev; idempotent (AW-INF-055, AW-INF-057, AW-INF-058)
+## shared-up: the shared services in andara-shared — Kafka `andara-log` (3 brokers, KRaft, SASL/SCRAM with deny-by-default ACLs) and its KafkaUsers from topics.yaml, both environments' prefixed topics, the platform topics and the schema registry, then the object store and each environment's bucket and pair; labels andara-local and andara-dev; idempotent (AW-INF-055, AW-INF-056, AW-INF-057, AW-INF-058)
 shared-up:
 	@PY=$(PY) $(SCRIPTS)/kafka.sh up
 
@@ -447,13 +447,25 @@ kafka-install:
 kafka-broker-bounce:
 	@PY=$(PY) $(SCRIPTS)/kafka.sh bounce "$(ENV)"
 
-## kafka-users-check: the KafkaUsers rendered from deploy/kafka/topics.yaml grant no environment principal a topic Create, Alter or AlterConfigs, and no literal `*` (AW-INF-055 AC-9)
+## kafka-users-check: the KafkaUsers rendered from deploy/kafka/topics.yaml grant no environment principal a topic Create, Alter or AlterConfigs, and no literal `*`; kafka.yaml has no unauthenticated listener and exactly the declared superuser, andara-operator, whose Secret no chart value names (AW-INF-055 AC-9, AW-INF-056 AC-8, AC-14)
 kafka-users-check:
 	@$(PY) $(SCRIPTS)/kafka_users.py check
 
-## kafka-users: print the KafkaUser manifests rendered from deploy/kafka/topics.yaml (applied by AW-INF-056)
+## kafka-users: print the KafkaUser manifests rendered from deploy/kafka/topics.yaml (`make shared-up` applies them, AW-INF-056)
 kafka-users:
 	@$(PY) $(SCRIPTS)/kafka_users.py render
+
+## kafka-creds: copy ENV's broker credentials (each principal's password, from the User Operator's Secret in andara-shared) into andara-ENV only, and remove a copy topics.yaml no longer declares; the only writer of those Secrets; exit 1 a source Secret missing, 2 usage, 3 no cluster — ENV=<local|dev> (AW-INF-056)
+kafka-creds:
+	@$(PY) $(SCRIPTS)/kafka_creds.py copy "$(ENV)"
+
+## kafka-acl-probe: probe the shared broker's ACLs as every principal topics.yaml declares — own prefix allowed, the other environment's denied, no topic Create/Delete/AlterConfigs, only the projector writes the state topic, the projector never writes content or audit nor reads audit — leaving nothing behind; exit 1 on any answer other than declared (AW-INF-056 AC-2, AC-3, AC-12, AC-13)
+kafka-acl-probe:
+	@$(PY) $(SCRIPTS)/kafka_acl_probe.py
+
+## kafka-creds-rotate: a new password for one principal (the User Operator writes it to the broker; the old one is refused), then kafka-creds; running workloads pick it up without a restart — ENV=<local|dev> PRINCIPAL=<andara-server|andara-projector-state>, or PRINCIPAL=<andara-operator|andara-schema-registry> with no ENV (the registry is restarted) (AW-INF-056)
+kafka-creds-rotate:
+	@$(PY) $(SCRIPTS)/kafka_creds.py rotate "$(if $(filter command line,$(origin ENV)),$(ENV),)" "$(PRINCIPAL)"
 
 ## argocd-install: Argo CD into `argocd` at its pinned version; with ENV=dev, dev's Secrets (if absent) and the andara-dev Application, which follows the Git tag `dev` and needs it to exist (AW-INF-019, AW-INF-059)
 argocd-install:

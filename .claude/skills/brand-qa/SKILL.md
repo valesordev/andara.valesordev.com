@@ -23,8 +23,9 @@ Request: `$ARGUMENTS`
 ## Seed (`seed`, visual-designer only)
 Fill `references/qa-template.md` from the imprint's brand docs and its Notion
 direction page's checklist. Every item must be observable on a page. Mark
-items the docs don't settle `[PROPOSED]`. It ships in a `design/` PR for
-the owner's review.
+items the docs don't settle `[PROPOSED P<n>]`, with one PR checkbox each
+(the visual-designer role's Proposals section). It ships in a `design/` PR
+for the owner's review.
 
 ## Check
 Decide what you're checking: a running page (local `make` preview or a
@@ -34,7 +35,9 @@ preview deploy URL), a screenshot, a component, or `diff` (changes since
 1. **Look at it.** Render the page at desktop and phone widths, in every theme
    the imprint has, and with JavaScript off. Never judge a page from its source alone.
 2. **Checklist:** each `qa.md` item, pass or fail, with the evidence (a
-   region of the screenshot, a selector, a line).
+   region of the screenshot, a selector, a line). An item still
+   `[PROPOSED P<n>]` binds only if its box was checked on the merged PR that
+   added it. Otherwise report it as undecided, not as a fail.
 3. **Tokens:** search the diff or built CSS for literal colours, font
    families, and spacing values that aren't tokens. Each one is a defect,
    unless it's in `tokens/` itself.

@@ -38,6 +38,14 @@ Report the current role and the roles this repo defines, then stop.
    begins. If EnterWorktree fails, report it and stop: never work in the owner's
    checkout instead. `Worktree: this session already works in …` needs nothing.
    No `Worktree:` line (`/role none`, a cloud session) means stay where you are.
+   Scratch files (downloads, rendered configs, notes, PR bodies) stay in
+   Claude Code's scratchpad directory, which still works from the worktree.
+   Name each scratchpad file by its full literal path, every time, and never
+   through a shell variable (`F=…; sed -n 1,9p $F`): the worktree guard
+   refuses commands built from a computed value. Never copy scratch files
+   into the worktree (`.local/` or any other ignored directory included),
+   because an edit there is outside the role's `writes`, so each one waits
+   on the owner's approval.
 4. The rest of the output is this session's **role charter**. From now until the owner runs
    `/role` again, it binds together with the repo's `CLAUDE.md`. Where the
    charter narrows the repo file, the charter wins. Where they conflict, stop
