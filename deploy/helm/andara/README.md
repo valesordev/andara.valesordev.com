@@ -225,7 +225,9 @@ destroying `andara-local` or `andara-dev` never touches it.
   `make shared-up` renders them into `KafkaUser`s and applies them, and the User Operator writes each principal's
   Secret in `andara-shared`. `make kafka-creds ENV=<env>` copies an environment's passwords into its own namespace
   only. `values/<env>.yaml` names its principals:
-  - `server.kafka.sasl_username` and `secrets.kafkaCreds.secretName` are both `andara-server-<env>`;
+  - `server.kafka.sasl_username` and `secrets.kafkaCreds.secretName` are both `andara-server-<env>`. local sets
+    neither until its server reads the broker (AW-INF-060): the Secret exists only where the shared Kafka runs,
+    and a required mount of it would hold `andara-0` at FailedMount on any other cluster;
   - `projectors.state.kafkaCreds.secretName` is `andara-projector-state-<env>`. The projector's
     `ANDARA_KAFKA_SASL_USERNAME` is its own Secret's name, set on the container, so the server's in
     `andara-config` never reaches it.

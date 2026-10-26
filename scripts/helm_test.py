@@ -832,6 +832,11 @@ def test_kafka_sasl_credentials():
         server_user = find(ds, "ConfigMap", "andara-config")["data"].get("ANDARA_KAFKA_SASL_USERNAME")
         sts, proj = find(ds, "StatefulSet", "andara"), find(ds, "Deployment", "andara-projector-state")
         want = {"server": "andara-server-" + env, "projector": "andara-projector-state-" + env}
+        if env == "local":
+            # local's server runs on the memory source until AW-INF-060 and never dials the broker,
+            # and a required Secret that only a shared-Kafka cluster holds stops the pod at
+            # FailedMount where there is none (CI's lifecycle job, ADR-0013 decision 12).
+            want["server"] = None
         if server_user != want["server"] or kafka_creds_volume(sts) != want["server"]:
             fail("%s: the server authenticates as %r with Secret %r, want %s for both"
                  % (env, server_user, kafka_creds_volume(sts), want["server"]))
