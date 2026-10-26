@@ -768,7 +768,10 @@ so replacing the tree does not silence them. `solo7dev` is new: nothing to impor
   own usage emails are the "is the free tier enough" signal (no repo job reads usage), and nothing here depends
   on it staying free.
   *(Annotated 2026-10-26, ADR-0014 A6: `solo7dev` is on Grafana Cloud Pro, with 20,000 active series and 50 GB
-  of logs included. Read "the free tier" here as "the plan's allowance".)*
+  of logs included. Read "the free tier" here as "the plan's allowance". The "14-day retention" figure is the
+  free tier's: Pro's retention for this stack is `[verify]`, read from the stack's plan page by the next story
+  that depends on retention. "Staying free" now reads "overages staying unbilled on the owner's employee
+  account", which the owner is still confirming.)*
 
 > **Annotation, 2026-10-21: `ADR-0014` moves where the table is applied, not the table.** The chart's three
 > destinations apply it, from `deploy/platform/collectors/environments.yaml`, for the chart's signals and for Fleet's

@@ -290,7 +290,7 @@ from `AW-INF-051` to `AW-INF-065`, its one owner. The shared
 services add at most 80. The chart side is the same set decision 15 planned, so the split moves no series.
 `AW-INF-065` records the total per `environment` beside the limit (with CI's share, `cluster="ci"`, stated apart; amendment A3), the record that `ADR-0012`'s revisit trigger
 ("`solo7dev` exceeds its plan's active-series allowance twice in a month", A6) measures. Logs: shipping the brokers' pod logs is new volume against the plan's log allowance, and
-`AW-INF-065` records the first week's ingest.
+`AW-INF-066` records the first week's ingest after `dev`'s server ships logs (carried from `AW-INF-065` at its §8, A6).
 
 ### 7. CI's `andara-ci`
 
@@ -541,8 +541,8 @@ the live systems. Both are corrected in place above, so the ADR names what is ap
 keep-list names); `AW-INF-070` (step 4's pipeline); `AW-INF-039`, whose rule reads the ISR shrink rate by the
 `persec_total` name when it is written; `ADR-0012` decision 1's annotation. `AW-INF-078` names neither.
 
-**2026-10-26, `AW-INF-065`'s build and §8.** SRE found five facts on the live systems while building the
-collectors. They are decided here, and §3, §6, §10 and Revisit-when are corrected in place.
+**2026-10-26, `AW-INF-065`'s build and §8.** SRE found five facts while building the collectors, four on
+the live systems and one (the plan) from the owner. They are decided here, and §3, §6, §10 and Revisit-when are corrected in place.
 
 - **A6. What the first install found.**
   - **Grafana's default Fleet pipelines bypass the destinations.** `solo7dev` holds pipelines that Grafana made,
@@ -557,7 +557,7 @@ collectors. They are decided here, and §3, §6, §10 and Revisit-when are corre
     half is `AW-INF-078`'s). Until then the 401s are harmless: they carry no token, and `{__name__=~"alloy_.+"}`
     in `solo7dev` returns nothing (`AW-INF-065` §8).
   - **Traces read the token through `passwordFrom`.** Alloy's `otelcol.auth.basic` refuses an empty password. So
-    with the token unset (decision 14's run without shipping), a fresh `receiver` never loads and is never Ready.
+    with the token unset (`ADR-0012` decision 14; §7's run without the token), a fresh `receiver` never loads and is never Ready.
     `solo7dev-traces` reads the Secret's `token` through `passwordFrom`, as
     `coalesce(convert.nonsensitive(…data["token"]), "unset")`. With no token, traces send the placeholder and get a
     401, like the other destinations' empty password. The token still comes from the one Secret key, and Alloy's
@@ -567,7 +567,7 @@ collectors. They are decided here, and §3, §6, §10 and Revisit-when are corre
     taken from `solo7dev`'s `tempo_url`.
   - **Loki adds `service_name` at ingest.** Streams in `solo7dev` carry a sixth label, which Grafana Cloud's
     service-name discovery adds after the collector's `label_keep`. It is bounded by container names. The
-    stream-label allow-list (§4) is the collector's, and it holds there. Runbook selectors still may not name
+    stream-label allow-list (§10's `AW-INF-065` row; `label_keep` in `deploy/platform/collectors/values.yaml`) is the collector's, and it holds there. Runbook selectors still may not name
     `service_name`, because it isn't ours and its value isn't contracted.
   - **The plan is Pro, not the free tier.** `solo7dev` is on Grafana Cloud Pro, on the owner's employee account,
     so overages aren't billed today. It includes 20,000 active series and 50 GB each of logs and traces, shared
@@ -578,4 +578,5 @@ collectors. They are decided here, and §3, §6, §10 and Revisit-when are corre
 
 **Ripple (A6):** `AW-INF-065`'s Definition of done (Pro's allowance, not the free tier's 10,000) and AC-3 (a
 replaced `fleet` pod's leftover registration isn't counted); `ADR-0012`'s retention note and its revisit trigger;
-PM, for the default-pipelines story; `AW-INF-078`, for `solo7`'s default pipelines and `fleet` setting.
+PM, for the default-pipelines story; `AW-INF-078`, for `solo7`'s default pipelines and `fleet` setting;
+`AW-INF-066`, which takes `AW-INF-065`'s first-week log record (§6).
