@@ -394,6 +394,15 @@ func TestPurge_ARollbackKeepsTheNameReserved(t *testing.T) {
 	if _, err := s1.rt.Roster.CreateCharacter(ctx, session("s-create", alice), "Aldric"); err != nil {
 		t.Fatal(err)
 	}
+	// A newer round than T, so a recovery that ignored the pin would start
+	// from it and not from T.
+	eventually.Observed(t, 30*time.Second, "a complete round newer than the pinned one", func() (bool, string) {
+		r, _, ok, err := store.NewestComplete(ctx, ws, s1.rt.listedZones(), s1.rt.zonesAt())
+		if err != nil {
+			return false, err.Error()
+		}
+		return ok && r.Tick > round, fmt.Sprintf("ok=%v tick=%d, pinned %d", ok, r.Tick, round)
+	})
 	s1.stop()
 
 	s2 := w.boot(t, bootOpts{pinRound: round})
@@ -495,6 +504,11 @@ func purgeACrashedBody(t testing.TB, linkdead bool, handlers map[sim.CommandKind
 		p, d := s2.characters(roster.StatePresent), s2.characters(roster.StateDormant)
 		return p == present-1 && d == dormant, fmt.Sprintf("present=%v dormant=%v, were %v %v", p, d, present, dormant)
 	})
+	// The gauge is set after ObservePurges on the same tick, so the apply
+	// has been counted by now: a re-route counted as well shows here.
+	if got := s2.purges(roster.PurgeOK); got != okBefore+1 {
+		t.Fatalf("andara_character_purges_total{outcome=ok} %v after the apply, was %v: want exactly one more", got, okBefore)
+	}
 	pier := sim.RoomRef{Zone: "docks", Room: "pier"}
 	if ds := s2.events.of(sim.EvCharacterDespawned); len(ds) != 1 || ds[0].Scope.Room != pier ||
 		ds[0].Envelope.GetCharacterDespawned().GetReason() != sim.DespawnPurge || ds[0].Envelope.GetCharacterDespawned().GetCharacterName() != "Aldric" {
