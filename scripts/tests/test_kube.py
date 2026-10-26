@@ -30,7 +30,7 @@ import kube_check  # noqa: E402
 FIXTURE = os.path.join(REPO, "scripts", "tests", "fixtures", "kubeconfig")
 STUB = textwrap.dedent("""\
     #!/bin/sh
-    echo "$(basename "$0") $*" >> "$STUB_LOG"
+    printf '%s\\n' "$(basename "$0") $*" >> "$STUB_LOG"
     echo "Error from server (NotFound): stub" >&2
     exit 1
     """)
@@ -273,6 +273,10 @@ SWEEP = [
     ("topics.py", [PY, "scripts/topics.py", "diff", "--env", "dev"]),
     # dev's registry is the shared Karapace, reached by a port-forward (AW-INF-057).
     ("schemas.py", [PY, "scripts/schemas.py", "diff", "--env", "dev"]),
+    # The shared broker's credentials (AW-INF-056).
+    ("kafka_auth.py", [PY, "scripts/kafka_auth.py", "broker-exec", "andara-log-broker-0", "--", "true"]),
+    ("kafka_creds.py", [PY, "scripts/kafka_creds.py", "copy", "dev"]),
+    ("kafka_users.py", [PY, "scripts/kafka_users.py", "apply"]),
 ]
 
 

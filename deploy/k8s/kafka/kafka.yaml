@@ -5,9 +5,9 @@
 # box are the production path, so this is Kafka (decided 2026-09-24, Brian). One cluster, in
 # the namespace andara-shared: `make shared-up` applies this file unchanged with
 # `kubectl -n andara-shared apply`, so nothing here names a namespace. The environments are
-# kept apart by topic prefix (`local.`, `dev.`, deploy/kafka/topics.yaml) and, from
-# AW-INF-056, by per-environment principals whose ACLs are scoped to the prefix. Clients reach
-# it as andara-log-kafka-bootstrap.andara-shared.svc:9092.
+# kept apart by topic prefix (`local.`, `dev.`, deploy/kafka/topics.yaml) and by
+# per-environment SCRAM principals whose ACLs are scoped to the prefix (AW-INF-056). Clients
+# reach it as andara-log-kafka-bootstrap.andara-shared.svc:9092, with their own credential.
 #
 # What sharing costs (ADR-0013): one environment can fill the brokers' disks or exhaust their
 # partitions or connections, and a broker fault disturbs both. local's topics carry a size and
@@ -77,10 +77,17 @@ spec:
   kafka:
     version: 4.3.1
     listeners:
-      - name: plain
+      # Every client authenticates with SCRAM-SHA-512 and is held to its KafkaUser's ACLs
+      # (ADR-0011, as ADR-0013 decision 6 amends it; AW-INF-056). There is no unauthenticated
+      # listener: `make kafka-users-check` fails on one (AC-8). Port 9092 is the one clients have
+      # always used; only its authentication changed. No TLS: traffic never leaves the cluster
+      # (ADR-0013, accepted by Brian 2026-10-10).
+      - name: scram
         port: 9092
         type: internal
         tls: false
+        authentication:
+          type: scram-sha-512
         # Strimzi renders this into the listener's NetworkPolicy. Each peer is ORed with the
         # others; within a peer the namespaceSelector and podSelector are ANDed. So: the
         # server and projector pods (the chart's app.kubernetes.io/name: andara) in a namespace
@@ -90,8 +97,8 @@ spec:
         # and `make kafka-broker-bounce`'s kafka-topics --under-replicated-partitions (Strimzi
         # admits broker-to-broker traffic on its own internal ports only); and the schema
         # registry in andara-shared, which keeps its schemas in _schemas (AW-INF-057). Nothing
-        # else, including an `andara` pod in an unlabelled namespace. No TLS or SASL yet: SASL
-        # is AW-INF-056's, and traffic never leaves the cluster.
+        # else, including an `andara` pod in an unlabelled namespace: it is refused before SASL
+        # (AW-INF-056 AC-7). The broker-pod tools authenticate as andara-operator too.
         networkPolicyPeers:
           - namespaceSelector:
               matchExpressions:
@@ -111,6 +118,14 @@ spec:
           - podSelector:
               matchLabels:
                 app.kubernetes.io/name: andara-schema-registry
+    # Deny by default: a principal does exactly what its KafkaUser's ACLs grant. The one
+    # superuser is the operator's, declared in topics.yaml (`superuser: true`), which
+    # `make kafka-users-check` holds this list to (AC-14). Strimzi adds the brokers' own
+    # principals itself.
+    authorization:
+      type: simple
+      superUsers:
+        - andara-operator
     config:
       default.replication.factor: 3
       min.insync.replicas: 2
@@ -133,3 +148,14 @@ spec:
           - "kafka_server_brokertopicmetrics_.*"
           - "kafka_server_kafkaserver_.*"
           - "kafka_network_requestmetrics_requests_total.*"
+          # AW-INF-056: failed SASL authentications on the listener, and the quota throttle time of
+          # each principal (labelled by user, bounded by the KafkaUser set). Read from the broker's
+          # own endpoint in the drill, not through gcx: the keep pipeline drops them (AW-INF-051).
+          - "kafka_server_socket_server_metrics_failed_authentication.*"
+          - "kafka_server_produce_throttle_time.*"
+          - "kafka_server_fetch_throttle_time.*"
+  # The User Operator only (ADR-0011 decision 5): it turns the KafkaUsers rendered from
+  # topics.yaml into SCRAM credentials (a Secret per principal, here in andara-shared) and
+  # ACLs. The Topic Operator stays out; topics.yaml is applied by scripts/topics.py.
+  entityOperator:
+    userOperator: {}

@@ -2,6 +2,7 @@
 # Copyright 2026 Valesor Development
 
 """`make shared-check` and `make shared-down` (AW-INF-055 AC-3, AC-8, AC-11), over fake readings."""
+import base64
 import contextlib
 import io
 import json
@@ -51,11 +52,17 @@ class FakeCluster:
         self.pods = pods if pods is not None else [
             pod("andara-log-broker-%d" % i, "data-andara-log-broker-%d" % i) for i in range(3)]
         self.calls = []
+        self.inputs = []
 
-    def __call__(self, cmd, capture_output=True, text=True):
+    PASSWORD = "operatorpw1"
+
+    def __call__(self, cmd, capture_output=True, text=True, input=None):
         self.calls.append(cmd)
+        self.inputs.append(input)
         args = cmd[cmd.index("-n") + 2:]
         ok = lambda out: types.SimpleNamespace(returncode=0, stdout=out, stderr="")  # noqa: E731
+        if args[:3] == ["get", "secret", "andara-operator"]:
+            return ok(base64.b64encode(self.PASSWORD.encode()).decode())
         if args[:2] == ["get", "pvc"]:
             return ok(json.dumps({"items": self.pvcs}))
         if args[:2] == ["get", "pods"]:
@@ -146,11 +153,11 @@ class Check(unittest.TestCase):
         c.pods[1]["status"]["containerStatuses"] = [{"ready": False}]
         real = c.__call__
 
-        def run(cmd, capture_output=True, text=True):
+        def run(cmd, capture_output=True, text=True, input=None):
             if "andara-log-broker-1" in cmd and "du" in cmd:
                 return types.SimpleNamespace(returncode=1, stdout="",
                                              stderr='error: container not found ("kafka")')
-            return real(cmd)
+            return real(cmd, input=input)
 
         code, out, err = self.run_check(run)
         self.assertEqual(code, 1)
@@ -159,6 +166,16 @@ class Check(unittest.TestCase):
         self.assertIn("pvc data-andara-log-broker-2", out)
         self.assertIn("broker 0 dev.=", out)
         self.assertIn("not measured, so not known to be under 80%: data-andara-log-broker-1", err)
+
+    def test_the_log_dirs_tool_authenticates_with_the_password_on_stdin(self):
+        """AW-INF-056: the listener authenticates everyone, broker-pod tools included."""
+        c = FakeCluster({"andara-log-broker-%d" % i: GI for i in range(3)}, self.DIRS)
+        code, _, err = self.run_check(c)
+        self.assertEqual(code, 0, err)
+        i = next(i for i, cmd in enumerate(c.calls) if cmd[-1] == "--describe")
+        self.assertEqual(c.inputs[i], FakeCluster.PASSWORD + "\n")
+        self.assertNotIn(FakeCluster.PASSWORD, " ".join(c.calls[i]))
+        self.assertIn("--command-config", c.calls[i][c.calls[i].index("bash") + 2])
 
     def test_no_ready_broker_fails(self):
         pods = [pod("andara-log-broker-0", "data-andara-log-broker-0", ready=False)]
