@@ -94,8 +94,10 @@ jobs:
         run: |
           set -euo pipefail
           make platform-up PROFILE=ci
-          # AW-INF-054 AC-12 and AW-INF-065: ci installs those and nothing else.
-          releases="$(helm --kube-context "$ANDARA_KUBE_CONTEXT" list -A -o json | python3 -c 'import json,sys; print(" ".join(sorted(r["name"] for r in json.load(sys.stdin))))')"
+          # AW-INF-054 AC-12 and AW-INF-065: ci installs those and nothing else. The Alloy operator installs
+          # each collector as its own alloy-chart release in observability; those are k8s-monitoring's, not
+          # platform-up's, and collectors-check reads them.
+          releases="$(helm --kube-context "$ANDARA_KUBE_CONTEXT" list -A -o json | python3 -c 'import json,sys; print(" ".join(sorted(r["name"] for r in json.load(sys.stdin) if not (r["namespace"] == "observability" and r["name"].startswith("k8s-monitoring-") and r["chart"].startswith("alloy-")))))')"
           [[ "$releases" == "cert-manager k8s-monitoring traefik" ]] \
             || { echo "::error::platform-up PROFILE=ci installed '$releases', not 'cert-manager k8s-monitoring traefik'"; exit 1; }
       - name: the collectors without the telemetry token (AW-INF-065 AC-1, AC-2)
