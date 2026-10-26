@@ -123,7 +123,7 @@ entry.
   collector's `remotecfg` needs the last scope to pull its pipelines.
 - **Expiry:** at most 90 days. When it is made, record it in `credentials.yaml` with `warn_days: 30`: a
   lapsed telemetry token blinds every SLO at once (`AW-INF-065`).
-  - `solo7dev`: not made yet.
+  - `solo7dev`: recorded in `credentials.yaml`.
   - `solo7`: not made yet.
 - **Stored:**
   - `solo7dev`: `.local/box.env`, and the Secret `observability/grafana-telemetry` on the box's cluster,
@@ -267,6 +267,18 @@ The `k8s-monitoring` release in `observability` is `make platform-up`'s (`ADR-00
   token.
 - **The release's state:** `make collectors-check` (each collector Ready, the Secret's keys, whether `token`
   is set, and on the box the one active Fleet collector).
+- **What `solo7dev` may hold.** The stack is on Grafana Cloud's Pro tier, on an employee account, so
+  overages aren't billed today. Brian's rule (2026-10-26): don't go far past the allowance; how far over is
+  tolerated is still being checked. Other Grafana products share the same allowance.
+
+  | Allowance | Included | Ours on 2026-10-25 |
+  |---|---|---|
+  | Active series | 20k | 41 (Kafka 24) |
+  | Logs ingested | 50 GB | first week owed (`AW-INF-065`) |
+  | Traces ingested | 50 GB | none yet: no server runs on the box |
+  | Profiles ingested | 50 GB | none: nothing sends profiles |
+  | Host hours | 2k | none: node-exporter isn't deployed |
+  | Container hours | 37k | not read yet |
 
 ## Retiring
 
