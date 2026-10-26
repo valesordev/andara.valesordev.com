@@ -555,6 +555,30 @@ class RulesRenderTest(unittest.TestCase):
         self.assertIn("B is not Math", problems)
         self.assertIn("no_data_state 'NoData', want 'OK'", problems)
 
+    def test_the_interval_query_a_threshold_c_condition_and_error_state_are_compared(self):
+        """Pre-PR review, round 2: each of these branches had no test of its own."""
+        groups = planned_from_file(self.doc, [])
+        groups["andara-tick"]["interval_seconds"] = 30
+        r = groups["andara-content"]["rule"][0]
+        a = r["data"][0]
+        a["datasource_uid"] = "x"
+        c = json.loads(r["data"][2]["model"])
+        c["conditions"] = [{"evaluator": {"type": "lt", "params": [0]}}]
+        r["data"][2]["model"] = json.dumps(c)
+        r["condition"] = "B"
+        r["exec_err_state"] = "OK"
+        s = groups["andara-sessions"]["rule"][0]["data"][0]
+        m = json.loads(s["model"])
+        m["instant"] = False
+        s["model"] = json.dumps(m)
+        problems = "\n".join(tf.rule_problems(groups, [], self.doc))
+        self.assertIn("andara-tick: interval_seconds 30, want 60", problems)
+        self.assertIn("ContentLoadFailing: query A is not an instant query against grafanacloud-prom", problems)
+        self.assertIn("SessionsDroppingAtRate: query A is not an instant query", problems)
+        self.assertIn("ContentLoadFailing: C is not Threshold B > 0", problems)
+        self.assertIn("ContentLoadFailing: condition 'B', want C", problems)
+        self.assertIn("ContentLoadFailing: exec_err_state 'OK', want 'Error'", problems)
+
     def test_labels_and_annotations_are_compared(self):
         groups = planned_from_file(self.doc, [])
         groups["andara-tick"]["rule"][0]["labels"]["severity"] = "ticket"
