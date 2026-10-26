@@ -267,7 +267,9 @@ The `k8s-monitoring` release in `observability` is `make platform-up`'s (`ADR-00
   prints that collector's warnings and errors. A `401 Unauthorized` there is a lapsed, revoked or empty
   token.
 - **The release's state:** `make collectors-check` (each collector Ready, the Secret's keys, whether `token`
-  is set, and on the box the one active Fleet collector).
+  is set, and on the box the one active Fleet collector of the running `fleet` pod). A replaced pod that
+  couldn't unregister, after a revoked or empty token, stays active in Fleet for up to about 3 hours; the
+  check prints it and doesn't count it.
 - **What `solo7dev` may hold.** The stack is on Grafana Cloud's Pro tier, on an employee account, so
   overages aren't billed today. Brian's rule (2026-10-26): don't go far past the allowance; how far over is
   tolerated is still being checked. Other Grafana products share the same allowance.

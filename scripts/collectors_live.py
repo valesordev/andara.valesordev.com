@@ -200,7 +200,10 @@ def check(r, profile, env, sleep=time.sleep, now=time.time):
     r.say("token %s" % ("set: the collectors ship to %s" % STACK if shipping else
                         "empty: the collectors ship nothing (%s unset at platform-up)" % collectors.TOKEN))
     if profile == "box" and shipping and pods is not None:
-        fleet_inventory(r, env, fleet_pods(pods))
+        def list_pods():
+            doc = kjson(env, "-n", NS, "get", "pods", "-l", "app.kubernetes.io/instance=%s-fleet" % RELEASE)
+            return None if doc is None else fleet_pods(doc)
+        fleet_inventory(r, env, list_pods, sleep=sleep, now=now)
     return r
 
 
@@ -224,28 +227,41 @@ def pod_checks(r, doc):
 
 
 def fleet_pods(doc):
-    """The names of fleet's running pods in `get pods -A`'s JSON. A collector's Fleet ID ends in its pod's
-    name (the chart's id is k8s-monitoring-<cluster>-<namespace>-<hostname>)."""
+    """The names of fleet's running pods in a pod list's JSON, leaving out a terminating one (still phase
+    Running, with a deletionTimestamp). A collector's Fleet ID ends in its pod's name (the chart's id is
+    k8s-monitoring-<cluster>-<namespace>-<hostname>)."""
     return [p["metadata"]["name"] for p in doc.get("items") or []
             if p["metadata"]["namespace"] == NS and (p.get("status") or {}).get("phase") == "Running"
+            and not p["metadata"].get("deletionTimestamp")
             and ((p["metadata"].get("labels") or {}).get("app.kubernetes.io/instance") == "%s-fleet" % RELEASE)]
 
 
-def fleet_inventory(r, env, pods):
-    try:
-        doc = gcx.run(STACK, "fleet", "collectors", "list", env=env)
-    except gcx.GcxError as e:
-        raise Missing(str(e))
-    items = doc if isinstance(doc, list) else (doc or {}).get("items") or []
-    mine = []
-    for c in items:
-        spec = c.get("spec") or {}
-        attrs = dict(spec.get("local_attributes") or {}, **(spec.get("remote_attributes") or {}))
-        if attrs.get("cluster") == "andara" and not spec.get("marked_inactive_at"):
-            mine.append(attrs)
-    # A replaced pod's collector unregisters at shutdown, but one that couldn't authenticate (a revoked or
-    # empty token) stays active until Fleet times it out, up to ~3h; only the running pods' own count.
-    running = [a for a in mine if any(str(a.get("collector.ID", "")).endswith("-" + p) for p in pods)]
+def fleet_inventory(r, env, list_pods, sleep=time.sleep, now=time.time):
+    """AC-3: exactly one active collector from this cluster, counted among the running fleet pod's own.
+    A replaced pod's collector unregisters at shutdown, but one that couldn't authenticate (a revoked or
+    empty token) stays active until Fleet times it out, up to ~3h, so it is reported, not counted. A
+    restarted pod is Ready before it registers, so the inventory is polled to a deadline."""
+    deadline = now() + DEADLINE
+    while True:
+        pods = list_pods()
+        try:
+            doc = gcx.run(STACK, "fleet", "collectors", "list", env=env)
+        except gcx.GcxError as e:
+            raise Missing(str(e))
+        items = doc if isinstance(doc, list) else (doc or {}).get("items") or []
+        mine = []
+        for c in items:
+            spec = c.get("spec") or {}
+            attrs = dict(spec.get("local_attributes") or {}, **(spec.get("remote_attributes") or {}))
+            if attrs.get("cluster") == "andara" and not spec.get("marked_inactive_at"):
+                mine.append(attrs)
+        running = [a for a in mine if any(str(a.get("collector.ID", "")).endswith("-" + p) for p in pods or [])]
+        if (pods is not None and len(running) == 1) or now() >= deadline:
+            break
+        sleep(POLL)
+    if pods is None:
+        r.check(False, "fleet's pods could not be listed, so the Fleet inventory is unchecked")
+        return
     stale = len(mine) - len(running)
     if stale:
         r.say("Fleet inventory: %d active collector(s) from pods that are gone, not counted" % stale)

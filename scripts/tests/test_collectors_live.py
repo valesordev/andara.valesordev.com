@@ -184,10 +184,36 @@ class Inventory(unittest.TestCase):
     PODS = ["k8s-monitoring-fleet-abc-1"]
 
     def run_with(self, items, pods=None):
+        """items: one Fleet listing, or a list of listings returned in turn (the last one repeats)."""
+        listings = items if items and isinstance(items[0], list) else [items]
+        calls, clock = [], [0.0]
+
+        def run(*a, **k):
+            calls.append(1)
+            return {"items": listings[min(len(calls), len(listings)) - 1]}
         r = live.Run()
-        with mock.patch.object(live.gcx, "run", lambda *a, **k: {"items": items}), redirect_stdout(io.StringIO()):
-            live.fleet_inventory(r, {}, self.PODS if pods is None else pods)
+        with mock.patch.object(live.gcx, "run", run), redirect_stdout(io.StringIO()):
+            live.fleet_inventory(r, {}, lambda: self.PODS if pods is None else pods,
+                                 sleep=lambda s: clock.__setitem__(0, clock[0] + s), now=lambda: clock[0])
+        r.calls = len(calls)
         return r
+
+    def test_the_inventory_is_polled_until_the_new_pod_registers(self):
+        """A restarted fleet pod is Ready before its remotecfg registers (live-assertions.md rule 2)."""
+        r = self.run_with([[], [self.collector("k8s-monitoring-fleet-abc-1")]])
+        self.assertEqual(r.failures, [])
+        self.assertEqual(r.calls, 2)
+
+    def test_a_collector_that_never_registers_fails_at_the_deadline(self):
+        r = self.run_with([])
+        self.assertTrue([f for f in r.failures if "0 active collector(s)" in f], r.failures)
+        self.assertGreater(r.calls, 1)
+
+    def test_unlistable_fleet_pods_fail(self):
+        r2 = live.Run()
+        with mock.patch.object(live.gcx, "run", lambda *a, **k: {"items": []}), redirect_stdout(io.StringIO()):
+            live.fleet_inventory(r2, {}, lambda: None, sleep=lambda s: None, now=iter(range(0, 10000, 100)).__next__)
+        self.assertTrue([f for f in r2.failures if "fleet's pods could not be listed" in f], r2.failures)
 
     def collector(self, pod, inactive=False, **attrs):
         name = "k8s-monitoring-andara-observability-" + pod
@@ -224,12 +250,31 @@ class Inventory(unittest.TestCase):
         self.assertTrue([f for f in r.failures if "environment=dev" in f], r.failures)
 
 
+class FleetPods(unittest.TestCase):
+
+    def fleet(self, name, ns="observability", phase="Running", labels=None, deleting=False):
+        p = pod(ns, name, {"app.kubernetes.io/instance": "k8s-monitoring-fleet"} if labels is None else labels)
+        p["status"] = {"phase": phase}
+        if deleting:
+            p["metadata"]["deletionTimestamp"] = "2026-10-26T18:33:45Z"
+        return p
+
+    def test_only_running_fleet_pods_in_observability_that_are_not_terminating(self):
+        doc = {"items": [self.fleet("k8s-monitoring-fleet-abc-1"),
+                         self.fleet("k8s-monitoring-fleet-pending", phase="Pending"),
+                         self.fleet("k8s-monitoring-fleet-done", phase="Succeeded"),
+                         self.fleet("k8s-monitoring-fleet-elsewhere", ns="andara-dev"),
+                         self.fleet("k8s-monitoring-fleet-unlabelled", labels={}),
+                         self.fleet("k8s-monitoring-fleet-old", deleting=True)]}
+        self.assertEqual(live.fleet_pods(doc), ["k8s-monitoring-fleet-abc-1"])
+
+
 class Check(unittest.TestCase):
     """check() end to end against fakes: what it hands pod_checks and fleet_inventory."""
 
     def run_check(self, pods_doc):
         def kjson(env, *args):
-            if args[:3] == ("get", "pods", "-A"):
+            if args[:3] == ("get", "pods", "-A") or args[2:4] == ("get", "pods"):
                 return pods_doc
             if args[:2] == ("get", "crd"):
                 return {"metadata": {"creationTimestamp": "2026-10-25T15:49:09Z"}}
@@ -247,7 +292,7 @@ class Check(unittest.TestCase):
                 mock.patch.object(live, "tool", lambda *a: "/bin/true"), \
                 mock.patch.object(live.subprocess, "run", lambda *a, **k: mock.Mock(stdout=helm_rows)), \
                 mock.patch.object(live, "wait_ready", lambda *a, **k: (True, 1, 1)), \
-                mock.patch.object(live, "fleet_inventory", lambda r, env, pods: seen.setdefault("pods", pods)), \
+                mock.patch.object(live, "fleet_inventory", lambda r, env, list_pods, **k: seen.setdefault("pods", list_pods())), \
                 redirect_stdout(io.StringIO()):
             live.check(r, "box", {})
         return r, seen
