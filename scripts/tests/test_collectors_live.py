@@ -77,11 +77,14 @@ class NotReady(unittest.TestCase):
                                                   "state": {"waiting": {"reason": "CrashLoopBackOff"}}}]}
         other = pod("observability", "k8s-monitoring-metrics-abc-1")
 
+        calls = []
+
         def kubectl(env, *args):
+            calls.append(args)
             if args[2:4] == ("get", "events"):
                 return mock.Mock(returncode=0, stdout="Warning BackOff restarting failed container\n", stderr="")
             if args[2] == "logs":
-                return mock.Mock(returncode=0, stdout="level=error msg=\"failed to bind\"\n", stderr="")
+                return mock.Mock(returncode=1, stdout="", stderr="Error from server (Forbidden): pods/log")
             return mock.Mock(returncode=1, stdout="", stderr="unexpected")
         out = io.StringIO()
         with mock.patch.object(live, "kjson", lambda env, *a: {"items": [stuck, other]}), \
@@ -91,14 +94,35 @@ class NotReady(unittest.TestCase):
         self.assertIn("k8s-monitoring-receiver-abc-1: phase Running, Ready=False (ContainersNotReady)", text)
         self.assertIn("alloy: waiting CrashLoopBackOff, 4 restart(s)", text)
         self.assertIn("Warning BackOff restarting failed container", text)
-        self.assertIn('level=error msg="failed to bind"', text)
+        self.assertIn("Error from server (Forbidden): pods/log", text, "a failed read prints its stderr")
+        self.assertIn(("-n", "observability", "logs", "k8s-monitoring-receiver-abc-1", "--all-containers", "--tail=20"),
+                      calls)
         self.assertNotIn("metrics-abc-1", text)
 
-    def test_no_pods_says_so(self):
+    def no_pods(self, pods_doc):
+        def kjson(env, *args):
+            if args[2:4] == ("get", "pods"):
+                return pods_doc
+            if args[2:5] == ("get", "alloy", "k8s-monitoring-receiver"):
+                return {"status": {"conditions": [{"type": "Deployed", "status": "False", "reason": "InstallFailed",
+                                                   "message": "quota exceeded"}]}}
+            return None
         out = io.StringIO()
-        with mock.patch.object(live, "kjson", lambda env, *a: {"items": []}), redirect_stdout(out):
+        with mock.patch.object(live, "kjson", kjson), redirect_stdout(out), mock.patch.object(
+                live, "kubectl", lambda env, *a: mock.Mock(returncode=0, stdout="Warning FailedCreate quota\n", stderr="")):
             live.diagnose(live.Run(), {}, "receiver")
-        self.assertIn("receiver: no pods", out.getvalue())
+        return out.getvalue()
+
+    def test_no_pods_prints_the_collectors_own_conditions_and_events(self):
+        """The operator never made the Deployment, or the ReplicaSet can't make pods: the reason is on the
+        Alloy resource and on the workload, not on a pod."""
+        text = self.no_pods({"items": []})
+        self.assertIn("receiver: no pods", text)
+        self.assertIn("alloy k8s-monitoring-receiver: Deployed=False (InstallFailed: quota exceeded)", text)
+        self.assertIn("Warning FailedCreate quota", text)
+
+    def test_an_unreadable_pod_list_says_so(self):
+        self.assertIn("receiver: no pods (the pod list could not be read)", self.no_pods(None))
 
 
 class Readiness(unittest.TestCase):
@@ -308,7 +332,7 @@ class FleetPods(unittest.TestCase):
 class Check(unittest.TestCase):
     """check() end to end against fakes: what it hands pod_checks and fleet_inventory."""
 
-    def run_check(self, pods_doc):
+    def run_check(self, pods_doc, ready=lambda kind, name: True):
         def kjson(env, *args):
             if args[:3] == ("get", "pods", "-A") or args[2:4] == ("get", "pods"):
                 return pods_doc
@@ -320,18 +344,28 @@ class Check(unittest.TestCase):
                 return {"data": {k: "eA==" for k in live.SECRET_KEYS["box"]}}
             return None
         helm_rows = json.dumps([{"name": live.RELEASE, "chart": "k8s-monitoring-4.5.3", "status": "deployed"}])
-        seen = {}
+        seen, out = {}, io.StringIO()
         r = live.Run()
         with mock.patch.object(live, "kjson", kjson), \
                 mock.patch.object(live.kube, "require", lambda **k: None), \
                 mock.patch.object(live.kube, "helm", lambda *a, **k: ["helm"]), \
                 mock.patch.object(live, "tool", lambda *a: "/bin/true"), \
                 mock.patch.object(live.subprocess, "run", lambda *a, **k: mock.Mock(stdout=helm_rows)), \
-                mock.patch.object(live, "wait_ready", lambda *a, **k: (True, 1, 1)), \
+                mock.patch.object(live, "wait_ready", lambda env, kind, name, **k: (True, 1, 1) if ready(kind, name)
+                                  else (False, 0, 1)), \
                 mock.patch.object(live, "fleet_inventory", lambda r, env, list_pods, **k: seen.setdefault("pods", list_pods())), \
-                redirect_stdout(io.StringIO()):
+                redirect_stdout(out):
             live.check(r, "box", {})
+        r.out = out.getvalue()
         return r, seen
+
+    def test_a_collector_that_is_not_ready_is_diagnosed_and_the_rest_still_run(self):
+        seen = []
+        with mock.patch.object(live, "diagnose", lambda r, env, name: seen.append(name)):
+            r, _ = self.run_check({"items": []}, ready=lambda kind, name: name != "k8s-monitoring-receiver")
+        self.assertEqual(seen, ["receiver"])
+        self.assertTrue([f for f in r.failures if "k8s-monitoring-receiver Ready 0/1" in f], r.failures)
+        self.assertTrue([o for o in r.out.splitlines() if "daemonset k8s-monitoring-logs Ready" in o], r.out)
 
     def test_an_unreadable_pod_list_fails_and_skips_the_inventory(self):
         r, seen = self.run_check(None)

@@ -217,6 +217,14 @@ def diagnose(r, env, name):
     pods = [p for p in (doc or {}).get("items") or [] if p["metadata"]["name"].startswith(prefix)]
     if not pods:
         r.say("%s: no pods%s" % (name, "" if doc is not None else " (the pod list could not be read)"))
+        # Then the reason is on the Alloy resource (the operator's install) or the workload (FailedCreate).
+        workload = RELEASE + "-" + name
+        alloy = kjson(env, "-n", NS, "get", "alloy", workload)
+        for c in ((alloy or {}).get("status") or {}).get("conditions") or []:
+            r.say("alloy %s: %s=%s (%s: %s)" % (workload, c.get("type"), c.get("status"), c.get("reason", ""),
+                                               c.get("message", "")))
+        out = kubectl(env, "-n", NS, "get", "events", "--field-selector", "involvedObject.name=" + workload)
+        r.say("%s: events:\n%s" % (workload, (out.stdout if out.returncode == 0 else out.stderr).rstrip()))
     for p in pods:
         pname, st = p["metadata"]["name"], p.get("status") or {}
         ready = [c for c in st.get("conditions") or [] if c.get("type") == "Ready"]
