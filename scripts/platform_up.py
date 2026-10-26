@@ -598,6 +598,9 @@ def shared_namespace(r, c):
     namespace(r, c, SHARED)
 
 
+FLEET = "k8s-monitoring-fleet"  # the fleet collector's app.kubernetes.io/instance label
+
+
 def telemetry_secret_doc(token, users):
     data = dict(users, token=token)
     return {"apiVersion": "v1", "kind": "Secret", "type": "Opaque",
@@ -618,7 +621,8 @@ def telemetry(r, c, token, profile):
         r.secrets += [token, secret["data"]["token"]]
     where = "%s/%s" % (collectors.NAMESPACE, collectors.SECRET)
     p = c.kubectl("-n", collectors.NAMESPACE, "get", "secret", collectors.SECRET, "-o", "json", check=False)
-    if p.returncode == 0:
+    existed = p.returncode == 0
+    if existed:
         try:
             if (json.loads(p.stdout or "{}").get("data") or {}) == secret["data"]:
                 r.say("secret %s unchanged" % where)
@@ -631,6 +635,15 @@ def telemetry(r, c, token, profile):
         raise Failed(r.redact("write the Secret %s: %s" % (where, p.stderr.strip())))
     r.say("secret %s written %s" % (where, ("from %s" % TELEMETRY_TOKEN) if token else
                                      "with an empty token (%s unset)" % TELEMETRY_TOKEN))
+    # The destinations re-read the Secret within a minute, but fleet's remotecfg keeps the token it started
+    # with: after an empty-token run it stayed unauthenticated once the token was restored (PR #657). So a
+    # changed Secret replaces fleet's pod; on the first write there is none yet.
+    if existed and profile == "box":
+        p = c.kubectl("-n", collectors.NAMESPACE, "delete", "pod", "-l", "app.kubernetes.io/instance=%s" % FLEET,
+                      "--ignore-not-found", check=False)
+        if p.returncode != 0:
+            raise Failed(r.redact("restart the collector fleet: %s" % p.stderr.strip()))
+        r.say("collector fleet restarted to read the new token")
 
 
 def up(r, profile="box", env=None, restore=cluster_secrets.restore):

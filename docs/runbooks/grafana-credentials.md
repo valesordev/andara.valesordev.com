@@ -136,8 +136,9 @@ entry.
   and `fleet`'s `remoteConfig`. No collector holds it in its environment (`fleet`'s `GCLOUD_RW_API_KEY` is
   set empty on purpose, so Grafana's default Fleet pipelines can't use it).
 - **Check after a rotation:** `make platform-up` rewrites the Secret (`secret observability/grafana-telemetry
-  written`); the collectors re-read it within a minute, with no restart. Then `make collectors-check` says
-  `token set`, and `make observe-check` finds fresh series from the stack whose token changed: `ENV=dev` for
+  written`). The destinations re-read it within a minute; `fleet`'s remote config keeps the token it started
+  with, so `platform-up` replaces its pod (`collector fleet restarted to read the new token`). Then
+  `make collectors-check` says `token set`, and `make observe-check` finds fresh series from the stack whose token changed: `ENV=dev` for
   `solo7dev`, `ENV=prod` for `solo7`.
 
 ### `GRAFANA_SOLO7DEV_FLEET_READ_TOKEN`, `GRAFANA_SOLO7_FLEET_READ_TOKEN`

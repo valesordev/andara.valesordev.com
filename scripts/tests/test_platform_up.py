@@ -496,6 +496,25 @@ class Telemetry(Base):
         self.assertIn("secret observability/grafana-telemetry written", out)
         self.assertEqual(len(self.fake.upgrades()), before)
 
+    def restarts(self):
+        return [c for c in self.fake.calls if c[:4] == ("kubectl", "-n", "observability", "delete")]
+
+    def test_a_changed_secret_restarts_fleet_which_reads_it_only_at_start(self):
+        """PR #657: fleet's remotecfg kept the empty token of an AC-2 run after the Secret was restored."""
+        self.up(GRAFANA_SOLO7DEV_TELEMETRY_TOKEN=TELEMETRY)
+        self.assertEqual(self.restarts(), [], "the first write has no fleet pod to restart")
+        out = self.up(GRAFANA_SOLO7DEV_TELEMETRY_TOKEN=TELEMETRY + "-rotated")
+        self.assertEqual(self.restarts(), [("kubectl", "-n", "observability", "delete", "pod", "-l",
+                                            "app.kubernetes.io/instance=k8s-monitoring-fleet", "--ignore-not-found")])
+        self.assertIn("collector fleet restarted to read the new token", out)
+
+    def test_an_unchanged_secret_or_ci_restarts_nothing(self):
+        self.up(GRAFANA_SOLO7DEV_TELEMETRY_TOKEN=TELEMETRY)
+        self.up(GRAFANA_SOLO7DEV_TELEMETRY_TOKEN=TELEMETRY)
+        self.up("ci")
+        self.up("ci", GRAFANA_SOLO7DEV_TELEMETRY_TOKEN=TELEMETRY)
+        self.assertEqual(self.restarts(), [])
+
     def test_the_release_gets_the_profile_values(self):
         self.up("ci")
         values = self.fake.releases["k8s-monitoring"]["values"]
