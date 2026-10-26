@@ -214,6 +214,18 @@ class Stamp(Base):
                          'where attributes[\\"environment\\"] == nil",\n      `delete_key(attributes, "environment")`,\n')
         self.assertProblem(r"ci/receiver: solo7dev-traces' environment statements are not what", self.problems(rs))
 
+    def test_a_second_cluster_stage_fails(self):
+        """Round 3: only the chart's one cluster stage is skipped, and only with the profile's name."""
+        rs = edit_config(renders(), "box", "logs", 'stage.static_labels {\n    values = {\n      "cluster" = "andara",\n    }\n  }\n',
+                         'stage.static_labels {\n    values = {\n      "cluster" = "andara",\n    }\n  }\n'
+                         '  stage.static_labels {\n    values = {\n      "cluster" = "solo7",\n    }\n  }\n')
+        self.assertProblem(r"box/logs: solo7dev-logs' stages are not what environments.yaml renders", self.problems(rs))
+
+    def test_a_trace_statement_after_the_stamp_that_names_nothing_fails(self):
+        rs = edit_config(renders(), "ci", "receiver", 'where attributes[\\"environment\\"] == nil",\n',
+                         'where attributes[\\"environment\\"] == nil",\n      `keep_keys(attributes, ["service.name"])`,\n')
+        self.assertProblem(r"ci/receiver: solo7dev-traces' environment statements are not what", self.problems(rs))
+
     def test_a_render_against_another_keep_list_fails(self):
         keep = [e for e in collectors.keep_list() if e["name"] != "andara_ticks_total"]
         self.assertProblem(r"solo7dev-metrics' rules are not what", self.problems(keep=keep))
@@ -531,9 +543,12 @@ class Runbooks(unittest.TestCase):
             f.write('`kafka_consumergroup_lag{topic="andara.events"} != 0`\n'
                     '`andara_tick_overruns_total{pod="andara-0"} !=\n 0`\n'
                     '`{namespace="andara-dev", stream="x"} |> "<_> refused"`\n'
-                    '`sum_over_time({namespace="andara-dev", filename="x"} | unwrap latency [5m])`\n')
+                    '`{namespace="andara-dev", filename="x"} | unwrap latency`\n'
+                    '`rate_counter({namespace="andara-dev", node="x"}[5m])`\n'
+                    '`sum_over_time({namespace="andara-dev", host="x"} | label_format a="b" [5m])`\n')
         problems = check.runbook_problems(d)
-        self.assertEqual(sorted(re.search(r"names (\w+),", p).group(1) for p in problems), ["filename", "stream"], problems)
+        self.assertEqual(sorted(re.search(r"names (\w+),", p).group(1) for p in problems),
+                         ["filename", "host", "node", "stream"], problems)
 
     def test_a_pod_selector_with_a_parser_fails(self):
         d = tempfile.mkdtemp()

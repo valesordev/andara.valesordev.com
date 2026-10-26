@@ -276,15 +276,18 @@ def log_stages(cfg):
 
 
 def trace_statements(cfg):
-    """solo7dev-traces' resource statements that set `environment`, or None when cfg has none."""
+    """solo7dev-traces' resource statements from the first that names environment to the end, or None when
+    cfg has none. The stamp must be the last statements: anything after it (keep_keys, a delete) is
+    compared too, and so is a statement before it that names environment."""
     body = component(cfg, "otelcol.processor.transform", "solo7dev_traces")
     if body is None:
         return None
     out = []
     for b in blocks(body, "trace_statements"):
         if attr(b, "context") == "resource":
-            out += [s for s in strings(b, "statements") if "environment" in s]
-    return out
+            out += strings(b, "statements")
+    first = next((i for i, x in enumerate(out) if "environment" in x), len(out))
+    return out[first:]
 
 
 def trace_table(statements):
@@ -362,9 +365,10 @@ def render_problems(renders, envs, profiles, chart_dir, kind_text=None, prod_tfv
                 if keep != list(collectors.LOG_LABELS):
                     say("%s/%s: solo7dev-logs keeps stream labels %s, not the allow-list %s"
                         % (profile, name, keep, list(collectors.LOG_LABELS)))
-                # The chart's own cluster stage comes first (clusterLabels); ours must be everything after it.
+                # The chart's own cluster stage comes first (clusterLabels), once, with the profile's name; ours
+                # must be everything after it.
                 sig = log_signature(cfg)
-                while sig and sig[0][0] == "stage.static_labels" and re.fullmatch(r'values=\{"cluster"="[^"]*"\}', sig[0][1]):
+                if sig and sig[0] == ("stage.static_labels", 'values={"cluster"="%s"}' % CLUSTER[profile]):
                     sig = sig[1:]
                 if sig != want_logs:
                     say("%s/%s: solo7dev-logs' stages are not what environments.yaml renders, %s"
