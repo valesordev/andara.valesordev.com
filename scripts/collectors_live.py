@@ -217,14 +217,23 @@ def diagnose(r, env, name):
     pods = [p for p in (doc or {}).get("items") or [] if p["metadata"]["name"].startswith(prefix)]
     if not pods:
         r.say("%s: no pods%s" % (name, "" if doc is not None else " (the pod list could not be read)"))
-        # Then the reason is on the Alloy resource (the operator's install) or the workload (FailedCreate).
+        # Then the reason is on the Alloy resource (the operator's install), or on the workload or its
+        # ReplicaSet (FailedCreate is posted on k8s-monitoring-<name>-<hash>), so events match by prefix.
         workload = RELEASE + "-" + name
         alloy = kjson(env, "-n", NS, "get", "alloy", workload)
+        if alloy is None:
+            r.say("alloy %s: could not be read" % workload)
         for c in ((alloy or {}).get("status") or {}).get("conditions") or []:
             r.say("alloy %s: %s=%s (%s: %s)" % (workload, c.get("type"), c.get("status"), c.get("reason", ""),
                                                c.get("message", "")))
-        out = kubectl(env, "-n", NS, "get", "events", "--field-selector", "involvedObject.name=" + workload)
-        r.say("%s: events:\n%s" % (workload, (out.stdout if out.returncode == 0 else out.stderr).rstrip()))
+        events = kjson(env, "-n", NS, "get", "events")
+        if events is None:
+            r.say("%s: events could not be read" % workload)
+        for e in (events or {}).get("items") or []:
+            obj = e.get("involvedObject") or {}
+            if obj.get("name") == workload or str(obj.get("name", "")).startswith(workload + "-"):
+                r.say("%s/%s: %s %s: %s" % (obj.get("kind"), obj.get("name"), e.get("type"), e.get("reason"),
+                                            e.get("message")))
     for p in pods:
         pname, st = p["metadata"]["name"], p.get("status") or {}
         ready = [c for c in st.get("conditions") or [] if c.get("type") == "Ready"]

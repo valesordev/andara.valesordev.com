@@ -132,9 +132,14 @@ entry.
     that is a later SRE change.
   - `solo7`: `.local/box.env` and prod's cluster's copy of that Secret only, never a repository secret
     (`AW-INF-078`).
-- **Read by:** the `k8s-monitoring` collectors, through the Secret: each destination's `passwordKey: token`
-  and `fleet`'s `remoteConfig`. No collector holds it in its environment (`fleet`'s `GCLOUD_RW_API_KEY` is
-  set empty on purpose, so Grafana's default Fleet pipelines can't use it).
+- **Read by:** the `k8s-monitoring` collectors, through the Secret: the metrics and logs destinations'
+  `passwordKey: token`, the traces destination's `passwordFrom`, and `fleet`'s `remoteConfig`. No collector
+  holds it in its environment (`fleet`'s `GCLOUD_RW_API_KEY` is set empty on purpose, so Grafana's default
+  Fleet pipelines can't use it).
+  - Alloy's traces auth refuses an empty password, which would keep a fresh `receiver` from loading. So when
+    the token is empty, traces send the placeholder `unset` instead. The Secret's token stays empty.
+  - The receiver's `Unauthenticated` errors from Tempo on an empty-token run (CI, or `make platform-up`
+    without the token) are expected, like the other destinations' 401s.
 - **Check after a rotation:** `make platform-up` rewrites the Secret (`secret observability/grafana-telemetry
   written`). The destinations re-read it within a minute; `fleet`'s remote config keeps the token it started
   with, so `platform-up` replaces its pod (`collector fleet restarted to read the new token`). Then

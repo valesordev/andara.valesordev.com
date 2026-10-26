@@ -99,27 +99,39 @@ class NotReady(unittest.TestCase):
                       calls)
         self.assertNotIn("metrics-abc-1", text)
 
-    def no_pods(self, pods_doc):
+    RS_EVENT = {"involvedObject": {"kind": "ReplicaSet", "name": "k8s-monitoring-receiver-85579d4f9f"},
+                "type": "Warning", "reason": "FailedCreate", "message": "exceeded quota"}
+
+    def no_pods(self, pods_doc, alloy=True, events=True):
         def kjson(env, *args):
             if args[2:4] == ("get", "pods"):
                 return pods_doc
-            if args[2:5] == ("get", "alloy", "k8s-monitoring-receiver"):
+            if args[2:5] == ("get", "alloy", "k8s-monitoring-receiver") and alloy:
                 return {"status": {"conditions": [{"type": "Deployed", "status": "False", "reason": "InstallFailed",
                                                    "message": "quota exceeded"}]}}
+            if args[2:4] == ("get", "events") and events:
+                return {"items": [self.RS_EVENT,
+                                  {"involvedObject": {"kind": "Pod", "name": "k8s-monitoring-metrics-x"},
+                                   "type": "Normal", "reason": "Pulled", "message": "unrelated"}]}
             return None
         out = io.StringIO()
-        with mock.patch.object(live, "kjson", kjson), redirect_stdout(out), mock.patch.object(
-                live, "kubectl", lambda env, *a: mock.Mock(returncode=0, stdout="Warning FailedCreate quota\n", stderr="")):
+        with mock.patch.object(live, "kjson", kjson), redirect_stdout(out):
             live.diagnose(live.Run(), {}, "receiver")
         return out.getvalue()
 
-    def test_no_pods_prints_the_collectors_own_conditions_and_events(self):
+    def test_no_pods_prints_the_collectors_own_conditions_and_its_replicasets_events(self):
         """The operator never made the Deployment, or the ReplicaSet can't make pods: the reason is on the
-        Alloy resource and on the workload, not on a pod."""
+        Alloy resource and on the ReplicaSet (FailedCreate), not on a pod."""
         text = self.no_pods({"items": []})
         self.assertIn("receiver: no pods", text)
         self.assertIn("alloy k8s-monitoring-receiver: Deployed=False (InstallFailed: quota exceeded)", text)
-        self.assertIn("Warning FailedCreate quota", text)
+        self.assertIn("ReplicaSet/k8s-monitoring-receiver-85579d4f9f: Warning FailedCreate: exceeded quota", text)
+        self.assertNotIn("unrelated", text)
+
+    def test_unreadable_alloy_resource_and_events_say_so(self):
+        text = self.no_pods({"items": []}, alloy=False, events=False)
+        self.assertIn("alloy k8s-monitoring-receiver: could not be read", text)
+        self.assertIn("k8s-monitoring-receiver: events could not be read", text)
 
     def test_an_unreadable_pod_list_says_so(self):
         self.assertIn("receiver: no pods (the pod list could not be read)", self.no_pods(None))
