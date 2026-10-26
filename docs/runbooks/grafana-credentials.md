@@ -271,7 +271,7 @@ The `k8s-monitoring` release in `observability` is `make platform-up`'s (`ADR-00
   overages aren't billed today. Brian's rule (2026-10-26): don't go far past the allowance; how far over is
   tolerated is still being checked. Other Grafana products share the same allowance.
 
-  | Allowance | Included | Ours on 2026-10-25 |
+  | Allowance | Included per month | Ours, read 2026-10-25 |
   |---|---|---|
   | Active series | 20k | 41 (Kafka 24) |
   | Logs ingested | 50 GB | first week owed (`AW-INF-065`) |
@@ -279,6 +279,9 @@ The `k8s-monitoring` release in `observability` is `make platform-up`'s (`ADR-00
   | Profiles ingested | 50 GB | none: nothing sends profiles |
   | Host hours | 2k | none: node-exporter isn't deployed |
   | Container hours | 37k | not read yet |
+
+  Grafana Cloud's usage pages for the stack have the current figures; `AW-INF-065`'s §8 record holds the
+  measured ones.
 
 ## Retiring
 
