@@ -96,11 +96,17 @@ jobs:
           make platform-up PROFILE=ci
           # AW-INF-054 AC-12 and AW-INF-065: ci installs those and nothing else. The Alloy operator installs
           # each of ci's collectors as its own alloy-chart release (logs, metrics, receiver), and ci has no
-          # fleet collector (ADR-0014 §7), so the set is exact.
+          # fleet collector (ADR-0014 §7), so the set is exact. The operator makes its releases after
+          # platform-up returns, so the set is polled to a deadline, every release listed (-a) and deployed.
           want="cert-manager k8s-monitoring k8s-monitoring-logs k8s-monitoring-metrics k8s-monitoring-receiver traefik"
-          releases="$(helm --kube-context "$ANDARA_KUBE_CONTEXT" list -A -o json | python3 -c 'import json,sys; print(" ".join(sorted(r["name"] for r in json.load(sys.stdin))))')"
-          [[ "$releases" == "$want" ]] \
-            || { echo "::error::platform-up PROFILE=ci installed '$releases', not '$want'"; exit 1; }
+          deadline=$((SECONDS + 180))
+          while :; do
+            releases="$(helm --kube-context "$ANDARA_KUBE_CONTEXT" list -A -a -o json | python3 -c 'import json,sys; print(" ".join(sorted(r["name"] + ("" if r["status"] == "deployed" else "(" + r["status"] + ")") for r in json.load(sys.stdin))))')"
+            [[ "$releases" == "$want" ]] && break
+            (( SECONDS < deadline )) \
+              || { echo "::error::platform-up PROFILE=ci installed '$releases', not '$want', all deployed, within 180s"; exit 1; }
+            sleep 5
+          done
       - name: the collectors without the telemetry token (AW-INF-065 AC-1, AC-2)
         run: |
           set -euo pipefail
