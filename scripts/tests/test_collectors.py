@@ -168,25 +168,51 @@ class Stamp(Base):
         """Reviewer (a): a guard with action drop removes every series outside the table."""
         rs = edit_config(renders(), "box", "metrics", 'replacement = "unknown"\n',
                          'replacement = "unknown"\n      action = "drop"\n')
+        problems = self.problems(rs)
         self.assertProblem(r"box/metrics: solo7dev-metrics' rules are not what environments.yaml and keep-list.yaml "
-                           r"render, at 4: .*'drop'", self.problems(rs))
+                           r"render, at 4: .*'drop'", problems)
+        self.assertProblem(r"box/metrics: solo7dev-metrics has no unknown guard \(a replace\)", problems)
 
     def test_a_kube_drop_rule_that_keeps_fails(self):
         """Reviewer (b): action keep on A1's last rule drops every series but kube_ ones."""
         rs = edit_config(renders(), "ci", "receiver", 'regex = "drop"\n      action = "drop"',
                          'regex = "drop"\n      action = "keep"')
-        self.assertProblem(r"ci/receiver: solo7dev-metrics' rules are not what", self.problems(rs))
+        problems = self.problems(rs)
+        self.assertProblem(r"ci/receiver: solo7dev-metrics' rules are not what", problems)
+        self.assertProblem(r"ci/receiver: solo7dev-metrics' kube_ namespace rule keeps \[\]", problems)
 
     def test_a_kube_mark_that_matches_nothing_fails(self):
         """Reviewer (c): A1 switched off by its first rule."""
         rs = edit_config(renders(), "box", "metrics", 'regex = "kube_.+"', 'regex = "kube_NOPE"')
-        self.assertProblem(r"box/metrics: solo7dev-metrics' rules are not what", self.problems(rs))
+        problems = self.problems(rs)
+        self.assertProblem(r"box/metrics: solo7dev-metrics' rules are not what", problems)
+        self.assertProblem(r"box/metrics: solo7dev-metrics' kube_ namespace rule keeps \[\]", problems)
 
     def test_a_keep_rule_that_no_longer_matches_the_keep_list_fails(self):
         """Reviewer (d): the keep regex cut to `up`."""
         names = "|".join(sorted(e["name"] for e in collectors.keep_list()))
         rs = edit_config(renders(), "box", "metrics", 'regex = "%s"' % names, 'regex = "up"')
-        self.assertProblem(r"box/metrics: solo7dev-metrics' rules are not what", self.problems(rs))
+        problems = self.problems(rs)
+        self.assertProblem(r"box/metrics: solo7dev-metrics' rules are not what", problems)
+        self.assertProblem(r"box/metrics: solo7dev-metrics' keep rule keeps 1 names, not keep-list.yaml's", problems)
+
+    def test_a_logs_stage_with_an_extra_attribute_fails(self):
+        """Round 2: only the full comparison reads a stage.match's action."""
+        rs = edit_config(renders(), "box", "logs", 'selector = "{namespace=~\\"andara-dev\\"}"\n',
+                         'selector = "{namespace=~\\"andara-dev\\"}"\n    action = "drop"\n')
+        self.assertProblem(r"box/logs: solo7dev-logs' stages are not what environments.yaml renders", self.problems(rs))
+
+    def test_a_logs_stage_after_label_keep_fails(self):
+        rs = edit_config(renders(), "box", "receiver", '"job", "container"]\n  }\n',
+                         '"job", "container"]\n  }\n  stage.drop {\n    expression = ".*"\n  }\n')
+        problems = self.problems(rs)
+        self.assertProblem(r"box/receiver: solo7dev-logs' stages are not what environments.yaml renders", problems)
+        self.assertProblem(r"box/receiver: solo7dev-logs keeps stream labels \['stage.drop'\]", problems)
+
+    def test_a_trace_statement_that_removes_the_environment_fails(self):
+        rs = edit_config(renders(), "ci", "receiver", 'where attributes[\\"environment\\"] == nil",\n',
+                         'where attributes[\\"environment\\"] == nil",\n      `delete_key(attributes, "environment")`,\n')
+        self.assertProblem(r"ci/receiver: solo7dev-traces' environment statements are not what", self.problems(rs))
 
     def test_a_render_against_another_keep_list_fails(self):
         keep = [e for e in collectors.keep_list() if e["name"] != "andara_ticks_total"]
@@ -209,6 +235,49 @@ class Stamp(Base):
                     keep, keep + '    write_relabel_config {\n      source_labels = ["job"]\n'
                     '      target_label = "x"\n    }\n', 1)
         self.assertProblem(r"box/metrics: solo7dev-metrics' keep rule is not its last rule", self.problems(rs))
+
+
+class Generator(unittest.TestCase):
+    """The rules collectors.py renders, pinned for a small table, so the render checks (which compare the
+    chart's output with this generator) can't be passed by a defect that changes both sides."""
+
+    ENVS = {"ns-b": "dev", "ns-a": "local", "ns-c": "local"}
+    KEEP = [{"name": "up", "reader": "r"}, {"name": "b_total", "reader": "r"}]
+
+    def test_metric_rules(self):
+        self.assertEqual(collectors.metric_rules(self.ENVS, self.KEEP), "\n".join([
+            'write_relabel_config {\n  source_labels = ["namespace"]\n  regex = "ns-a|ns-c"\n'
+            '  target_label = "environment"\n  replacement = "local"\n}',
+            'write_relabel_config {\n  source_labels = ["namespace"]\n  regex = "ns-b"\n'
+            '  target_label = "environment"\n  replacement = "dev"\n}',
+            'write_relabel_config {\n  source_labels = ["environment"]\n  regex = ""\n'
+            '  target_label = "environment"\n  replacement = "unknown"\n}',
+            'write_relabel_config {\n  source_labels = ["__name__"]\n  regex = "kube_.+"\n'
+            '  target_label = "__tmp_kube_namespace"\n  replacement = "drop"\n}',
+            'write_relabel_config {\n  source_labels = ["__tmp_kube_namespace", "namespace"]\n  separator = ";"\n'
+            '  regex = "drop;(ns-a|ns-b|ns-c)"\n  target_label = "__tmp_kube_namespace"\n  replacement = ""\n}',
+            'write_relabel_config {\n  source_labels = ["__tmp_kube_namespace"]\n  regex = "drop"\n  action = "drop"\n}',
+            'write_relabel_config {\n  source_labels = ["__name__"]\n  regex = "b_total|up"\n  action = "keep"\n}',
+        ]) + "\n")
+
+    def test_log_stages(self):
+        self.assertEqual(collectors.log_stages(self.ENVS), "\n".join([
+            'stage.match {\n  selector = "{namespace=~\\"ns-a|ns-c\\"}"\n  stage.static_labels {\n    values = {\n'
+            '      environment = "local",\n    }\n  }\n}',
+            'stage.match {\n  selector = "{namespace=~\\"ns-b\\"}"\n  stage.static_labels {\n    values = {\n'
+            '      environment = "dev",\n    }\n  }\n}',
+            'stage.match {\n  selector = "{environment=\\"\\"}"\n  stage.static_labels {\n    values = {\n'
+            '      environment = "unknown",\n    }\n  }\n}',
+            'stage.label_keep {\n  values = ["environment", "namespace", "cluster", "job", "container"]\n}',
+        ]) + "\n")
+
+    def test_trace_statements(self):
+        self.assertEqual(collectors.trace_statements(self.ENVS), [
+            'set(attributes["environment"], "local") where attributes["k8s.namespace.name"] == "ns-a" or '
+            'attributes["k8s.namespace.name"] == "ns-c"',
+            'set(attributes["environment"], "dev") where attributes["k8s.namespace.name"] == "ns-b"',
+            'set(attributes["environment"], "unknown") where attributes["environment"] == nil',
+        ])
 
 
 class Collection(Base):
@@ -454,6 +523,17 @@ class Runbooks(unittest.TestCase):
         for label in ("service_name", "app", "pod", "instance"):
             self.assertTrue([p for p in problems if "names %s," % label in p], (label, problems))
         self.assertEqual(len(problems), 4, problems)
+
+    def test_promql_comparisons_are_not_logql_and_pattern_filters_and_unwrap_are(self):
+        """Round 2: `!= 0` is PromQL's comparison; `|>` and `| unwrap` under *_over_time are LogQL's."""
+        d = tempfile.mkdtemp()
+        with open(os.path.join(d, "w.md"), "w") as f:
+            f.write('`kafka_consumergroup_lag{topic="andara.events"} != 0`\n'
+                    '`andara_tick_overruns_total{pod="andara-0"} !=\n 0`\n'
+                    '`{namespace="andara-dev", stream="x"} |> "<_> refused"`\n'
+                    '`sum_over_time({namespace="andara-dev", filename="x"} | unwrap latency [5m])`\n')
+        problems = check.runbook_problems(d)
+        self.assertEqual(sorted(re.search(r"names (\w+),", p).group(1) for p in problems), ["filename", "stream"], problems)
 
     def test_a_pod_selector_with_a_parser_fails(self):
         d = tempfile.mkdtemp()

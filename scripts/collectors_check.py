@@ -175,22 +175,21 @@ def expected(envs, keep):
     return metrics, logs, collectors.trace_statements(envs)
 
 
+def normalise(text):
+    """Alloy text with comments dropped, whitespace collapsed and trailing commas before a close removed, so
+    the chart's layout and collectors.py's compare equal and nothing else does."""
+    text = re.sub(r"(?m)//[^\n]*$", "", text)
+    text = re.sub(r"\s+", " ", text).strip()
+    return re.sub(r",\s*([}\]])", r" \1", text).replace(" ", "")
+
+
 def log_signature(cfg):
-    """[(selector, {static label: value})] of solo7dev-logs' stage.match blocks, and ("label_keep", values)
-    for each label_keep, in order; None when cfg has no logs destination."""
+    """[(stage name, its normalised body)] of every top-level stage of solo7dev-logs' loki.process, in order;
+    None when cfg has no logs destination. Every attribute counts: an action, an extra stage, a label."""
     body = component(cfg, "loki.process", "solo7dev_logs")
     if body is None:
         return None
-    out = []
-    for name, inner in top_blocks(body):
-        if name == "stage.match":
-            labels = {}
-            for st in blocks(inner, "stage.static_labels"):
-                labels.update({k: string(v) for k, v in re.findall(r'([A-Za-z_][A-Za-z0-9_]*)\s*=\s*(%s)' % STRING, st)})
-            out.append((attr(inner, "selector"), labels))
-        elif name == "stage.label_keep":
-            out.append(("label_keep", tuple(strings(inner, "values"))))
-    return out
+    return [(name, normalise(inner)) for name, inner in top_blocks(body) if name.startswith("stage.")]
 
 
 def top_blocks(body):
@@ -216,22 +215,39 @@ def top_blocks(body):
     return out
 
 
+# A1's three rules, by value (source_labels, regex, target_label, replacement, action, separator); the
+# middle one's regex is the namespace alternation, checked on its own.
+KUBE_MARK = (("__name__",), "kube_.+", "__tmp_kube_namespace", "drop", "replace", None)
+KUBE_DROP = (("__tmp_kube_namespace",), "drop", None, None, "drop", None)
+
+
 def metric_table(rules):
-    """(table, guarded, kube namespaces, keep names) read back from metric_rules()."""
-    table, guarded, kube, keep = {}, False, None, None
-    for src, regex, target, repl, action, _ in rules:
-        if src == ("namespace",) and target == "environment" and action == "replace":
-            if guarded:
-                return {}, False, kube, keep  # a stamp after the guard
+    """(table, guarded, kube namespaces, keep names) read back from metric_rules(), every rule by value:
+    a guard that does anything but replace, or an A1 rule that differs from the one that works, reads as
+    absent. Nothing here comes from collectors.py, so a defect in the generator can't pass both sides."""
+    table, guarded, keep = {}, False, None
+    kube_mark = kube_drop = False
+    kube_clear = None
+    for i, rule in enumerate(rules):
+        src, regex, target, repl, action, sep = rule
+        if src == ("namespace",) and target == "environment":
+            if guarded or action != "replace" or sep is not None:
+                return {}, False, None, keep  # a stamp after the guard, or one that doesn't stamp
             for ns in (regex or "").split("|"):
                 table[ns] = repl
-        elif src == ("environment",) and regex == "" and target == "environment" and repl == collectors.GUARD:
-            guarded = True
+        elif src == ("environment",) and target == "environment":
+            guarded = (regex == "" and repl == collectors.GUARD and action == "replace" and sep is None)
+        elif rule == KUBE_MARK:
+            kube_mark = True
         elif src == ("__tmp_kube_namespace", "namespace"):
             m = re.match(r"^drop;\((.*)\)$", regex or "")
-            kube = sorted(m.group(1).split("|")) if m else []
-        elif src == ("__name__",) and action == "keep":
+            ok = (kube_mark and target == "__tmp_kube_namespace" and repl == "" and action == "replace" and sep == ";")
+            kube_clear = sorted(m.group(1).split("|")) if (m and ok) else []
+        elif rule == KUBE_DROP:
+            kube_drop = kube_clear is not None
+        elif src == ("__name__",) and action == "keep" and target is None and sep is None:
             keep = sorted((regex or "").split("|"))
+    kube = kube_clear if (kube_mark and kube_drop) else []
     return table, guarded, kube, keep
 
 
@@ -254,7 +270,9 @@ def log_stages(cfg):
         elif sel == '{environment=""}' and env == collectors.GUARD:
             guarded = True
     keep = [strings(b, "values") for b in blocks(body, "stage.label_keep")]
-    return table, guarded, (keep[-1] if keep else None)
+    tail = [name for name, _ in top_blocks(body)]
+    after = tail[tail.index("stage.label_keep") + 1:] if "stage.label_keep" in tail else []
+    return table, guarded, (keep[-1] if keep and not after else after or None)
 
 
 def trace_statements(cfg):
@@ -265,7 +283,7 @@ def trace_statements(cfg):
     out = []
     for b in blocks(body, "trace_statements"):
         if attr(b, "context") == "resource":
-            out += [s for s in strings(b, "statements") if 'attributes["environment"]' in s]
+            out += [s for s in strings(b, "statements") if "environment" in s]
     return out
 
 
@@ -301,8 +319,8 @@ def render_problems(renders, envs, profiles, chart_dir, kind_text=None, prod_tfv
     problems = []
     say = problems.append
     blocks_by_profile = {}
-    keep = collectors.keep_list() if keep is None else keep
-    want_metrics, want_logs, want_traces = expected(envs, keep)
+    keep_entries = collectors.keep_list() if keep is None else keep
+    want_metrics, want_logs, want_traces = expected(envs, keep_entries)
     for profile, (vals, docs) in sorted(renders.items()):
         cfgs = collectors.alloy_configs(docs)
         seen = {"metrics": 0, "logs": 0, "traces": 0}
@@ -315,13 +333,18 @@ def render_problems(renders, envs, profiles, chart_dir, kind_text=None, prod_tfv
                 if table != envs:
                     say("%s/%s: solo7dev-metrics' stamp encodes %s, environments.yaml %s" % (profile, name, table, envs))
                 if not guarded:
-                    say("%s/%s: solo7dev-metrics has no unknown guard after its stamp: a namespace outside the "
-                        "table would carry no environment" % (profile, name))
+                    say("%s/%s: solo7dev-metrics has no unknown guard (a replace) after its stamp: a namespace "
+                        "outside the table would carry no environment" % (profile, name))
                 if kube != sorted(envs):
                     say("%s/%s: solo7dev-metrics' kube_ namespace rule keeps %s, not environments.yaml's keys %s (A1)"
                         % (profile, name, kube, sorted(envs)))
                 if keep is None:
                     say("%s/%s: solo7dev-metrics has no keep rule" % (profile, name))
+                elif keep != sorted(e["name"] for e in keep_entries):
+                    say("%s/%s: solo7dev-metrics' keep rule keeps %d names, not keep-list.yaml's %d (missing: %s; extra: %s)"
+                        % (profile, name, len(keep), len(keep_entries),
+                           ", ".join(sorted({e["name"] for e in keep_entries} - set(keep))) or "none",
+                           ", ".join(sorted(set(keep) - {e["name"] for e in keep_entries})) or "none"))
                 elif rules[-1][4] != "keep":
                     say("%s/%s: solo7dev-metrics' keep rule is not its last rule" % (profile, name))
                 if rules != want_metrics:
@@ -339,7 +362,10 @@ def render_problems(renders, envs, profiles, chart_dir, kind_text=None, prod_tfv
                 if keep != list(collectors.LOG_LABELS):
                     say("%s/%s: solo7dev-logs keeps stream labels %s, not the allow-list %s"
                         % (profile, name, keep, list(collectors.LOG_LABELS)))
+                # The chart's own cluster stage comes first (clusterLabels); ours must be everything after it.
                 sig = log_signature(cfg)
+                while sig and sig[0][0] == "stage.static_labels" and re.fullmatch(r'values=\{"cluster"="[^"]*"\}', sig[0][1]):
+                    sig = sig[1:]
                 if sig != want_logs:
                     say("%s/%s: solo7dev-logs' stages are not what environments.yaml renders, %s"
                         % (profile, name, first_difference(sig, want_logs)))
@@ -605,8 +631,12 @@ def pipelines(directory=PIPELINES):
 # ```logql block. service_name is Loki's alone (no kept series carries it), so a selector naming it is
 # always LogQL.
 SELECTOR = re.compile(r"\{([^{}]*)\}")
-PIPELINE = re.compile(r"\s*(?:\|=|\|~|!=|!~|\|\s*(?:json|logfmt|pattern|regexp|unpack|line_format|label_format|drop|keep)\b)")
-LOG_RANGE = re.compile(r"\b(?:count_over_time|bytes_over_time|bytes_rate|absent_over_time|rate)\(\s*$")
+# A line filter takes a string: `!= 0` is PromQL's comparison, `!= "x"` is LogQL's filter.
+PIPELINE = re.compile(r"\s*(?:(?:\|=|\|~|!=|!~|\|>|!>)\s*[\"`]"
+                      r"|\|\s*(?:json|logfmt|pattern|regexp|unpack|unwrap|decolorize|line_format|label_format|drop|keep)\b)")
+LOG_RANGE = re.compile(r"\b(?:count_over_time|bytes_over_time|bytes_rate|absent_over_time|rate|rate_counter|"
+                       r"sum_over_time|avg_over_time|max_over_time|min_over_time|first_over_time|last_over_time|"
+                       r"stdvar_over_time|stddev_over_time|quantile_over_time)\((?:[^(){}]*,)?\s*$")
 FENCE = re.compile(r"(?ms)^```logql[ \t]*$(.*?)^```")
 MATCHER = re.compile(r'([A-Za-z_][A-Za-z0-9_]*)\s*(?:=~|!~|!=|=)\s*"')
 LOKI_ONLY = ("service_name",)
@@ -620,7 +650,7 @@ def logql_selectors(text):
         if not labels:
             continue
         piped = PIPELINE.match(text, m.end())
-        ranged = LOG_RANGE.search(text, max(0, m.start() - 40), m.start()) and text[m.end():m.end() + 1] == "["
+        ranged = LOG_RANGE.search(text, max(0, m.start() - 60), m.start()) and re.match(r"\s*(?:\||\[)", text[m.end():])
         fence = any(a <= m.start() < b for a, b in fenced)
         if piped or ranged or fence or set(labels) & set(LOKI_ONLY):
             yield m.start(), labels
