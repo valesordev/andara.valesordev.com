@@ -43,6 +43,8 @@ class FakeCluster:
         self.ca_secret_err = ""  # a read error that isn't NotFound
         self.not_ready = set()   # names whose wait times out
         self.secret_err = ""     # stderr of a failed token Secret write
+        self.secret_get_err = "" # stderr of a failed token Secret read that isn't NotFound
+        self.delete_err = ""     # stderr of a failed pod delete
         self.context = "kind-andara"
         self.kubectl_path = "bin/kubectl"
         self.inspect = inspect
@@ -87,8 +89,12 @@ class FakeCluster:
             self.applied.append("secret")
             return self.ok("secret/%s serverside-applied\n" % doc["metadata"]["name"])
         if len(args) >= 6 and args[0] == "-n" and args[2:4] == ("get", "secret") and args[-2:] == ("-o", "json"):
+            if self.secret_get_err:
+                return self.no(self.secret_get_err)
             doc = self.secrets.get((args[1], args[4]))
             return self.ok(json.dumps(doc)) if doc else self.no('Error from server (NotFound): secrets "%s" not found' % args[4])
+        if args[2:4] == ("delete", "pod") and self.delete_err:
+            return self.no(self.delete_err)
         if "wait" in args:
             target = [a for a in args if "/" in a and not a.startswith("--")][0].split("/", 1)[1]
             if not self.issuers_ready or target in self.not_ready:
@@ -499,21 +505,40 @@ class Telemetry(Base):
     def restarts(self):
         return [c for c in self.fake.calls if c[:4] == ("kubectl", "-n", "observability", "delete")]
 
-    def test_a_changed_secret_restarts_fleet_which_reads_it_only_at_start(self):
+    RESTART = ("kubectl", "-n", "observability", "delete", "pod", "-l", "app.kubernetes.io/instance=k8s-monitoring-fleet",
+               "--ignore-not-found")
+
+    def test_a_written_secret_restarts_fleet_which_reads_it_only_at_start(self):
         """PR #657: fleet's remotecfg kept the empty token of an AC-2 run after the Secret was restored."""
         self.up(GRAFANA_SOLO7DEV_TELEMETRY_TOKEN=TELEMETRY)
-        self.assertEqual(self.restarts(), [], "the first write has no fleet pod to restart")
+        self.assertEqual(self.restarts(), [self.RESTART], "the first write: no pod yet, and --ignore-not-found")
         out = self.up(GRAFANA_SOLO7DEV_TELEMETRY_TOKEN=TELEMETRY + "-rotated")
-        self.assertEqual(self.restarts(), [("kubectl", "-n", "observability", "delete", "pod", "-l",
-                                            "app.kubernetes.io/instance=k8s-monitoring-fleet", "--ignore-not-found")])
+        self.assertEqual(self.restarts(), [self.RESTART] * 2)
         self.assertIn("collector fleet restarted to read the new token", out)
+
+    def test_a_secret_read_that_fails_still_restarts_fleet_after_the_write(self):
+        self.fake.secret_get_err = "Unable to connect to the server: connection refused"
+        self.up(GRAFANA_SOLO7DEV_TELEMETRY_TOKEN=TELEMETRY)
+        self.assertEqual(self.restarts(), [self.RESTART])
+
+    def test_a_failed_restart_fails_and_never_echoes_the_token(self):
+        b64 = base64.b64encode(TELEMETRY.encode()).decode()
+        self.fake.delete_err = "denied %s (%s)" % (b64, TELEMETRY)
+        out = io.StringIO()
+        with redirect_stdout(out), self.assertRaises(platform_up.Failed) as e:
+            platform_up.up(platform_up.Run(), "box", env=self.env(GRAFANA_SOLO7DEV_TELEMETRY_TOKEN=TELEMETRY),
+                           restore=self.restore)
+        self.assertIn("restart the collector fleet", str(e.exception))
+        text = out.getvalue() + str(e.exception)
+        self.assertNotIn(TELEMETRY, text)
+        self.assertNotIn(b64, text)
 
     def test_an_unchanged_secret_or_ci_restarts_nothing(self):
         self.up(GRAFANA_SOLO7DEV_TELEMETRY_TOKEN=TELEMETRY)
         self.up(GRAFANA_SOLO7DEV_TELEMETRY_TOKEN=TELEMETRY)
         self.up("ci")
         self.up("ci", GRAFANA_SOLO7DEV_TELEMETRY_TOKEN=TELEMETRY)
-        self.assertEqual(self.restarts(), [])
+        self.assertEqual(self.restarts(), [self.RESTART], "only the box's first write")
 
     def test_the_release_gets_the_profile_values(self):
         self.up("ci")

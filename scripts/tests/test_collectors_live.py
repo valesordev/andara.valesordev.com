@@ -4,6 +4,7 @@
 """make collectors-check and collectors-probe (AW-INF-065) against fakes: each assertion fails on the
 state that breaks it, and the probe's absence is anchored on the control's arrival."""
 import io
+import json
 import os
 import sys
 import unittest
@@ -177,15 +178,19 @@ class Probe(unittest.TestCase):
 
 
 class Inventory(unittest.TestCase):
-    """AC-3."""
+    """AC-3: one active collector, counted among the running fleet pods' own. A replaced pod's collector
+    stays active in Fleet for up to ~3h when it couldn't unregister (a revoked token), so it isn't counted."""
 
-    def run_with(self, items):
+    PODS = ["k8s-monitoring-fleet-abc-1"]
+
+    def run_with(self, items, pods=None):
         r = live.Run()
         with mock.patch.object(live.gcx, "run", lambda *a, **k: {"items": items}), redirect_stdout(io.StringIO()):
-            live.fleet_inventory(r, {})
+            live.fleet_inventory(r, {}, self.PODS if pods is None else pods)
         return r
 
-    def collector(self, name, inactive=False, **attrs):
+    def collector(self, pod, inactive=False, **attrs):
+        name = "k8s-monitoring-andara-observability-" + pod
         spec = {"local_attributes": dict({"cluster": "andara", "stack": "solo7dev", "workloadName": "fleet",
                                           "collector.ID": name}, **attrs)}
         if inactive:
@@ -193,16 +198,72 @@ class Inventory(unittest.TestCase):
         return {"spec": spec}
 
     def test_one_active_collector_passes_and_inactive_ones_are_ignored(self):
-        r = self.run_with([self.collector("old", inactive=True), self.collector("new")])
+        r = self.run_with([self.collector("k8s-monitoring-fleet-old-0", inactive=True),
+                           self.collector("k8s-monitoring-fleet-abc-1")])
         self.assertEqual(r.failures, [])
 
-    def test_two_active_collectors_fail(self):
-        r = self.run_with([self.collector("a"), self.collector("b")])
-        self.assertTrue([f for f in r.failures if "2 active collector(s)" in f])
+    def test_a_gone_pods_collector_still_marked_active_is_not_counted(self):
+        r = self.run_with([self.collector("k8s-monitoring-fleet-old-0"), self.collector("k8s-monitoring-fleet-abc-1")])
+        self.assertEqual(r.failures, [])
+
+    def test_two_running_pods_each_registered_fail(self):
+        pods = ["k8s-monitoring-fleet-abc-1", "k8s-monitoring-fleet-abc-2"]
+        r = self.run_with([self.collector(p) for p in pods], pods)
+        self.assertTrue([f for f in r.failures if "2 active collector(s)" in f], r.failures)
+
+    def test_a_running_pod_with_no_collector_fails(self):
+        r = self.run_with([self.collector("k8s-monitoring-fleet-old-0")])
+        self.assertTrue([f for f in r.failures if "0 active collector(s)" in f], r.failures)
+
+    def test_a_pod_name_that_is_only_a_prefix_does_not_match(self):
+        r = self.run_with([self.collector("k8s-monitoring-fleet-abc-12")], ["k8s-monitoring-fleet-abc-1"])
+        self.assertTrue([f for f in r.failures if "0 active collector(s)" in f], r.failures)
 
     def test_an_environment_attribute_fails(self):
-        r = self.run_with([self.collector("a", environment="dev")])
-        self.assertTrue([f for f in r.failures if "environment=dev" in f])
+        r = self.run_with([self.collector("k8s-monitoring-fleet-abc-1", environment="dev")])
+        self.assertTrue([f for f in r.failures if "environment=dev" in f], r.failures)
+
+
+class Check(unittest.TestCase):
+    """check() end to end against fakes: what it hands pod_checks and fleet_inventory."""
+
+    def run_check(self, pods_doc):
+        def kjson(env, *args):
+            if args[:3] == ("get", "pods", "-A"):
+                return pods_doc
+            if args[:2] == ("get", "crd"):
+                return {"metadata": {"creationTimestamp": "2026-10-25T15:49:09Z"}}
+            if args[2:4] == ("get", "alloy"):
+                return {"items": [{"metadata": {"creationTimestamp": "2026-10-25T15:49:16Z"}}]}
+            if args[2:4] == ("get", "secret"):
+                return {"data": {k: "eA==" for k in live.SECRET_KEYS["box"]}}
+            return None
+        helm_rows = json.dumps([{"name": live.RELEASE, "chart": "k8s-monitoring-4.5.3", "status": "deployed"}])
+        seen = {}
+        r = live.Run()
+        with mock.patch.object(live, "kjson", kjson), \
+                mock.patch.object(live.kube, "require", lambda **k: None), \
+                mock.patch.object(live.kube, "helm", lambda *a, **k: ["helm"]), \
+                mock.patch.object(live, "tool", lambda *a: "/bin/true"), \
+                mock.patch.object(live.subprocess, "run", lambda *a, **k: mock.Mock(stdout=helm_rows)), \
+                mock.patch.object(live, "wait_ready", lambda *a, **k: (True, 1, 1)), \
+                mock.patch.object(live, "fleet_inventory", lambda r, env, pods: seen.setdefault("pods", pods)), \
+                redirect_stdout(io.StringIO()):
+            live.check(r, "box", {})
+        return r, seen
+
+    def test_an_unreadable_pod_list_fails_and_skips_the_inventory(self):
+        r, seen = self.run_check(None)
+        self.assertTrue([f for f in r.failures if "pods in all namespaces could not be listed" in f], r.failures)
+        self.assertNotIn("pods", seen)
+
+    def test_the_inventory_gets_the_running_fleet_pods(self):
+        fleet = pod("observability", "k8s-monitoring-fleet-abc-1", {"app.kubernetes.io/instance": "k8s-monitoring-fleet"})
+        fleet["status"] = {"phase": "Running"}
+        other = pod("observability", "k8s-monitoring-metrics-x", {"app.kubernetes.io/instance": "k8s-monitoring-metrics"})
+        r, seen = self.run_check({"items": [fleet, other]})
+        self.assertEqual(r.failures, [])
+        self.assertEqual(seen["pods"], ["k8s-monitoring-fleet-abc-1"])
 
 
 class Usage(unittest.TestCase):

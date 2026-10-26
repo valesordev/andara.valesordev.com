@@ -621,8 +621,7 @@ def telemetry(r, c, token, profile):
         r.secrets += [token, secret["data"]["token"]]
     where = "%s/%s" % (collectors.NAMESPACE, collectors.SECRET)
     p = c.kubectl("-n", collectors.NAMESPACE, "get", "secret", collectors.SECRET, "-o", "json", check=False)
-    existed = p.returncode == 0
-    if existed:
+    if p.returncode == 0:
         try:
             if (json.loads(p.stdout or "{}").get("data") or {}) == secret["data"]:
                 r.say("secret %s unchanged" % where)
@@ -637,8 +636,9 @@ def telemetry(r, c, token, profile):
                                      "with an empty token (%s unset)" % TELEMETRY_TOKEN))
     # The destinations re-read the Secret within a minute, but fleet's remotecfg keeps the token it started
     # with: after an empty-token run it stayed unauthenticated once the token was restored (PR #657). So a
-    # changed Secret replaces fleet's pod; on the first write there is none yet.
-    if existed and profile == "box":
+    # written Secret replaces fleet's pod, whatever the read before the write said (--ignore-not-found covers
+    # the first write, when there is none yet).
+    if profile == "box":
         p = c.kubectl("-n", collectors.NAMESPACE, "delete", "pod", "-l", "app.kubernetes.io/instance=%s" % FLEET,
                       "--ignore-not-found", check=False)
         if p.returncode != 0:

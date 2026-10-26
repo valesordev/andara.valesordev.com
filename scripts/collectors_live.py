@@ -189,7 +189,8 @@ def check(r, profile, env, sleep=time.sleep, now=time.time):
     for kind, name in [("deployment", n) for n in DEPLOYMENTS[profile]] + [("daemonset", n) for n in DAEMONSETS]:
         ok, have, want = wait_ready(env, kind, "%s-%s" % (RELEASE, name), sleep=sleep, now=now)
         r.check(ok, "%s %s-%s Ready %s/%s" % (kind, RELEASE, name, have, want))
-    pod_checks(r, kjson(env, "get", "pods", "-A"))
+    pods = kjson(env, "get", "pods", "-A")
+    pod_checks(r, pods)
     secret = kjson(env, "-n", NS, "get", "secret", collectors.SECRET)
     data = (secret or {}).get("data") or {}
     missing = [k for k in SECRET_KEYS[profile] if k not in data]
@@ -198,8 +199,8 @@ def check(r, profile, env, sleep=time.sleep, now=time.time):
     shipping = bool(data.get("token"))
     r.say("token %s" % ("set: the collectors ship to %s" % STACK if shipping else
                         "empty: the collectors ship nothing (%s unset at platform-up)" % collectors.TOKEN))
-    if profile == "box" and shipping:
-        fleet_inventory(r, env)
+    if profile == "box" and shipping and pods is not None:
+        fleet_inventory(r, env, fleet_pods(pods))
     return r
 
 
@@ -222,7 +223,15 @@ def pod_checks(r, doc):
         collectors.SECRET, len(readers), "" if not outside else ", outside the release: " + ", ".join(outside)))
 
 
-def fleet_inventory(r, env):
+def fleet_pods(doc):
+    """The names of fleet's running pods in `get pods -A`'s JSON. A collector's Fleet ID ends in its pod's
+    name (the chart's id is k8s-monitoring-<cluster>-<namespace>-<hostname>)."""
+    return [p["metadata"]["name"] for p in doc.get("items") or []
+            if p["metadata"]["namespace"] == NS and (p.get("status") or {}).get("phase") == "Running"
+            and ((p["metadata"].get("labels") or {}).get("app.kubernetes.io/instance") == "%s-fleet" % RELEASE)]
+
+
+def fleet_inventory(r, env, pods):
     try:
         doc = gcx.run(STACK, "fleet", "collectors", "list", env=env)
     except gcx.GcxError as e:
@@ -234,7 +243,15 @@ def fleet_inventory(r, env):
         attrs = dict(spec.get("local_attributes") or {}, **(spec.get("remote_attributes") or {}))
         if attrs.get("cluster") == "andara" and not spec.get("marked_inactive_at"):
             mine.append(attrs)
-    r.check(len(mine) == 1, "Fleet inventory: %d active collector(s) from cluster andara, want 1" % len(mine))
+    # A replaced pod's collector unregisters at shutdown, but one that couldn't authenticate (a revoked or
+    # empty token) stays active until Fleet times it out, up to ~3h; only the running pods' own count.
+    running = [a for a in mine if any(str(a.get("collector.ID", "")).endswith("-" + p) for p in pods)]
+    stale = len(mine) - len(running)
+    if stale:
+        r.say("Fleet inventory: %d active collector(s) from pods that are gone, not counted" % stale)
+    mine = running
+    r.check(len(mine) == 1, "Fleet inventory: %d active collector(s) from cluster andara's running fleet pod(s), "
+                            "want 1" % len(mine))
     for attrs in mine:
         r.check(attrs.get("stack") == STACK and attrs.get("workloadName") == "fleet" and "environment" not in attrs,
                 "collector %s: workload %s, stack=%s, %s" % (attrs.get("collector.ID"), attrs.get("workloadName"),
