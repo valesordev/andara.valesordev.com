@@ -23,6 +23,8 @@ A workload's copy holds `password` only. The chart mounts it at `/etc/andara/sec
 - the server's from `server.kafka.sasl_username`;
 - each projector's from its own `projectors.<name>.kafkaCreds.secretName`, never the server's.
 
+`local`'s server is the exception until `AW-INF-060`: it runs on the memory source, never dials the broker, and renders neither the username nor the mount, because the Secret exists only where the shared Kafka runs. `make kafka-creds ENV=local` still copies the pair, and AW-INF-060 names `andara-server-local` in both values.
+
 Clients read the password file on each new connection.
 
 ## Give an environment its credentials
@@ -66,7 +68,7 @@ Rotate a platform principal the same way, with no `ENV`: `make kafka-creds-rotat
 - **`reason="sasl_failed"`** in a server or projector log, or in `andara_kafka_client_auth_failures_total`: the username and password don't match the broker's. In order:
   1. Is the environment's copy there? `kubectl --context kind-andara -n andara-<env> get secret andara-server-<env>`. If not, `make kafka-creds ENV=<env>`.
   2. Was it rotated since the copy? Run `make kafka-creds ENV=<env>` again. It's idempotent and prints `unchanged` when the copy is current.
-  3. Does the username name the right principal? The pod's `ANDARA_KAFKA_SASL_USERNAME` must be `<workload>-<env>`. `make helm-test` holds that for every workload.
+  3. Does the username name the right principal? The pod's `ANDARA_KAFKA_SASL_USERNAME` must be `<workload>-<env>`. `make helm-test` holds that for every workload that dials the broker (not `local`'s server, until AW-INF-060).
 - **`reason="topic_unauthorized"`**, or an `rpk` error `TOPIC_AUTHORIZATION_FAILED` or `GROUP_AUTHORIZATION_FAILED`: authentication worked, and the ACL refused the operation.
   - If the operation is one `topics.yaml` grants, `make topics-diff ENV=<env>` names the missing ACL. The User Operator puts back a removed ACL of its own `KafkaUser` on its next reconcile (about two minutes; seen on 2026-10-25), and `make shared-up` re-applies everything. `make kafka-acl-probe` asks the broker, as every principal, what each may and may not do.
   - If `topics.yaml` doesn't grant it, the client is doing something its principal may not (`ADR-0011`: least privilege by topic). The fix is a reviewed change to `topics.yaml`, not a hand-added ACL.
