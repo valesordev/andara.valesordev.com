@@ -125,7 +125,14 @@ class Committed(Base):
             for name, dest in vals["destinations"].items():
                 self.assertEqual(dest["secret"], {"create": False, "name": "grafana-telemetry",
                                                   "namespace": "observability"}, name)
-                self.assertEqual(dest["auth"]["passwordKey"], "token", name)
+                if name == "solo7dev-traces":
+                    # otelcol.auth.basic refuses an empty password; the fallback still reads `token`.
+                    self.assertEqual(dest["auth"]["passwordFrom"], 'coalesce(convert.nonsensitive('
+                                     'remote.kubernetes.secret.solo7dev_traces.data["token"]), "unset")', name)
+                    self.assertNotIn("passwordKey", dest["auth"], name)
+                else:
+                    self.assertEqual(dest["auth"]["passwordKey"], "token", name)
+                    self.assertNotIn("passwordFrom", dest["auth"], name)
                 self.assertNotIn("password", dest["auth"], name)
 
 

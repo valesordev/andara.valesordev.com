@@ -49,7 +49,10 @@ destinations:
     auth:
       type: basic
       usernameKey: tempo
-      passwordKey: token
+      # otelcol.auth.basic refuses an empty password, so with the token unset (AC-2) the receiver's config
+      # never loads and a fresh pod is never Ready (lifecycle run 40387333385). A placeholder stands in:
+      # it gets a 401 like the other destinations' empty one, and the Secret's token stays empty.
+      passwordFrom: coalesce(convert.nonsensitive(remote.kubernetes.secret.solo7dev_traces.data["token"]), "unset")
     secret:
       create: false
       name: grafana-telemetry
