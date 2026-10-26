@@ -6,6 +6,7 @@ import contextlib
 import io
 import json
 import os
+import re
 import sys
 import tempfile
 import unittest
@@ -447,6 +448,140 @@ class DashboardBreaksTest(NoBoxEnv):
             d = json.loads(source)
             breaker(d)
             self.assertNotEqual(d, json.loads(source), what)
+
+
+def planned_from_file(doc, required, render=tf.render_expr):
+    """The rule groups a correct module plans for required, built from the file here."""
+    def rule(r):
+        return {"name": r["alert"], "condition": "C", "for": r.get("for", "0s"),
+                "keep_firing_for": r.get("keep_firing_for"), "no_data_state": "OK", "exec_err_state": "Error",
+                "is_paused": True, "labels": {k: str(v) for k, v in r.get("labels", {}).items()},
+                "annotations": dict(r.get("annotations", {})),
+                "data": [
+                    {"ref_id": "A", "datasource_uid": "grafanacloud-prom",
+                     "model": json.dumps({"refId": "A", "expr": render(r["expr"], required), "instant": True})},
+                    {"ref_id": "B", "datasource_uid": "__expr__",
+                     "model": json.dumps({"refId": "B", "type": "math", "expression": "$A * 0 + 1"})},
+                    {"ref_id": "C", "datasource_uid": "__expr__",
+                     "model": json.dumps({"refId": "C", "type": "threshold", "expression": "B",
+                                          "conditions": [{"evaluator": {"type": "gt", "params": [0]}}]})}]}
+    return {g["name"]: {"name": g["name"], "interval_seconds": 60, "rule": [rule(r) for r in g["rules"]]}
+            for g in doc["groups"]}
+
+
+class RulesRenderTest(unittest.TestCase):
+    """AW-INF-047 AC-2, AC-3: the comparison fails on every way a module could render a rule wrongly."""
+
+    def setUp(self):
+        import yaml
+        with open(tf.ALERTS) as f:
+            self.doc = yaml.safe_load(f)
+
+    def a_expr(self, groups, alert):
+        r = next(r for g in groups.values() for r in g["rule"] if r["name"] == alert)
+        return next(d for d in r["data"] if d["ref_id"] == "A")
+
+    def set_expr(self, groups, alert, expr):
+        d = self.a_expr(groups, alert)
+        m = json.loads(d["model"])
+        m["expr"] = expr
+        d["model"] = json.dumps(m)
+
+    def test_the_file_marks_dev_and_prod(self):
+        self.assertEqual(tf.marked_environments(self.doc), ["dev", "prod"])
+
+    def test_render_drops_only_the_lines_marked_outside_required(self):
+        expr = "a\n  or b  # env:dev\n  or c  # env:prod\n"
+        self.assertEqual(tf.render_expr(expr, []), "a\n")
+        self.assertEqual(tf.render_expr(expr, ["dev"]), "a\n  or b  # env:dev\n")
+        self.assertEqual(tf.render_expr(expr, ["dev", "prod"]), expr)
+
+    def test_a_correct_plan_passes_for_every_required_set(self):
+        for required in ([], ["dev"], ["prod"], ["dev", "prod"]):
+            self.assertEqual(tf.rule_problems(planned_from_file(self.doc, required), required, self.doc), [], required)
+
+    def test_a_dev_line_kept_when_dev_is_not_required_fails(self):
+        groups = planned_from_file(self.doc, ["dev"])
+        problems = tf.rule_problems(groups, [], self.doc)
+        self.assertTrue(any("AndaraServerUnavailable: rendered expr differs" in p for p in problems), problems)
+        self.assertTrue(any("names environment(s) dev outside" in p for p in problems), problems)
+
+    def test_a_line_dropped_that_is_required_fails(self):
+        groups = planned_from_file(self.doc, [])
+        problems = tf.rule_problems(groups, ["dev"], self.doc)
+        self.assertTrue(any("AndaraServerUnavailable: rendered expr differs" in p for p in problems), problems)
+
+    def test_a_one_byte_difference_fails(self):
+        groups = planned_from_file(self.doc, [])
+        expr = json.loads(self.a_expr(groups, "SimulationLagging")["model"])["expr"]
+        self.set_expr(groups, "SimulationLagging", expr.replace("0.5", "0.6"))
+        problems = tf.rule_problems(groups, [], self.doc)
+        self.assertTrue(any("SimulationLagging: rendered expr differs" in p for p in problems), problems)
+
+    def test_with_every_environment_required_the_expr_is_the_files(self):
+        everything = ["dev", "prod"]
+        # A renderer that drops a marker comment still renders the line, but isn't the file's text.
+        def strip(expr, required):
+            return re.sub(r"\s*# env:\w+", "", expr)
+        problems = tf.rule_problems(planned_from_file(self.doc, everything, render=strip), everything, self.doc)
+        self.assertTrue(any("byte for byte" in p for p in problems), problems)
+
+    def test_a_missing_group_a_renamed_rule_and_a_wrong_duration_each_fail(self):
+        groups = planned_from_file(self.doc, [])
+        del groups["andara-edge"]
+        groups["andara-tick"]["rule"][0]["name"] = "SimulationLaggin"
+        groups["andara-recovery"]["rule"][0]["keep_firing_for"] = "5m"
+        groups["andara-server"]["rule"][0]["for"] = "3m"
+        problems = "\n".join(tf.rule_problems(groups, [], self.doc))
+        self.assertIn("groups ", problems)
+        self.assertIn("andara-tick: rules ['SimulationLaggin']", problems)
+        self.assertIn("RecoveryStateMismatch: keep_firing_for '5m', want '15m'", problems)
+        self.assertIn("AndaraServerUnavailable: for '3m', want '2m'", problems)
+
+    def test_an_unpaused_rule_or_a_changed_pipeline_fails(self):
+        groups = planned_from_file(self.doc, [])
+        r = groups["andara-tick"]["rule"][0]
+        r["is_paused"] = False
+        r["data"][1]["model"] = json.dumps({"refId": "B", "type": "math", "expression": "$A"})
+        r["no_data_state"] = "NoData"
+        problems = "\n".join(tf.rule_problems(groups, [], self.doc))
+        self.assertIn("is_paused False, want True", problems)
+        self.assertIn("B is not Math", problems)
+        self.assertIn("no_data_state 'NoData', want 'OK'", problems)
+
+    def test_labels_and_annotations_are_compared(self):
+        groups = planned_from_file(self.doc, [])
+        groups["andara-tick"]["rule"][0]["labels"]["severity"] = "ticket"
+        groups["andara-tick"]["rule"][0]["annotations"]["runbook"] = "x"
+        problems = "\n".join(tf.rule_problems(groups, [], self.doc))
+        self.assertIn("SimulationLagging: labels", problems)
+        self.assertIn("SimulationLagging: annotations", problems)
+
+    def test_composite_durations_read_back(self):
+        self.assertEqual(tf.seconds("1h30m"), 5400)
+        self.assertEqual(tf.seconds("0s"), 0)
+        self.assertIsNone(tf.seconds(None))
+        with self.assertRaises(ValueError):
+            tf.seconds("2 m")
+
+    @unittest.skipUnless(os.access(tf.PROMTOOL, os.X_OK), "bin/promtool absent; run `make bootstrap`")
+    def test_promtool_parses_the_rendered_rules_and_refuses_a_broken_one(self):
+        for required in ([], ["dev"], ["prod"], ["dev", "prod"]):
+            self.assertEqual(tf.promtool_problems(planned_from_file(self.doc, required)), [], required)
+        groups = planned_from_file(self.doc, [])
+        self.set_expr(groups, "SimulationLagging", "max by (")
+        self.assertTrue(tf.promtool_problems(groups))
+
+    def test_the_test_plan_output_is_read_per_run(self):
+        groups = planned_from_file(self.doc, [])
+        lines = [json.dumps({"type": "test_run", "test_run": {"run": "r1", "progress": "complete", "status": "pass"}}),
+                 json.dumps({"type": "test_plan", "@testrun": "r1", "test_plan": {"resource_changes": [
+                     {"address": '%s["%s"]' % (tf.GROUP_ADDRESS, n), "change": {"after": g}} for n, g in groups.items()
+                 ] + [{"address": "module.stack.grafana_folder.andara", "change": {"after": {"name": "x"}}}]}}),
+                 "not json"]
+        plans, status = tf.planned_rule_groups("\n".join(lines))
+        self.assertEqual(status, {"r1": "pass"})
+        self.assertEqual(sorted(plans["r1"]), sorted(groups))
 
 
 if __name__ == "__main__":

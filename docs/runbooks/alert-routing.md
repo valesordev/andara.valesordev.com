@@ -104,16 +104,34 @@ Use `--context solo7` for `prod`'s rules. `scripts/gcx.py` maps the states to on
 - `pending`;
 - `normal` (`Normal`, or `Normal (NoData)`).
 
-**Where the rules are today.** The rules are still in the legacy ruler on `solo7`. Grafana-managed rules
-arrive with `AW-INF-047`, and until then the first two commands find none in `solo7dev`.
+**Where the rules are today.** `AW-INF-047` makes them Grafana-managed rules in Terraform:
+`deploy/terraform/grafana/modules/stack/rules.tf` renders one rule group per `groups[]` entry of
+`deploy/helm/andara/files/alerts.yaml`, in the folder `Andara`, and the `terraform` workflow applies them
+to `solo7dev` on a merge to `main`. Every rule is **paused** (defined, never evaluated) until the cutover
+(`AW-INF-070`) un-pauses `solo7dev`'s; `solo7` gets them, paused, with prod (`AW-INF-078`). Until the
+cutover's step 4(ii), the legacy ruler on `solo7` still evaluates `dev`'s series with the rules it held
+when `AW-INF-047` merged (below).
+
+A rule is changed in `alerts.yaml`, never in the Grafana UI: the next plan reverts a hand edit, and the
+daily `drift` job reports it (`terraform-state.md`). An absence line that only some stacks evaluate ends
+`# env:<environment>`; a stack renders it only when its `required_environments` names that environment
+(ADR-0012 decision 12). `make tf-test` renders every rule for every stack and checks it against the file.
 
 `make observe-check ENV=<env> KEEP_LIST=1` checks that every series the rules read exists.
 
-## Delivering rules to the legacy ruler — removed by AW-INF-077
+## The legacy ruler, frozen — removed by AW-INF-077
 
-**Removed by `AW-INF-077`**, with the ruler path. Until then, this section describes how
-`deploy/helm/andara/files/alerts.yaml` reaches the Grafana Cloud ruler (Mimir) on `solo7`, in ruler
-namespace `andara`. Every rule carries `namespace`, so one rule set serves `andara-dev` and `andara-prod`.
+**Frozen since `AW-INF-047` merged** (ADR-0012 decision 7, amendment of 2026-10-19), and **removed by
+`AW-INF-077`** with the rest of the ruler path. The ruler on `solo7`, in namespace `andara`, keeps the rules
+it held before `AW-INF-047` until `AW-INF-070`'s step 4(ii) deletes the namespace. Nothing writes it:
+- `AW-INF-047` deleted the `alerts` workflow, which used to sync it on every merge to `main`.
+- `make alerts-sync` refuses `alerts.yaml` now, with exit `1` naming its `# env:` markers, before it reads
+  any key. Synced to `solo7`, whose `dev` series carry no `environment`, the marked
+  `absent(…environment="dev"…)` line would be true and page.
+- `make alerts-diff` still works, so the frozen ruler can be compared with the file as it was:
+  `ALERTS_FILE=<alerts.yaml at the merge base> make alerts-diff`.
+
+The rest of this section describes how the ruler was delivered, for the diff and for `AW-INF-070`.
 
 ### Credentials
 
@@ -131,15 +149,9 @@ key.
 | Command | Does |
 |---|---|
 | `make alerts-diff` | Shows how the ruler differs from the file. The script exits `1` on drift, and `3` if the key, address or tenant is unset. `make` itself reports any failure as exit `2`; the printed line says which. |
-| `make alerts-sync` | Writes the file to the ruler. A second run prints `wrote 0 created, 0 updated, 0 deleted`. |
+| `make alerts-sync` | Refuses a file with an `# env:` marker (exit `1`), which `alerts.yaml` is since `AW-INF-047`. On an unmarked file it writes the file to the ruler, and a second run prints `wrote 0 created, 0 updated, 0 deleted`. |
 
-CI runs `alerts-diff` on a pull request that touches the file (the `alerts` workflow), and shows the diff
-in the job summary. A merge to `main` runs `alerts-sync`, then a second sync that must change nothing.
-
-The diff runs the base branch's scripts and reads the pull request's rule file as data (`ALERTS_FILE`), so
-a branch's own code never runs with a token. Pull requests are handled like this:
-- a fork's pull request is skipped, and so is one aimed at a branch other than `main`;
-- a pull request that deletes the file fails the diff job, with a message saying so.
+No CI job runs either command since `AW-INF-047` deleted the `alerts` workflow.
 
 To run the commands locally:
 - `make alerts-diff` needs `GRAFANA_CLOUD_PROM_URL` and `_USER`, plus the read token exported as
@@ -153,9 +165,8 @@ To run the commands locally:
 `make alerts-sync` stages the file as `andara.yaml`, because `mimirtool` takes the ruler namespace from the
 file's name.
 
-**A 401 `invalid token` on the diff step** means `ANDARA_ALERTS_CI_READ` has expired or been revoked. That
-happened on `main` on 2026-10-19. Rotate it (`grafana-credentials.md`), or leave `main`'s `alerts` run red
-until `AW-INF-077` deletes the workflow.
+**A 401 `invalid token` on the diff** means the read key has expired or been revoked. `ANDARA_ALERTS_CI_READ`
+did on 2026-10-19, and Brian decided on 2026-10-25 not to rotate it: the rules are Grafana-managed only.
 
 ### Things that look wrong and are not
 

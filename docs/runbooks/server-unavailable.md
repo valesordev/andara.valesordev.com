@@ -1,8 +1,11 @@
 # AndaraServerUnavailable
 
-**Alert:** `max by (namespace) (up{job="andara-server"}) == 0`, or no `up` at all for `andara-dev` or
-`andara-prod`, for 2 m — the exact expression is in `deploy/helm/andara/files/alerts.yaml`. The
-alert's `namespace` label is the environment that is down (`AW-INF-008`). On the cluster a pod that
+**Alert:** `max by (environment, namespace) (up{job="andara-server"}) == 0`, or no `up` at all for an
+environment the stack requires (`dev` in `solo7dev`, `prod` in `solo7`, once each stack's cutover sets
+`required_environments`), for 2 m — the exact expression is in `deploy/helm/andara/files/alerts.yaml`.
+The absence lines stay silent unless the box's chart scrape is reporting at all: `andara-shared`'s and
+CI's `up` don't count (ADR-0014 §9). The alert's `environment` and `namespace` labels say which
+environment is down (`AW-INF-008`, `AW-INF-047`). On the cluster a pod that
 is not Ready is dropped from the scrape, so "no `up`" is the usual way this fires there; `up == 0`
 means a Ready pod whose `/metrics` the scraper cannot reach. In compose it is the reverse.
 **Severity:** page. **SLO:** `docs/specs/slo/world-write-availability.md`.

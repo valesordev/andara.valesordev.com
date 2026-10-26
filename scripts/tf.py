@@ -40,6 +40,10 @@ test-alert-clean destroys it.
 
 fmt-check, validate and test need no credential and no backend: they run in a data directory
 of their own (.terraform/check) with `-backend=false`, against the committed lock file. test also
+renders the rule groups of solo7dev and solo7 once per required_environments value
+(stacks/<root>/tests/rules.tftest.hcl, read through `terraform test -verbose -json`), and fails
+unless every rule matches deploy/helm/andara/files/alerts.yaml rendered for that value, names no
+environment outside it, and parses with `promtool check rules` (AW-INF-047 AC-2, AC-3). Then it
 copies the tree to a temporary directory and breaks deploy/grafana/dashboards/tick-health.json one
 way at a time (DASHBOARD_BREAKS); solo7dev's tests must fail on each, naming the module's
 precondition (AW-INF-049 AC-2).
@@ -441,7 +445,179 @@ def cmd_test(env):
         say("test %s" % root)
         rc, out = run(["test"], root_dir(root), tenv)
         checked("test " + root, rc, out)
+    rules_render(env)
     return dashboard_breaks(env)
+
+
+# AW-INF-047 AC-2 and AC-3: the rule groups each stack renders from alerts.yaml. stacks/<root>/tests/
+# rules.tftest.hcl plans the module once per required_environments value; terraform test -verbose -json
+# prints each run's plan, child module resources included (an assertion in a test file can't reach
+# them, and an output would take tf_policy's separate-merge path). Each run's rule groups are compared
+# with the file rendered here, independently of the module, and parsed with promtool.
+ALERTS = os.path.join(REPO, "deploy", "helm", "andara", "files", "alerts.yaml")
+PROMTOOL = os.path.join(REPO, "bin", "promtool")
+RULES_TEST = "tests/rules.tftest.hcl"
+# Each rules run's required_environments; None is every environment the file marks.
+RULE_RUNS = {
+    "solo7dev": {"rules_required_none": [], "rules_required_dev": ["dev"], "rules_required_every": None},
+    "solo7": {"rules_required_none": [], "rules_required_prod": ["prod"], "rules_required_every": None},
+}
+ENV_MARKER = re.compile(r"#\s*env:([A-Za-z0-9_-]+)\s*$")
+# An equality matcher on environment inside a selector. label_replace's arguments ("environment",
+# "dev") are not one.
+ENV_MATCHER = re.compile(r'\benvironment\s*=\s*"([^"]*)"')
+DURATION = re.compile(r"^([0-9]+)([smh])$")
+UNITS = {"s": 1, "m": 60, "h": 3600}
+GROUP_ADDRESS = "module.stack.grafana_rule_group.andara"
+
+
+def seconds(duration):
+    """A Prometheus duration of one unit or Grafana's composite form (1h30m), in seconds; None stays None."""
+    if duration is None:
+        return None
+    parts = re.findall(r"([0-9]+)([smh])", duration)
+    if not parts or "".join(n + u for n, u in parts) != duration:
+        raise ValueError("not a duration: %r" % duration)
+    return sum(int(n) * UNITS[u] for n, u in parts)
+
+
+def marked_environments(doc):
+    return sorted({m.group(1) for g in doc["groups"] for r in g["rules"]
+                   for line in r["expr"].split("\n") for m in [ENV_MARKER.search(line)] if m})
+
+
+def render_expr(expr, required):
+    """The file's expr less every line marked for an environment outside required (ADR-0012 decision 12)."""
+    keep = []
+    for line in expr.split("\n"):
+        m = ENV_MARKER.search(line)
+        if m is None or m.group(1) in required:
+            keep.append(line)
+    return "\n".join(keep)
+
+
+def planned_rule_groups(jsonl):
+    """{run: {group name: planned attributes}} from terraform test -verbose -json output, and
+    {run: status}."""
+    plans, status = {}, {}
+    for line in jsonl.splitlines():
+        try:
+            d = json.loads(line)
+        except ValueError:
+            continue
+        if d.get("type") == "test_run" and d["test_run"].get("progress") == "complete":
+            status[d["test_run"]["run"]] = d["test_run"].get("status")
+        if d.get("type") != "test_plan":
+            continue
+        groups = plans.setdefault(d["@testrun"], {})
+        for rc in d["test_plan"].get("resource_changes") or []:
+            if rc.get("address", "").startswith(GROUP_ADDRESS + "["):
+                after = rc["change"]["after"]
+                groups[after["name"]] = after
+    return plans, status
+
+
+def rule_problems(groups, required, doc):
+    """Every way the planned groups differ from the file rendered for required, as strings."""
+    problems = []
+    want = [g["name"] for g in doc["groups"]]
+    if sorted(groups) != sorted(want):
+        problems.append("groups %s, want %s" % (sorted(groups), sorted(want)))
+    every = set(marked_environments(doc)) <= set(required)
+    for g in doc["groups"]:
+        planned = groups.get(g["name"])
+        if planned is None:
+            continue
+        if planned.get("interval_seconds") != seconds(g.get("interval", "1m")):
+            problems.append("%s: interval_seconds %s, want %s"
+                            % (g["name"], planned.get("interval_seconds"), seconds(g.get("interval", "1m"))))
+        rules = planned.get("rule") or []
+        names = [r.get("name") for r in rules]
+        if names != [r["alert"] for r in g["rules"]]:
+            problems.append("%s: rules %s, want %s" % (g["name"], names, [r["alert"] for r in g["rules"]]))
+            continue
+        for src, got in zip(g["rules"], rules):
+            problems += ["%s/%s: %s" % (g["name"], src["alert"], p) for p in one_rule(src, got, required, every)]
+    return problems
+
+
+def one_rule(src, got, required, every):
+    p = []
+    data = {d.get("ref_id"): d for d in got.get("data") or []}
+    if sorted(data) != ["A", "B", "C"]:
+        return ["queries %s, want A, B, C" % sorted(data)]
+    a, b, c = (json.loads(data[k]["model"]) for k in "ABC")
+    want = render_expr(src["expr"], required)
+    if a.get("expr") != want:
+        p.append("rendered expr differs from the file's:\n--- file (rendered)\n%s\n--- planned\n%s" % (want, a.get("expr")))
+    if every and a.get("expr") != src["expr"]:
+        p.append("with every marked environment required, the expr is not the file's byte for byte")
+    named = sorted(set(ENV_MATCHER.findall(a.get("expr") or "")) - set(required))
+    if named:
+        p.append("names environment(s) %s outside required_environments %s" % (", ".join(named), required))
+    if data["A"].get("datasource_uid") != "grafanacloud-prom" or a.get("instant") is not True:
+        p.append("query A is not an instant query against grafanacloud-prom")
+    if data["B"].get("datasource_uid") != "__expr__" or (b.get("type"), b.get("expression")) != ("math", "$A * 0 + 1"):
+        p.append("B is not Math $A * 0 + 1")
+    if data["C"].get("datasource_uid") != "__expr__" or c.get("type") != "threshold" or c.get("expression") != "B" \
+            or c.get("conditions") != [{"evaluator": {"type": "gt", "params": [0]}}]:
+        p.append("C is not Threshold B > 0")
+    if got.get("condition") != "C":
+        p.append("condition %r, want C" % got.get("condition"))
+    for key, value in (("no_data_state", "OK"), ("exec_err_state", "Error"), ("is_paused", True)):
+        if got.get(key) != value:
+            p.append("%s %r, want %r" % (key, got.get(key), value))
+    if seconds(got.get("for")) != seconds(src.get("for", "0s")):
+        p.append("for %r, want %r" % (got.get("for"), src.get("for", "0s")))
+    if seconds(got.get("keep_firing_for")) != seconds(src.get("keep_firing_for")):
+        p.append("keep_firing_for %r, want %r" % (got.get("keep_firing_for"), src.get("keep_firing_for")))
+    for key in ("labels", "annotations"):
+        if (got.get(key) or {}) != {k: str(v) for k, v in (src.get(key) or {}).items()}:
+            p.append("%s %s, want %s" % (key, got.get(key), src.get(key)))
+    return p
+
+
+def promtool_problems(groups, promtool=PROMTOOL):
+    """promtool check rules over the planned groups, written back as a Prometheus rule file."""
+    doc = {"groups": [{"name": name, "rules": [
+        dict({"alert": r["name"], "expr": json.loads(next(d for d in r["data"] if d["ref_id"] == "A")["model"])["expr"],
+              "for": r.get("for") or "0s", "labels": r.get("labels") or {}, "annotations": r.get("annotations") or {}},
+             **({"keep_firing_for": r["keep_firing_for"]} if r.get("keep_firing_for") else {}))
+        for r in g.get("rule") or []]} for name, g in sorted(groups.items())]}
+    import yaml
+    with tempfile.NamedTemporaryFile("w", suffix=".yaml", delete=False) as f:
+        yaml.safe_dump(doc, f, sort_keys=False)
+    try:
+        p = subprocess.run([promtool, "check", "rules", f.name], capture_output=True, text=True)
+    finally:
+        os.unlink(f.name)
+    return [] if p.returncode == 0 else ["promtool check rules: " + (p.stdout + p.stderr).strip()]
+
+
+def rules_render(env, runs=RULE_RUNS):
+    import yaml
+    if not os.access(PROMTOOL, os.X_OK):
+        raise Exit(1, "no %s; run `make bootstrap`" % os.path.relpath(PROMTOOL, REPO))
+    with open(ALERTS) as f:
+        doc = yaml.safe_load(f)
+    for root, want in runs.items():
+        tenv = offline(root, env)
+        say("rules %s: render every rule per required_environments (%s)" % (root, RULES_TEST))
+        rc, out = run(["test", "-verbose", "-json", "-filter=" + RULES_TEST], root_dir(root), tenv, capture=True)
+        plans, status = planned_rule_groups(out)
+        if rc or sorted(plans) != sorted(want) or any(status.get(r) != "pass" for r in want):
+            sys.stdout.write(out)
+            raise Exit(1, "rules %s: runs %s planned, want %s passing (AW-INF-047)" % (root, sorted(plans), sorted(want)))
+        for name, required in sorted(want.items()):
+            required = marked_environments(doc) if required is None else required
+            problems = rule_problems(plans[name], required, doc) + promtool_problems(plans[name])
+            if problems:
+                raise Exit(1, "rules %s %s (required_environments %s):\n  %s"
+                              % (root, name, required, "\n  ".join(problems)))
+            say("rules %s %s: %d groups, %d rules match alerts.yaml rendered for %s, and parse"
+                % (root, name, len(plans[name]), sum(len(g.get("rule") or []) for g in plans[name].values()),
+                   required or "[]"))
+    return 0
 
 
 # AC-2's other half (AW-INF-049): the module's preconditions refuse a broken tick-health.json. Each entry

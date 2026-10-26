@@ -68,7 +68,7 @@ Under about 5 s, this would measure the debounce, not the system (feedback §1).
 ## Alert
 
 `ContentLoadFailing`:
-- **Expression:** `max by (namespace, pack) (andara_content_pending_seconds) > 300` for 5 m. A pointer move
+- **Expression:** `max by (environment, namespace, pack) (andara_content_pending_seconds) > 300` for 5 m. A pointer move
   that has been unserved, for a system reason, for over five minutes. That is ten times the
   good-minute bound, so a slow but working swap does not ticket.
 - **Severity:** `ticket`. No player is harmed and the previous version is served.
@@ -92,7 +92,7 @@ This SLO replaces it.
   gates disagree, which is a bug `AW-SRV-013`'s three-way equivalence test exists to prevent. It is
   still visible on `andara_content_load_failures_total{reason}` for anyone looking.
 - **Per-process.** Under ADR-0001 there is one server. When the sharding story lands, every
-  process that follows a pack reports its own gauge, and the rule's `max by (namespace, pack)` is the right
+  process that follows a pack reports its own gauge, and the rule's `max by (environment, namespace, pack)` is the right
   aggregation.
 
 ## Revisit when

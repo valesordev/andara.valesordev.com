@@ -5,10 +5,14 @@
 # `make helm-test`. Outside the chart on purpose: everything under deploy/helm/andara is
 # packaged with it, and this is a test of the chart, not part of it.
 #
-# The rules are evaluated in two places with two label shapes — the compose stack, which has
-# no `namespace` label, and the cluster, where `dev` and `prod` are namespaces in one Grafana
-# Cloud tenant. Each shape gets its own test group, so "still works in compose" and "pages for
-# one environment only" are both claims a run checks rather than a comment asserts.
+# Two label shapes: the retired compose stack's, which has no `namespace` and no `environment`,
+# and the cluster's as the chart's destinations deliver it (ADR-0014 §4): every series of an
+# `andara-*` namespace carries the `environment` decision 9's table gives it, a platform
+# namespace's (`traefik`, `cert-manager`) carries `unknown`, and `cluster` is `andara`. Each
+# shape gets its own test group, so "no labels in, none out" and "pages for one environment
+# only" are both claims a run checks rather than a comment asserts. Every rule has at least one
+# cluster case whose alert carries `environment` and `namespace` (ADR-0012 decision 1,
+# AW-INF-047): the label set is the rule's identity and the routing key.
 rule_files:
   - ../andara/files/alerts.yaml
 
@@ -50,11 +54,11 @@ tests:
   - name: cluster — prod down pages as prod only
     interval: 1m
     input_series:
-      - series: 'up{job="andara-server", namespace="andara-dev", pod="andara-0", cluster="solo7-local"}'
+      - series: 'up{job="andara-server", environment="dev", namespace="andara-dev", pod="andara-0", cluster="andara"}'
         values: '1x10'
-      - series: 'up{job="andara-server", namespace="andara-prod", pod="andara-0", cluster="solo7-local"}'
+      - series: 'up{job="andara-server", environment="prod", namespace="andara-prod", pod="andara-0", cluster="andara"}'
         values: '1 1 0 0 0 0 0 0 0 0 0'
-      - series: 'up{job="traefik", namespace="traefik", cluster="solo7-local"}'
+      - series: 'up{job="traefik", environment="unknown", namespace="traefik", cluster="andara"}'
         values: '1x10'
     alert_rule_test:
       - eval_time: 1m
@@ -63,7 +67,7 @@ tests:
       - eval_time: 5m
         alertname: AndaraServerUnavailable
         exp_alerts:
-          - exp_labels: {namespace: andara-prod, severity: page, slo: world-write-availability}
+          - exp_labels: {environment: prod, namespace: andara-prod, severity: page, slo: world-write-availability}
             exp_annotations:
               summary: "No ready andara-server pod for 2 minutes — players cannot connect"
               runbook: docs/runbooks/server-unavailable.md
@@ -74,11 +78,11 @@ tests:
   - name: cluster — prod deleted pages as prod only
     interval: 1m
     input_series:
-      - series: 'up{job="andara-server", namespace="andara-dev", pod="andara-0", cluster="solo7-local"}'
+      - series: 'up{job="andara-server", environment="dev", namespace="andara-dev", pod="andara-0", cluster="andara"}'
         values: '1x10'
-      - series: 'up{job="andara-server", namespace="andara-prod", pod="andara-0", cluster="solo7-local"}'
+      - series: 'up{job="andara-server", environment="prod", namespace="andara-prod", pod="andara-0", cluster="andara"}'
         values: '1 1 stale'
-      - series: 'up{job="traefik", namespace="traefik", cluster="solo7-local"}'
+      - series: 'up{job="traefik", environment="unknown", namespace="traefik", cluster="andara"}'
         values: '1x10'
     alert_rule_test:
       - eval_time: 1m
@@ -87,7 +91,7 @@ tests:
       - eval_time: 5m
         alertname: AndaraServerUnavailable
         exp_alerts:
-          - exp_labels: {job: andara-server, namespace: andara-prod, severity: page, slo: world-write-availability}
+          - exp_labels: {job: andara-server, environment: prod, namespace: andara-prod, severity: page, slo: world-write-availability}
             exp_annotations:
               summary: "No ready andara-server pod for 2 minutes — players cannot connect"
               runbook: docs/runbooks/server-unavailable.md
@@ -97,19 +101,19 @@ tests:
   - name: cluster — Sessions dropping in dev pages as dev only
     interval: 1m
     input_series:
-      - series: 'andara_session_egress_drops_total{reason="buffer_full", namespace="andara-dev"}'
+      - series: 'andara_session_egress_drops_total{reason="buffer_full", environment="dev", namespace="andara-dev"}'
         values: '0+10x20'
-      - series: 'andara_stream_subscribers{namespace="andara-dev"}'
+      - series: 'andara_stream_subscribers{environment="dev", namespace="andara-dev"}'
         values: '100x20'
-      - series: 'andara_session_egress_drops_total{reason="buffer_full", namespace="andara-prod"}'
+      - series: 'andara_session_egress_drops_total{reason="buffer_full", environment="prod", namespace="andara-prod"}'
         values: '0x20'
-      - series: 'andara_stream_subscribers{namespace="andara-prod"}'
+      - series: 'andara_stream_subscribers{environment="prod", namespace="andara-prod"}'
         values: '100x20'
     alert_rule_test:
       - eval_time: 15m
         alertname: SessionsDroppingAtRate
         exp_alerts:
-          - exp_labels: {namespace: andara-dev, severity: page, slo: session-availability}
+          - exp_labels: {environment: dev, namespace: andara-dev, severity: page, slo: session-availability}
             exp_annotations:
               summary: "Server-ended Event streams above 1% of open streams per minute for 5 minutes — players are losing the World"
               runbook: docs/runbooks/sessions-dropping.md
@@ -121,11 +125,11 @@ tests:
   - name: cluster — content stuck in dev tickets for that pack in dev only
     interval: 1m
     input_series:
-      - series: 'andara_content_pending_seconds{namespace="andara-dev", pack="town", job="andara-server"}'
+      - series: 'andara_content_pending_seconds{environment="dev", namespace="andara-dev", pack="town", job="andara-server"}'
         values: '0+60x15'
-      - series: 'andara_content_pending_seconds{namespace="andara-dev", pack="andara.core", job="andara-server"}'
+      - series: 'andara_content_pending_seconds{environment="dev", namespace="andara-dev", pack="andara.core", job="andara-server"}'
         values: '0x15'
-      - series: 'andara_content_pending_seconds{namespace="andara-prod", pack="town", job="andara-server"}'
+      - series: 'andara_content_pending_seconds{environment="prod", namespace="andara-prod", pack="town", job="andara-server"}'
         values: '0 20 40 0 0 0 0 0 0 0 0 0 0 0 0 0'
     alert_rule_test:
       # 360 s at 6m is the first sample over 300: pending from 6m, firing 5m later.
@@ -135,7 +139,7 @@ tests:
       - eval_time: 11m
         alertname: ContentLoadFailing
         exp_alerts:
-          - exp_labels: {severity: ticket, slo: content-freshness, namespace: andara-dev, pack: town}
+          - exp_labels: {severity: ticket, slo: content-freshness, environment: dev, namespace: andara-dev, pack: town}
             exp_annotations:
               summary: "Published content has not gone live for over five minutes — the previous version is still serving"
               runbook: docs/runbooks/content-load-failing.md
@@ -153,19 +157,19 @@ tests:
   - name: cluster — edge 5xx in dev pages as dev, not as traefik
     interval: 1m
     input_series:
-      - series: 'traefik_router_requests_total{router="andara-dev-andara-andara-dev-solo7-valesordev-com@kubernetes", code="500", namespace="traefik"}'
+      - series: 'traefik_router_requests_total{router="andara-dev-andara-andara-dev-solo7-valesordev-com@kubernetes", code="500", environment="unknown", namespace="traefik"}'
         values: '0+10x30'
-      - series: 'traefik_router_requests_total{router="andara-dev-andara-andara-dev-solo7-valesordev-com@kubernetes", code="200", namespace="traefik"}'
+      - series: 'traefik_router_requests_total{router="andara-dev-andara-andara-dev-solo7-valesordev-com@kubernetes", code="200", environment="unknown", namespace="traefik"}'
         values: '0+100x30'
-      - series: 'traefik_router_requests_total{router="andara-prod-andara-admin-andara-solo7-valesordev-com@kubernetes", code="500", namespace="traefik"}'
+      - series: 'traefik_router_requests_total{router="andara-prod-andara-admin-andara-solo7-valesordev-com@kubernetes", code="500", environment="unknown", namespace="traefik"}'
         values: '0x30'
-      - series: 'traefik_router_requests_total{router="andara-prod-andara-admin-andara-solo7-valesordev-com@kubernetes", code="200", namespace="traefik"}'
+      - series: 'traefik_router_requests_total{router="andara-prod-andara-admin-andara-solo7-valesordev-com@kubernetes", code="200", environment="unknown", namespace="traefik"}'
         values: '0+100x30'
     alert_rule_test:
       - eval_time: 25m
         alertname: IngressErrorRateHigh
         exp_alerts:
-          - exp_labels: {namespace: andara-dev, severity: page, slo: edge-availability}
+          - exp_labels: {environment: dev, namespace: andara-dev, severity: page, slo: edge-availability}
             exp_annotations:
               summary: "More than 1% of requests through the Andara edge are 5xx for 10 minutes"
               runbook: docs/runbooks/ingress-error-rate.md
@@ -176,19 +180,19 @@ tests:
   - name: cluster — an expiring Certificate names its environment
     interval: 1m
     input_series:
-      - series: 'certmanager_certificate_expiration_timestamp_seconds{name="andara-edge", exported_namespace="andara-dev", namespace="cert-manager"}'
+      - series: 'certmanager_certificate_expiration_timestamp_seconds{name="andara-edge", exported_namespace="andara-dev", environment="unknown", namespace="cert-manager"}'
         values: '86400x30'
-      - series: 'certmanager_certificate_expiration_timestamp_seconds{name="andara-server", namespace="andara-prod"}'
+      - series: 'certmanager_certificate_expiration_timestamp_seconds{name="andara-server", environment="prod", namespace="andara-prod"}'
         values: '86400x30'
     alert_rule_test:
       - eval_time: 20m
         alertname: CertificateExpiringSoon
         exp_alerts:
-          - exp_labels: {name: andara-edge, namespace: andara-dev, exported_namespace: andara-dev, severity: page, slo: edge-availability}
+          - exp_labels: {name: andara-edge, environment: dev, namespace: andara-dev, exported_namespace: andara-dev, severity: page, slo: edge-availability}
             exp_annotations:
               summary: "Certificate andara-dev/andara-edge expires in under 7 days and has not renewed"
               runbook: docs/runbooks/certificate-expiring.md
-          - exp_labels: {name: andara-server, namespace: andara-prod, severity: page, slo: edge-availability}
+          - exp_labels: {name: andara-server, environment: prod, namespace: andara-prod, severity: page, slo: edge-availability}
             exp_annotations:
               summary: "Certificate andara-prod/andara-server expires in under 7 days and has not renewed"
               runbook: docs/runbooks/certificate-expiring.md
@@ -236,23 +240,23 @@ tests:
   - name: cluster — a stale projector tickets for its own namespace only
     interval: 1m
     input_series:
-      - series: 'andara_state_projector_lag_budget_seconds{namespace="andara-dev", job="andara-projector-state"}'
+      - series: 'andara_state_projector_lag_budget_seconds{environment="dev", namespace="andara-dev", job="andara-projector-state"}'
         values: '5x10'
-      - series: 'andara_state_projector_lag_seconds{namespace="andara-dev", job="andara-projector-state"}'
+      - series: 'andara_state_projector_lag_seconds{environment="dev", namespace="andara-dev", job="andara-projector-state"}'
         values: '30x10'
-      - series: 'andara_state_projector_lag_budget_seconds{namespace="andara-prod", job="andara-projector-state"}'
+      - series: 'andara_state_projector_lag_budget_seconds{environment="prod", namespace="andara-prod", job="andara-projector-state"}'
         values: '5x10'
-      - series: 'andara_state_projector_lag_seconds{namespace="andara-prod", job="andara-projector-state"}'
+      - series: 'andara_state_projector_lag_seconds{environment="prod", namespace="andara-prod", job="andara-projector-state"}'
         values: '1x10'
-      - series: 'andara_ticks_total{namespace="andara-dev", job="andara-server"}'
+      - series: 'andara_ticks_total{environment="dev", namespace="andara-dev", job="andara-server"}'
         values: '0+600x12'
-      - series: 'andara_ticks_total{namespace="andara-prod", job="andara-server"}'
+      - series: 'andara_ticks_total{environment="prod", namespace="andara-prod", job="andara-server"}'
         values: '0+600x12'
     alert_rule_test:
       - eval_time: 6m
         alertname: ProjectionStale
         exp_alerts:
-          - exp_labels: {severity: ticket, slo: projection-freshness, projection: state, namespace: andara-dev, job: andara-projector-state}
+          - exp_labels: {severity: ticket, slo: projection-freshness, projection: state, environment: dev, namespace: andara-dev, job: andara-projector-state}
             exp_annotations:
               summary: "The state projection is behind the World by more than its lag budget for 5 minutes"
               runbook: docs/runbooks/projection-stale.md
@@ -261,13 +265,13 @@ tests:
   - name: cluster — a projector that should run and isn't scraped tickets
     interval: 1m
     input_series:
-      - series: 'kube_deployment_spec_replicas{namespace="andara-dev", deployment="andara-projector-state"}'
+      - series: 'kube_deployment_spec_replicas{environment="dev", namespace="andara-dev", deployment="andara-projector-state"}'
         values: '1x15'
-      - series: 'up{namespace="andara-dev", job="andara-projector-state"}'
+      - series: 'up{environment="dev", namespace="andara-dev", job="andara-projector-state"}'
         values: '1 1 0 0 0 0 0 0 0 0 0 0 0 0 0 0'
-      - series: 'kube_deployment_spec_replicas{namespace="andara-prod", deployment="andara-projector-state"}'
+      - series: 'kube_deployment_spec_replicas{environment="prod", namespace="andara-prod", deployment="andara-projector-state"}'
         values: '1x15'
-      - series: 'up{namespace="andara-prod", job="andara-projector-state"}'
+      - series: 'up{environment="prod", namespace="andara-prod", job="andara-projector-state"}'
         values: '1x15'
     alert_rule_test:
       - eval_time: 10m
@@ -276,7 +280,7 @@ tests:
       - eval_time: 13m
         alertname: StateProjectorDown
         exp_alerts:
-          - exp_labels: {severity: ticket, slo: projection-freshness, projection: state, namespace: andara-dev}
+          - exp_labels: {severity: ticket, slo: projection-freshness, projection: state, environment: dev, namespace: andara-dev}
             exp_annotations:
               summary: "The state projector should be running and no ready projector pod has been scraped for 10 minutes"
               runbook: docs/runbooks/state-projector-down.md
@@ -285,7 +289,7 @@ tests:
   - name: cluster — a stopped projector is silent
     interval: 1m
     input_series:
-      - series: 'kube_deployment_spec_replicas{namespace="andara-dev", deployment="andara-projector-state"}'
+      - series: 'kube_deployment_spec_replicas{environment="dev", namespace="andara-dev", deployment="andara-projector-state"}'
         values: '0x20'
     alert_rule_test:
       - eval_time: 15m
@@ -451,53 +455,53 @@ tests:
   - name: cluster — exit 8 on a container that is not Ready pages
     interval: 1m
     input_series:
-      - series: 'kube_pod_container_status_last_terminated_exitcode{namespace="andara-dev", pod="andara-0", container="server"}'
+      - series: 'kube_pod_container_status_last_terminated_exitcode{environment="dev", namespace="andara-dev", pod="andara-0", container="server"}'
         values: '8x10'
-      - series: 'kube_pod_container_status_ready{namespace="andara-dev", pod="andara-0", container="server"}'
+      - series: 'kube_pod_container_status_ready{environment="dev", namespace="andara-dev", pod="andara-0", container="server"}'
         values: '0x10'
     alert_rule_test:
       - eval_time: 1m
         alertname: RecoveryStateMismatch
         exp_alerts:
-          - exp_labels: {severity: page, slo: recovery, namespace: andara-dev}
+          - exp_labels: {severity: page, slo: recovery, environment: dev, namespace: andara-dev}
             exp_annotations:
               summary: "A recovery did not reproduce the recorded World state — the server refused to take traffic"
               runbook: docs/runbooks/recovery-state-mismatch.md
       - eval_time: 9m
         alertname: RecoveryStateMismatch
         exp_alerts:
-          - exp_labels: {severity: page, slo: recovery, namespace: andara-dev}
+          - exp_labels: {severity: page, slo: recovery, environment: dev, namespace: andara-dev}
             exp_annotations:
               summary: "A recovery did not reproduce the recorded World state — the server refused to take traffic"
               runbook: docs/runbooks/recovery-state-mismatch.md
   - name: cluster — exit 6 on a container that is not Ready pages
     interval: 1m
     input_series:
-      - series: 'kube_pod_container_status_last_terminated_exitcode{namespace="andara-dev", pod="andara-0", container="server"}'
+      - series: 'kube_pod_container_status_last_terminated_exitcode{environment="dev", namespace="andara-dev", pod="andara-0", container="server"}'
         values: '6x10'
-      - series: 'kube_pod_container_status_ready{namespace="andara-dev", pod="andara-0", container="server"}'
+      - series: 'kube_pod_container_status_ready{environment="dev", namespace="andara-dev", pod="andara-0", container="server"}'
         values: '0x10'
     alert_rule_test:
       - eval_time: 1m
         alertname: RecoveryStateMismatch
         exp_alerts:
-          - exp_labels: {severity: page, slo: recovery, namespace: andara-dev}
+          - exp_labels: {severity: page, slo: recovery, environment: dev, namespace: andara-dev}
             exp_annotations:
               summary: "A recovery did not reproduce the recorded World state — the server refused to take traffic"
               runbook: docs/runbooks/recovery-state-mismatch.md
       - eval_time: 9m
         alertname: RecoveryStateMismatch
         exp_alerts:
-          - exp_labels: {severity: page, slo: recovery, namespace: andara-dev}
+          - exp_labels: {severity: page, slo: recovery, environment: dev, namespace: andara-dev}
             exp_annotations:
               summary: "A recovery did not reproduce the recorded World state — the server refused to take traffic"
               runbook: docs/runbooks/recovery-state-mismatch.md
   - name: cluster — exit 1 on a container that is not Ready does not page this alert
     interval: 1m
     input_series:
-      - series: 'kube_pod_container_status_last_terminated_exitcode{namespace="andara-dev", pod="andara-0", container="server"}'
+      - series: 'kube_pod_container_status_last_terminated_exitcode{environment="dev", namespace="andara-dev", pod="andara-0", container="server"}'
         values: '1x10'
-      - series: 'kube_pod_container_status_ready{namespace="andara-dev", pod="andara-0", container="server"}'
+      - series: 'kube_pod_container_status_ready{environment="dev", namespace="andara-dev", pod="andara-0", container="server"}'
         values: '0x10'
     alert_rule_test:
       - eval_time: 1m
@@ -509,9 +513,9 @@ tests:
   - name: cluster — exit 5 on a container that is not Ready does not page this alert
     interval: 1m
     input_series:
-      - series: 'kube_pod_container_status_last_terminated_exitcode{namespace="andara-dev", pod="andara-0", container="server"}'
+      - series: 'kube_pod_container_status_last_terminated_exitcode{environment="dev", namespace="andara-dev", pod="andara-0", container="server"}'
         values: '5x10'
-      - series: 'kube_pod_container_status_ready{namespace="andara-dev", pod="andara-0", container="server"}'
+      - series: 'kube_pod_container_status_ready{environment="dev", namespace="andara-dev", pod="andara-0", container="server"}'
         values: '0x10'
     alert_rule_test:
       - eval_time: 1m
@@ -523,9 +527,9 @@ tests:
   - name: cluster — exit 2 on a container that is not Ready does not page this alert
     interval: 1m
     input_series:
-      - series: 'kube_pod_container_status_last_terminated_exitcode{namespace="andara-dev", pod="andara-0", container="server"}'
+      - series: 'kube_pod_container_status_last_terminated_exitcode{environment="dev", namespace="andara-dev", pod="andara-0", container="server"}'
         values: '2x10'
-      - series: 'kube_pod_container_status_ready{namespace="andara-dev", pod="andara-0", container="server"}'
+      - series: 'kube_pod_container_status_ready{environment="dev", namespace="andara-dev", pod="andara-0", container="server"}'
         values: '0x10'
     alert_rule_test:
       - eval_time: 1m
@@ -537,9 +541,9 @@ tests:
   - name: cluster — exit 8 on a Ready container does not page
     interval: 1m
     input_series:
-      - series: 'kube_pod_container_status_last_terminated_exitcode{namespace="andara-dev", pod="andara-0", container="server"}'
+      - series: 'kube_pod_container_status_last_terminated_exitcode{environment="dev", namespace="andara-dev", pod="andara-0", container="server"}'
         values: '8x10'
-      - series: 'kube_pod_container_status_ready{namespace="andara-dev", pod="andara-0", container="server"}'
+      - series: 'kube_pod_container_status_ready{environment="dev", namespace="andara-dev", pod="andara-0", container="server"}'
         values: '1x10'
     alert_rule_test:
       - eval_time: 1m
@@ -552,22 +556,22 @@ tests:
   - name: cluster — it resolves 15 minutes after the container is Ready again
     interval: 1m
     input_series:
-      - series: 'kube_pod_container_status_last_terminated_exitcode{namespace="andara-dev", pod="andara-0", container="server"}'
+      - series: 'kube_pod_container_status_last_terminated_exitcode{environment="dev", namespace="andara-dev", pod="andara-0", container="server"}'
         values: '8x30'
-      - series: 'kube_pod_container_status_ready{namespace="andara-dev", pod="andara-0", container="server"}'
+      - series: 'kube_pod_container_status_ready{environment="dev", namespace="andara-dev", pod="andara-0", container="server"}'
         values: '0x4 1x26'
     alert_rule_test:
       - eval_time: 4m
         alertname: RecoveryStateMismatch
         exp_alerts:
-          - exp_labels: {severity: page, slo: recovery, namespace: andara-dev}
+          - exp_labels: {severity: page, slo: recovery, environment: dev, namespace: andara-dev}
             exp_annotations:
               summary: "A recovery did not reproduce the recorded World state — the server refused to take traffic"
               runbook: docs/runbooks/recovery-state-mismatch.md
       - eval_time: 18m
         alertname: RecoveryStateMismatch
         exp_alerts:
-          - exp_labels: {severity: page, slo: recovery, namespace: andara-dev}
+          - exp_labels: {severity: page, slo: recovery, environment: dev, namespace: andara-dev}
             exp_annotations:
               summary: "A recovery did not reproduce the recorded World state — the server refused to take traffic"
               runbook: docs/runbooks/recovery-state-mismatch.md
@@ -581,19 +585,19 @@ tests:
   - name: cluster — the page names only the namespace that is refusing
     interval: 1m
     input_series:
-      - series: 'kube_pod_container_status_last_terminated_exitcode{namespace="andara-dev", pod="andara-0", container="server"}'
+      - series: 'kube_pod_container_status_last_terminated_exitcode{environment="dev", namespace="andara-dev", pod="andara-0", container="server"}'
         values: '8x10'
-      - series: 'kube_pod_container_status_ready{namespace="andara-dev", pod="andara-0", container="server"}'
+      - series: 'kube_pod_container_status_ready{environment="dev", namespace="andara-dev", pod="andara-0", container="server"}'
         values: '0x10'
-      - series: 'kube_pod_container_status_last_terminated_exitcode{namespace="andara-prod", pod="andara-0", container="server"}'
+      - series: 'kube_pod_container_status_last_terminated_exitcode{environment="prod", namespace="andara-prod", pod="andara-0", container="server"}'
         values: '8x10'
-      - series: 'kube_pod_container_status_ready{namespace="andara-prod", pod="andara-0", container="server"}'
+      - series: 'kube_pod_container_status_ready{environment="prod", namespace="andara-prod", pod="andara-0", container="server"}'
         values: '1x10'
     alert_rule_test:
       - eval_time: 5m
         alertname: RecoveryStateMismatch
         exp_alerts:
-          - exp_labels: {severity: page, slo: recovery, namespace: andara-dev}
+          - exp_labels: {severity: page, slo: recovery, environment: dev, namespace: andara-dev}
             exp_annotations:
               summary: "A recovery did not reproduce the recorded World state — the server refused to take traffic"
               runbook: docs/runbooks/recovery-state-mismatch.md
@@ -619,13 +623,13 @@ tests:
   - name: cluster — a mismatch carries its namespace
     interval: 1m
     input_series:
-      - series: 'andara_recovery_state_hash_match{job="andara-server", namespace="andara-dev", instance="10.0.0.7:8080"}'
+      - series: 'andara_recovery_state_hash_match{job="andara-server", environment="dev", namespace="andara-dev", instance="10.0.0.7:8080"}'
         values: '0 0'
     alert_rule_test:
       - eval_time: 1m
         alertname: RecoveryStateMismatch
         exp_alerts:
-          - exp_labels: {severity: page, slo: recovery, job: andara-server, namespace: andara-dev, instance: "10.0.0.7:8080"}
+          - exp_labels: {severity: page, slo: recovery, job: andara-server, environment: dev, namespace: andara-dev, instance: "10.0.0.7:8080"}
             exp_annotations:
               summary: "A recovery did not reproduce the recorded World state — the server refused to take traffic"
               runbook: docs/runbooks/recovery-state-mismatch.md
@@ -635,11 +639,11 @@ tests:
   - name: cluster — one degraded Partition in dev pages WorldReadOnly as dev only
     interval: 1m
     input_series:
-      - series: 'andara_ingress_degraded{job="andara-server", namespace="andara-dev", partition="0"}'
+      - series: 'andara_ingress_degraded{job="andara-server", environment="dev", namespace="andara-dev", partition="0"}'
         values: '0x10'
-      - series: 'andara_ingress_degraded{job="andara-server", namespace="andara-dev", partition="7"}'
+      - series: 'andara_ingress_degraded{job="andara-server", environment="dev", namespace="andara-dev", partition="7"}'
         values: '0 1x9'
-      - series: 'andara_ingress_degraded{job="andara-server", namespace="andara-prod", partition="7"}'
+      - series: 'andara_ingress_degraded{job="andara-server", environment="prod", namespace="andara-prod", partition="7"}'
         values: '0x10'
     alert_rule_test:
       - eval_time: 1m
@@ -648,7 +652,7 @@ tests:
       - eval_time: 2m
         alertname: WorldReadOnly
         exp_alerts:
-          - exp_labels: {namespace: andara-dev, severity: page, slo: world-write-availability}
+          - exp_labels: {environment: dev, namespace: andara-dev, severity: page, slo: world-write-availability}
             exp_annotations:
               summary: "The World is read-only: at least one Partition of the Command log refuses writes, and its players cannot act"
               runbook: docs/runbooks/world-read-only.md
@@ -674,27 +678,27 @@ tests:
   - name: cluster — the degraded-hold sawtooth keeps WorldReadOnly firing
     interval: 1s
     input_series:
-      - series: 'andara_ingress_degraded{job="andara-server", namespace="andara-dev", partition="7"}'
+      - series: 'andara_ingress_degraded{job="andara-server", environment="dev", namespace="andara-dev", partition="7"}'
         values: '1x119 0 0 1x119 0 0 1x119 0 0 1x119 0 0'
     alert_rule_test:
       - eval_time: 1m
         alertname: WorldReadOnly
         exp_alerts:
-          - exp_labels: {namespace: andara-dev, severity: page, slo: world-write-availability}
+          - exp_labels: {environment: dev, namespace: andara-dev, severity: page, slo: world-write-availability}
             exp_annotations:
               summary: "The World is read-only: at least one Partition of the Command log refuses writes, and its players cannot act"
               runbook: docs/runbooks/world-read-only.md
       - eval_time: 2m
         alertname: WorldReadOnly
         exp_alerts:
-          - exp_labels: {namespace: andara-dev, severity: page, slo: world-write-availability}
+          - exp_labels: {environment: dev, namespace: andara-dev, severity: page, slo: world-write-availability}
             exp_annotations:
               summary: "The World is read-only: at least one Partition of the Command log refuses writes, and its players cannot act"
               runbook: docs/runbooks/world-read-only.md
       - eval_time: 8m
         alertname: WorldReadOnly
         exp_alerts:
-          - exp_labels: {namespace: andara-dev, severity: page, slo: world-write-availability}
+          - exp_labels: {environment: dev, namespace: andara-dev, severity: page, slo: world-write-availability}
             exp_annotations:
               summary: "The World is read-only: at least one Partition of the Command log refuses writes, and its players cannot act"
               runbook: docs/runbooks/world-read-only.md
@@ -704,13 +708,13 @@ tests:
   - name: cluster — WorldReadOnly resolves 2 m after the log is back
     interval: 1m
     input_series:
-      - series: 'andara_ingress_degraded{job="andara-server", namespace="andara-dev", partition="7"}'
+      - series: 'andara_ingress_degraded{job="andara-server", environment="dev", namespace="andara-dev", partition="7"}'
         values: '1 1 1 0x7'
     alert_rule_test:
       - eval_time: 4m
         alertname: WorldReadOnly
         exp_alerts:
-          - exp_labels: {namespace: andara-dev, severity: page, slo: world-write-availability}
+          - exp_labels: {environment: dev, namespace: andara-dev, severity: page, slo: world-write-availability}
             exp_annotations:
               summary: "The World is read-only: at least one Partition of the Command log refuses writes, and its players cannot act"
               runbook: docs/runbooks/world-read-only.md
@@ -722,7 +726,7 @@ tests:
   - name: cluster — a degraded blip shorter than for does not page
     interval: 1m
     input_series:
-      - series: 'andara_ingress_degraded{job="andara-server", namespace="andara-dev", partition="7"}'
+      - series: 'andara_ingress_degraded{job="andara-server", environment="dev", namespace="andara-dev", partition="7"}'
         values: '0 1 0x5'
     alert_rule_test:
       - eval_time: 1m
@@ -737,11 +741,11 @@ tests:
   - name: cluster — consumer lag above 400 offsets for 2 m pages as dev only
     interval: 1m
     input_series:
-      - series: 'andara_consumer_lag{job="andara-server", namespace="andara-dev", partition="0"}'
+      - series: 'andara_consumer_lag{job="andara-server", environment="dev", namespace="andara-dev", partition="0"}'
         values: '400x10'
-      - series: 'andara_consumer_lag{job="andara-server", namespace="andara-dev", partition="9"}'
+      - series: 'andara_consumer_lag{job="andara-server", environment="dev", namespace="andara-dev", partition="9"}'
         values: '0 401x9'
-      - series: 'andara_consumer_lag{job="andara-server", namespace="andara-prod", partition="9"}'
+      - series: 'andara_consumer_lag{job="andara-server", environment="prod", namespace="andara-prod", partition="9"}'
         values: '400x10'
     alert_rule_test:
       - eval_time: 2m
@@ -750,7 +754,7 @@ tests:
       - eval_time: 3m
         alertname: SimulationConsumerLagging
         exp_alerts:
-          - exp_labels: {namespace: andara-dev, severity: page, slo: kafka-availability}
+          - exp_labels: {environment: dev, namespace: andara-dev, severity: page, slo: kafka-availability}
             exp_annotations:
               summary: "The simulation is more than 400 offsets behind the Command log on a Partition for 2 minutes — players' Commands are applied late"
               runbook: docs/runbooks/simulation-consumer-lagging.md
@@ -758,9 +762,145 @@ tests:
   - name: cluster — consumer lag at the threshold does not page
     interval: 1m
     input_series:
-      - series: 'andara_consumer_lag{job="andara-server", namespace="andara-dev", partition="0"}'
+      - series: 'andara_consumer_lag{job="andara-server", environment="dev", namespace="andara-dev", partition="0"}'
         values: '400x10'
     alert_rule_test:
       - eval_time: 10m
         alertname: SimulationConsumerLagging
         exp_alerts: []
+
+  # AW-INF-047 AC-9 (ADR-0014 §9, A3). The absence lines' guard counts only the box's chart
+  # scrape. Fleet's andara-shared series reach the stack through the receiver, not the metrics
+  # collector, so alone they mean the collector that scrapes the server may be dead: no page.
+  - name: guard — Fleet's andara-shared series alone don't arm the absence lines
+    interval: 1m
+    input_series:
+      - series: 'up{job="andara-kafka", namespace="andara-shared"}'
+        values: '1x10'
+    alert_rule_test:
+      - eval_time: 5m
+        alertname: AndaraServerUnavailable
+        exp_alerts: []
+
+  # With the chart's scrape reporting (a local server), every marked line evaluates: the
+  # unrendered file carries both, and each absence pages as its own environment.
+  - name: guard — a reporting chart scrape arms every absence line
+    interval: 1m
+    input_series:
+      - series: 'up{job="andara-kafka", namespace="andara-shared"}'
+        values: '1x10'
+      - series: 'up{job="andara-server", namespace="andara-local"}'
+        values: '1x10'
+    alert_rule_test:
+      - eval_time: 5m
+        alertname: AndaraServerUnavailable
+        exp_alerts:
+          - exp_labels: {job: andara-server, environment: dev, namespace: andara-dev, severity: page, slo: world-write-availability}
+            exp_annotations:
+              summary: "No ready andara-server pod for 2 minutes — players cannot connect"
+              runbook: docs/runbooks/server-unavailable.md
+          - exp_labels: {job: andara-server, environment: prod, namespace: andara-prod, severity: page, slo: world-write-availability}
+            exp_annotations:
+              summary: "No ready andara-server pod for 2 minutes — players cannot connect"
+              runbook: docs/runbooks/server-unavailable.md
+
+  # CI's series never say anything about the box (A3).
+  - name: guard — CI's series alone don't arm the absence lines
+    interval: 1m
+    input_series:
+      - series: 'up{job="andara-server", namespace="andara-local", cluster="ci"}'
+        values: '1x10'
+    alert_rule_test:
+      - eval_time: 5m
+        alertname: AndaraServerUnavailable
+        exp_alerts: []
+
+  # AW-INF-047 AC-7. A Certificate outside decision 9's table (the CA, in cert-manager's own
+  # namespace) keeps the environment it arrived with: none before the destinations stamp,
+  # `unknown` after. Either way the root receiver takes it to Slack, never IRM. One in an
+  # environment's namespace is that environment's.
+  - name: cluster — a Certificate outside the table keeps its environment, one inside gets it
+    interval: 1m
+    input_series:
+      - series: 'certmanager_certificate_expiration_timestamp_seconds{name="andara-ca", exported_namespace="cert-manager", namespace="cert-manager"}'
+        values: '86400x30'
+      - series: 'certmanager_certificate_expiration_timestamp_seconds{name="andara-ca", exported_namespace="cert-manager", environment="unknown", namespace="cert-manager", cluster="andara"}'
+        values: '86400x30'
+      - series: 'certmanager_certificate_expiration_timestamp_seconds{name="andara-ca", exported_namespace="andara-dev", environment="unknown", namespace="cert-manager", cluster="andara"}'
+        values: '86400x30'
+    alert_rule_test:
+      - eval_time: 20m
+        alertname: CertificateExpiringSoon
+        exp_alerts:
+          - exp_labels: {name: andara-ca, exported_namespace: cert-manager, namespace: cert-manager, severity: page, slo: edge-availability}
+            exp_annotations:
+              summary: "Certificate cert-manager/andara-ca expires in under 7 days and has not renewed"
+              runbook: docs/runbooks/certificate-expiring.md
+          - exp_labels: {name: andara-ca, exported_namespace: cert-manager, environment: unknown, namespace: cert-manager, cluster: andara, severity: page, slo: edge-availability}
+            exp_annotations:
+              summary: "Certificate cert-manager/andara-ca expires in under 7 days and has not renewed"
+              runbook: docs/runbooks/certificate-expiring.md
+          - exp_labels: {name: andara-ca, exported_namespace: andara-dev, environment: dev, namespace: andara-dev, cluster: andara, severity: page, slo: edge-availability}
+            exp_annotations:
+              summary: "Certificate andara-dev/andara-ca expires in under 7 days and has not renewed"
+              runbook: docs/runbooks/certificate-expiring.md
+
+  # The rules that had no cluster case (AW-INF-047): each alert carries its environment and
+  # namespace from the series, with no aggregation to keep them.
+  - name: cluster — a crash-looping server pages as its environment
+    interval: 1m
+    input_series:
+      - series: 'kube_pod_container_status_restarts_total{environment="dev", namespace="andara-dev", pod="andara-0", container="server"}'
+        values: '0+1x15'
+    alert_rule_test:
+      - eval_time: 12m
+        alertname: AndaraServerCrashLooping
+        exp_alerts:
+          - exp_labels: {environment: dev, namespace: andara-dev, pod: andara-0, container: server, severity: page, slo: world-write-availability}
+            exp_annotations:
+              summary: "andara-server restarted more than 3 times in 10 minutes"
+              runbook: docs/runbooks/server-crashlooping.md
+
+  - name: cluster — a lagging simulation pages as its environment
+    interval: 1m
+    input_series:
+      - series: 'andara_simulation_lag_seconds{job="andara-server", environment="dev", namespace="andara-dev"}'
+        values: '1x10'
+    alert_rule_test:
+      - eval_time: 5m
+        alertname: SimulationLagging
+        exp_alerts:
+          - exp_labels: {job: andara-server, environment: dev, namespace: andara-dev, severity: page, slo: tick-health}
+            exp_annotations:
+              summary: "The simulation is more than 500 ms behind schedule — the World is responding late"
+              runbook: docs/runbooks/simulation-lagging.md
+
+  - name: cluster — a stale snapshot tickets as its environment
+    interval: 1m
+    input_series:
+      - series: 'andara_snapshot_interval_seconds{job="andara-server", environment="dev", namespace="andara-dev"}'
+        values: '60x15'
+      - series: 'andara_snapshot_age_seconds{job="andara-server", environment="dev", namespace="andara-dev"}'
+        values: '0+60x15'
+    alert_rule_test:
+      - eval_time: 9m
+        alertname: SnapshotStale
+        exp_alerts:
+          - exp_labels: {job: andara-server, environment: dev, namespace: andara-dev, severity: ticket, slo: recovery}
+            exp_annotations:
+              summary: "No complete snapshot round in over three cadences — recovery would be slower than the RTO target"
+              runbook: docs/runbooks/snapshot-stale.md
+
+  - name: cluster — a diverged projector tickets as its environment
+    interval: 1m
+    input_series:
+      - series: 'andara_state_digest_mismatches_total{job="andara-projector-state", environment="dev", namespace="andara-dev"}'
+        values: '0 1'
+    alert_rule_test:
+      - eval_time: 2m
+        alertname: StateProjectorDiverged
+        exp_alerts:
+          - exp_labels: {job: andara-projector-state, environment: dev, namespace: andara-dev, severity: ticket, slo: projection-freshness, projection: state}
+            exp_annotations:
+              summary: "The state projector's replica disagreed with the World's recorded State Hash — a possible determinism failure; the evidence is the projector's error line"
+              runbook: docs/runbooks/state-projector-diverged.md

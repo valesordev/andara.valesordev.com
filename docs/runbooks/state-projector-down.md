@@ -5,8 +5,8 @@ SPDX-License-Identifier: CC-BY-SA-4.0
 
 # StateProjectorDown
 
-**Alert:** `max by (namespace) (kube_deployment_spec_replicas{deployment="andara-projector-state"}) > 0
-unless on(namespace) max by (namespace) (up{job="andara-projector-state"} == 1)` for 10 m.
+**Alert:** `max by (environment, namespace) (kube_deployment_spec_replicas{deployment="andara-projector-state"}) > 0
+unless on (environment, namespace) max by (environment, namespace) (up{job="andara-projector-state"} == 1)` for 10 m.
 **Severity:** ticket. **SLO:** `docs/specs/slo/projection-freshness.md`. **Ships with:** `AW-INF-025`.
 
 ## What fired, and what the player is experiencing

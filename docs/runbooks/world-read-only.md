@@ -1,6 +1,6 @@
 # WorldReadOnly
 
-**Alert:** `max by (namespace) (andara_ingress_degraded) == 1` for 30 s, `keep_firing_for: 2m`
+**Alert:** `max by (environment, namespace) (andara_ingress_degraded) == 1` for 30 s, `keep_firing_for: 2m`
 (`files/alerts.yaml`, `AW-INF-039`).
 **Severity:** page. **SLO:** `docs/specs/slo/world-write-availability.md`.
 **Ships with:** `AW-SRV-010` (this runbook and the metric); `AW-INF-039` completes it with the

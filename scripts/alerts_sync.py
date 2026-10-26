@@ -30,7 +30,12 @@ sync   plans with the read key (`mimirtool rules diff`) and writes with the writ
 diff   as above, read key only: exit 1 when any group would be created, updated or deleted; 0 when
        none would. (`mimirtool rules diff` itself exits 0 whatever it finds.)
 
-Exit codes: 0 ok; 1 an API error, or drift (diff); 2 usage; 3 a key, address or tenant unset. `make` reports any
+The ruler is frozen at AW-INF-047 (ADR-0012 decision 7, amendment of 2026-10-19): `sync` refuses a rule
+file with an `# env:<environment>` line, which is the Grafana-managed rule set, with exit 1 and before any
+key is read, so nothing reaches the network. `diff` reads any file, so the frozen ruler can still be
+compared with the pre-edit one (`ALERTS_FILE=<alerts.yaml at the merge base>`).
+
+Exit codes: 0 ok; 1 an API error, drift (diff), or a marked file (sync); 2 usage; 3 a key, address or tenant unset. `make` reports any
 of them as its own exit 2; the script's code is the first line of the failure it prints.
 """
 
@@ -91,6 +96,15 @@ def resolve_env(env):
 
 def missing(env, names):
     return [k for k in names if not env.get(k)]
+
+
+ENV_MARKER = re.compile(r"#\s*env:([A-Za-z0-9_-]+)\s*$", re.M)
+
+
+def env_markers(path):
+    """The `# env:<environment>` markers in a rule file, in order (ADR-0012 decision 12)."""
+    with open(path) as f:
+        return ENV_MARKER.findall(f.read())
 
 
 class NoRedirect(urllib.request.HTTPRedirectHandler):
@@ -176,6 +190,14 @@ def run(cmd, rules_file=None, env=None, find_tool=mimirtool):
     env = resolve_env(os.environ if env is None else env)
     # Only a diff reads another file; a sync always writes the chart's, whatever the environment says.
     rules_file = rules_file or (env.get("ALERTS_FILE") if cmd == "diff" else None) or ALERTS
+    # The ruler is frozen (ADR-0012 decision 7, amendment of 2026-10-19). A file with an `# env:` line
+    # is the Grafana-managed rule set: in solo7's ruler, whose dev series carry no environment, its
+    # absent(…environment="dev"…) line would be true and page. Checked before any key is read.
+    markers = env_markers(rules_file) if cmd == "sync" else []
+    if markers:
+        return fail(1, "%s carries `# env:` markers (%s): it is the Grafana-managed rule set, and the "
+                    "ruler is frozen at AW-INF-047; nothing syncs it (docs/runbooks/alert-routing.md)"
+                    % (os.path.relpath(rules_file, REPO), ", ".join(sorted(set(markers)))))
     absent = missing(env, SECRETS)
     if absent:
         return fail(3, "%s unset (docs/runbooks/alert-routing.md)" % ", ".join(absent))
