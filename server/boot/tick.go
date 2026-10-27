@@ -40,7 +40,7 @@ func (rt *Runtime) StartTickLoop(ctx context.Context) (*tickloop.Loop, error) {
 	if rt.Content == nil {
 		return nil, fmt.Errorf("tick loop: no content source")
 	}
-	engineCfg := engineConfig(cfg, rt.Content)
+	engineCfg := rt.EngineConfig()
 	engine := sim.NewEngine(sim.EmptyWorld(), nil, engineCfg)
 	if first, hold, outside := handoffRetryOutsideHold(cfg.SimHandoffRetryTicks, cfg.SimTickRate, cfg.IngressTransitHold); outside {
 		// A warning, not a refusal: the default is fixed in ticks and
