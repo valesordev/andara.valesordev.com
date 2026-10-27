@@ -767,6 +767,11 @@ so replacing the tree does not silence them. `solo7dev` is new: nothing to impor
   everything but the keep-list (decision 13) and the series the server and the drills use. Grafana Cloud's
   own usage emails are the "is the free tier enough" signal (no repo job reads usage), and nothing here depends
   on it staying free.
+  *(Annotated 2026-10-26, ADR-0014 A6: `solo7dev` is on Grafana Cloud Pro, with 20,000 active series and 50 GB
+  of logs included. Read "the free tier" here as "the plan's allowance". The "14-day retention" figure is the
+  free tier's: Pro's retention for this stack is `[verify]`, read from the stack's plan page by the next story
+  that depends on retention. "Staying free" now reads "overages staying unbilled on the owner's employee
+  account", which the owner is still confirming.)*
 
 > **Annotation, 2026-10-21: `ADR-0014` moves where the table is applied, not the table.** The chart's three
 > destinations apply it, from `deploy/platform/collectors/environments.yaml`, for the chart's signals and for Fleet's
@@ -1310,7 +1315,8 @@ one root the build added, and the `[verify in 046]` outcomes. None of it changes
 - The cluster hosts workloads that are not Andara's, or a second cluster appears: decision 13's rebuild and
   token placement assume one cluster, one owner.
 - `solo7dev` exceeds the free tier's active-series limit twice in a month, or a `local` run notifies a person
-  once: split `local` back into its own stack.
+  once: split `local` back into its own stack. *(ADR-0014 A6, 2026-10-26: read "its plan's active-series
+  allowance", Pro's 20,000.)*
 - A third stack (a customer environment): root-per-stack still scales, but the credential count (decision 4)
   does not; reopen it then.
 - Prod hosting is planned (the 2026-10-19 amendments): re-check decisions 8, 10, 11 and 15 against what has

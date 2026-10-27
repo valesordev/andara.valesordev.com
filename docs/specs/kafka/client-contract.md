@@ -115,7 +115,7 @@ A Partition `p` becomes degraded when either:
 2. **The probe finds it.** Once per probe interval (the producer's existing `ProbeInterval`, one second; the metadata request is bounded by it) the ingress
    reads topic metadata for `andara.commands.v1` and marks `p` degraded if its leader has been absent on **two consecutive probes**, or its
    in-sync replica count is below the topic's `min.insync.replicas`. The probe asks the broker the
-   configuration, once at boot and every 60 s, and does not hard-code 2. It does **not** `Ping` a broker to judge
+   configuration, once at boot and every 60 s (unless `kafka.min_insync_unsupported`, Constraints), and does not hard-code 2. It does **not** `Ping` a broker to judge
    a Partition: a reachable broker says nothing about a Partition. (It does send its metadata and configuration
    request to **every broker the metadata lists at once**, and the first answer wins, so one dark address in
    the metadata cannot cost the whole interval and degrade all 64 while the other brokers serve, which is the #129
@@ -209,6 +209,34 @@ contract pins and asserts it. The ingress never queries a broker config for this
   retired (ADR-0013), the value is read at boot and every 60 s, and an **absent value is a `warn`**, not a silent 1;
   AC 7 is scoped to Kafka. The implementation reads this today as 1 on every broker, silently; the change is a
   follow-up of `AW-SRV-052`, and this text is the target it is held to.
+  **How the server knows (ruled 2026-10-26, for `AW-SRV-064`):**
+  - **Configuration, set once at boot.** The bool key `kafka.min_insync_unsupported` (env
+    `ANDARA_KAFKA_MIN_INSYNC_UNSUPPORTED`, flag `--kafka-min-insync-unsupported`) defaults to `false`. The ingress
+    producer takes it as `ProducerOptions.MinInsyncUnsupported`.
+    - **Who sets it `true`:** the compose stack's server environment, and the integration suite when it runs against
+      the compose Redpanda. The suite reads `ANDARA_KAFKA_MIN_INSYNC_UNSUPPORTED`, and `make test-integration` sets
+      it when its broker is the compose one. Against the cluster's Kafka (`ADR-0013` amendment 23) it stays
+      `false`.
+    - **It isn't a chart value:** `deploy/helm/andara/keys.yaml` lists the env var under `ignore_env`, compose-only,
+      with no key row. Every cluster runs Kafka. That `ignore_env` entry is the §8 "Helm values schema" answer for
+      this key.
+  - **Why not the answer itself:** neither the absent value nor sniffing the vendor from `ApiVersions` or broker
+    configs is used. Either would let Redpanda's unspecified answer, not configuration, decide what the server does,
+    and a Kafka that dropped the property would then read as Redpanda.
+  - **With the key `true`:** the property isn't asked for, the probe uses 1, and the only line is one `info` per
+    process.
+  - **With it `false`:** an answer with no `min.insync.replicas` entry is a `warn` (`min.insync.replicas absent`,
+    with `topic` and `broker`). A failed read, whether an error or an authorization refusal, is a `warn`
+    (`min.insync.replicas read failed`, with `topic` and `detail`, passing through `kafkaclient.Config.Check`,
+    `AW-SRV-044`). In both cases the probe keeps the last value it read. Before any value has been read it uses 1,
+    so ISR-below-min isn't marked until a read succeeds.
+    - **Read cadence:** before the first success, the read is retried on each probe.
+    - **Warn cadence:** either `warn` is logged when the outcome changes (the first absent answer or failure, or a
+      change between the two), and at most once per 60 s while the condition persists. The first success after a
+      `warn` logs an `info` with the value read.
+  - **Removal:** the key goes away with compose (`ADR-0013`). Deleting it, together with its README row and its
+    `ignore_env` entry, is part of compose's retirement (`AW-INF-067`), with the server half as an implementation
+    story.
 - Entering and leaving log at `info` with `partition` and the cause (`produce_error` or `probe`, and the
   error name or `leader_absent` / `isr_below_min`).
 

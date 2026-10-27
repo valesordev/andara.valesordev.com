@@ -190,7 +190,8 @@ applied by `make platform-up`. They don't appear in Grafana Cloud's Fleet pages,
   collector that runs our own reviewed pipelines, so it isn't split. The Fleet endpoints come from `solo7dev`'s
   `terraform.tfvars` (`fleet_url`, `fleet_user`), as before.
 - **Pipeline safety** (decision 15's Consequence, narrowed): the Fleet apply token is still configuration execution
-  on `fleet`. `fleet`'s environment holds the token, so a pipeline could read it, and `make check` refuses
+  on `fleet`. `fleet`'s environment no longer holds the token (A6: its `GCLOUD_RW_API_KEY` is set empty), but
+  `make check` still refuses
   `sys.env` in a pipeline unless an entry in `deploy/terraform/grafana/pipelines/env-allow.txt` names that
   variable (empty today). Postgres's monitoring password will be the first entry, in its own story.
 
@@ -283,12 +284,13 @@ The bounds allow for label variants (`instance`). Per-topic series
 come to about 1,000 series, and no reader exists. The reporter's own `allowList` in `kafka.yaml` is unchanged, since
 it bounds the scrape, not the shipment.
 
-**Against the limit:** the Grafana Cloud free tier allows **10,000 active metric series** per stack (`[verify 065]`
-against `solo7dev`'s usage page, the record moves from `AW-INF-051` to `AW-INF-065`, its one owner). The shared
+**Against the limit:** `solo7dev` is on Grafana Cloud Pro, which includes **20,000 active metric series** and 50 GB
+of logs a month (A6; this said the free tier's 10,000 until `AW-INF-065` read the stack's plan). The record moves
+from `AW-INF-051` to `AW-INF-065`, its one owner. The shared
 services add at most 80. The chart side is the same set decision 15 planned, so the split moves no series.
 `AW-INF-065` records the total per `environment` beside the limit (with CI's share, `cluster="ci"`, stated apart; amendment A3), the record that `ADR-0012`'s revisit trigger
-("`solo7dev` exceeds the free tier's active-series limit twice in a month") measures. Logs: shipping the brokers' pod logs is new volume against the free tier's log allowance, and
-`AW-INF-065` records the first week's ingest.
+("`solo7dev` exceeds its plan's active-series allowance twice in a month", A6) measures. Logs: shipping the brokers' pod logs is new volume against the plan's log allowance, and
+`AW-INF-066` records the first week's ingest after `dev`'s server ships logs (carried from `AW-INF-065` at its §8, A6).
 
 ### 7. CI's `andara-ci`
 
@@ -389,7 +391,7 @@ deployed (§1).
 
 | Story | What changes | New story? |
 |---|---|---|
-| `AW-INF-065` (draft) | **Gains:** the chart's features and the four collectors (§2), the autodiscovery remap and include-lists (§1), the receiver's fixed Service and ports, the OTLP-log drop filter, `environments.yaml` and `keep-list.yaml` with their rendered rules, the keep-list and parity tests moved from `AW-INF-051`, `KEEP_PIPELINE`, the log stream-label allow-list (also from `AW-INF-051`: `environment`, `namespace`, `cluster`, `job`, `container`), the active-series and log records (from `AW-INF-051`), AC-2 (`environment` on a series) and AC-4 (`unknown` outside the table) moved from `AW-INF-051`, and `AW-INF-009`'s inherited line (the two kube-state-metrics series kept, now by the chart). **Changes:** AC-3 ("each collector registers") becomes "only `fleet` registers"; AC-7's "reachable by the exporters" becomes the include-lists; the Secret `grafana-telemetry` holds the token under one key and the endpoint usernames, which aren't secret, under one key each (`prom`, `loki`, `tempo`, `fleet`; the chart's `usernameKey` defaults to `username` and must be set per destination and on `fleet`'s `remoteConfig` (`usernameKey: fleet`); every reader takes the token as `passwordKey: token`); node-exporter is not installed; the bare-collector `[verify]` is dropped. It **stays blocked by `AW-INF-051`**, because `[verify 065]` item 1 and §5's `owner: fleet` test need `shared_kafka`. Its `[verify]` items are the ones below. Likely `L`. | PM's call: a split such as **065a** (install, Secret, `fleet` registration, the receiver) and **065b** (stamp, guard, keep-list and their tests) |
+| `AW-INF-065` (draft) | **Gains:** the chart's features and the four collectors (§2), the autodiscovery remap and include-lists (§1), the receiver's fixed Service and ports, the OTLP-log drop filter, `environments.yaml` and `keep-list.yaml` with their rendered rules, the keep-list and parity tests moved from `AW-INF-051`, `KEEP_PIPELINE`, the log stream-label allow-list (also from `AW-INF-051`: `environment`, `namespace`, `cluster`, `job`, `container`), the active-series and log records (from `AW-INF-051`), AC-2 (`environment` on a series) and AC-4 (`unknown` outside the table) moved from `AW-INF-051`, and `AW-INF-009`'s inherited line (the two kube-state-metrics series kept, now by the chart). **Changes:** AC-3 ("each collector registers") becomes "only `fleet` registers"; AC-7's "reachable by the exporters" becomes the include-lists; the Secret `grafana-telemetry` holds the token under one key and the endpoint usernames, which aren't secret, under one key each (`prom`, `loki`, `tempo`, `fleet`; the chart's `usernameKey` defaults to `username` and must be set per destination and on `fleet`'s `remoteConfig` (`usernameKey: fleet`); every reader takes the token as `passwordKey: token`, except `solo7dev-traces`, which reads it through `passwordFrom` with a placeholder when it is empty, A6); node-exporter is not installed; the bare-collector `[verify]` is dropped. It **stays blocked by `AW-INF-051`**, because `[verify 065]` item 1 and §5's `owner: fleet` test need `shared_kafka`. Its `[verify]` items are the ones below. Likely `L`. | PM's call: a split such as **065a** (install, Secret, `fleet` registration, the receiver) and **065b** (stamp, guard, keep-list and their tests) |
 | `AW-INF-051` (ready) | Shrinks to the Fleet plumbing (provider, tokens, `tf.py`, the `pipelines/` safety checks without `replace()`) plus `shared_kafka`, and its series spelling `[verify 051]` (resolved, A5). Loses `scrape`, `stamp`, `keep`, `logs`, `traces` and `export`, its keep-list and `replace()` tests, ACs 2, 4 and 10, the active-series record, and the inherited `AW-INF-009` line, all of which move to `AW-INF-065`. Its Observability line "broker … series are **not shipped**" reverses: `shared_kafka` ships §6's set. Probably `S`. | no |
 | `AW-INF-047` (ready) | The rules are unchanged except `AndaraServerUnavailable`'s guard (§9: `namespace!="andara-shared"`; *amended 2026-10-21 (A3):* also `cluster!="ci"`). "keeps the `environment` it arrived with: `unknown` once `AW-INF-051`'s `stamp` runs" now reads "once `AW-INF-065`'s destinations stamp", and its blocked-by link moves from `AW-INF-051` to `AW-INF-065`. | no |
 | `AW-INF-049` (ready) | No contract change. Its live data already waits on `AW-INF-065`. | no |
@@ -455,8 +457,8 @@ deployed (§1).
   Option A for that service.
 - The chart's collection drifts from the repo twice (a hand `helm upgrade` found after the fact): add a scheduled
   `helm diff` against the values, or move the chart's collection into Fleet after all.
-- `solo7dev` exceeds the free tier's active-series limit (`ADR-0012`'s trigger, unchanged), or the brokers' logs
-  exceed the free tier's log allowance in a month: cut the shared services' logs to `warn` and above first.
+- `solo7dev` exceeds its plan's active-series allowance (`ADR-0012`'s trigger, reworded by A6), or the brokers' logs
+  exceed the plan's log allowance in a month: cut the shared services' logs to `warn` and above first.
 - The first alert on a shared-service series: reopen `ADR-0012` decision 9 for its environment value (`ADR-0013`
   amendment 15).
 - CI's `local` series mask or trip a box `local` alert in practice (A3): give CI an environment of its own, by an
@@ -538,3 +540,43 @@ the live systems. Both are corrected in place above, so the ADR names what is ap
 **Ripple (A5):** `AW-INF-051`'s body; `AW-INF-065` (AC-7, AC-9, its scope and out-of-scope lines, and the
 keep-list names); `AW-INF-070` (step 4's pipeline); `AW-INF-039`, whose rule reads the ISR shrink rate by the
 `persec_total` name when it is written; `ADR-0012` decision 1's annotation. `AW-INF-078` names neither.
+
+**2026-10-26, `AW-INF-065`'s build and §8.** SRE found five facts while building the collectors, four on
+the live systems and one (the plan) from the owner. They are decided here, and §3, §6, §10 and Revisit-when are corrected in place.
+
+- **A6. What the first install found.**
+  - **Grafana's default Fleet pipelines bypass the destinations.** `solo7dev` holds pipelines that Grafana made,
+    which Terraform doesn't manage. Two of them match `fleet`: `self-monitoring-metrics`
+    (`collector.os=~".*"`) and `self-monitoring-logs-kubernetes` (`platform="kubernetes"`). Both write straight to
+    the stack with `sys.env("GCLOUD_RW_API_KEY")`, and the chart wires that variable to the Secret's `token` on any
+    remote-config collector. For about 8 minutes on 2026-10-25, 44 `alloy_*` names reached `solo7dev` with no stamp
+    or keep rule. **The rule:** `fleet`'s `GCLOUD_RW_API_KEY` is set to `""` (`values-box.yaml`), so no pipeline
+    can authenticate from the environment. This retires §3's "`fleet`'s environment holds the token". **And:**
+    Grafana's default pipelines are disabled as code in each stack's root, so `fleet` stops sending a 401 every
+    interval. That needs Terraform to adopt resources Grafana created, so it is its own `lane: sre` story (`solo7`'s
+    half is `AW-INF-078`'s). Until then the 401s are harmless: they carry no token, and `{__name__=~"alloy_.+"}`
+    in `solo7dev` returns nothing (`AW-INF-065` §8).
+  - **Traces read the token through `passwordFrom`.** Alloy's `otelcol.auth.basic` refuses an empty password. So
+    with the token unset (`ADR-0012` decision 14; §7's run without the token), a fresh `receiver` never loads and is never Ready.
+    `solo7dev-traces` reads the Secret's `token` through `passwordFrom`, as
+    `coalesce(convert.nonsensitive(…data["token"]), "unset")`. With no token, traces send the placeholder and get a
+    401, like the other destinations' empty password. The token still comes from the one Secret key, and Alloy's
+    API shows it as `(secret)`. `prometheus` and `loki` basic auth accept an empty password and keep
+    `passwordKey: token`.
+  - **Traces use gRPC to `<tempo host>:443`.** The chart refuses HTTP for Grafana Cloud Traces, so the host is
+    taken from `solo7dev`'s `tempo_url`.
+  - **Loki adds `service_name` at ingest.** Streams in `solo7dev` carry a sixth label, which Grafana Cloud's
+    service-name discovery adds after the collector's `label_keep`. It is bounded by container names. The
+    stream-label allow-list (§10's `AW-INF-065` row; `label_keep` in `deploy/platform/collectors/values.yaml`) is the collector's, and it holds there. Runbook selectors still may not name
+    `service_name`, because it isn't ours and its value isn't contracted.
+  - **The plan is Pro, not the free tier.** `solo7dev` is on Grafana Cloud Pro, on the owner's employee account,
+    so overages aren't billed today. It includes 20,000 active series and 50 GB each of logs and traces, shared
+    with the account's other products (the owner, 2026-10-26; `docs/runbooks/grafana-credentials.md`). The owner's
+    rule is not to go far past the allowance. §6 and Revisit-when now read "the plan's allowance", and so do
+    `ADR-0012`'s retention note and its revisit trigger (annotated). The first measured count was 41 active series,
+    0.2%.
+
+**Ripple (A6):** `AW-INF-065`'s Definition of done (Pro's allowance, not the free tier's 10,000) and AC-3 (a
+replaced `fleet` pod's leftover registration isn't counted); `ADR-0012`'s retention note and its revisit trigger;
+PM, for the default-pipelines story; `AW-INF-078`, for `solo7`'s default pipelines and `fleet` setting;
+`AW-INF-066`, which takes `AW-INF-065`'s first-week log record (§6).

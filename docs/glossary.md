@@ -383,6 +383,9 @@ acting (decided 2026-09-07; AW-SRV-008). On an Admin call it is the per-call gRP
 refusals; `andara-cli content publish|approve|activate|rollback --as <account_id>` sends it
 (`AW-SRV-039`). A target that holds `operator` can be acted as only by an Operator: Roles are a set, so
 `game_master` does not imply it, and acting as an Account takes that Account's Roles (decided 2026-10-09).
+This rule is **the Ceiling** (shipped by `AW-SRV-062`). When a Session opens or an Admin call is made, its refusal is
+`PERMISSION_DENIED`, identical on the wire to the unknown-target refusal, so it doesn't reveal which Accounts are
+Operators. When a token's `act` claim is re-verified, both come back `UNAUTHENTICATED`, still identical.
 
 **Audit Record** — One record on `andara.audit.v1` per privileged action: actor, acting-as, action,
 target, outcome, Session ID, trace ID, timestamp. Written for every Admin RPC, every `authorize`
