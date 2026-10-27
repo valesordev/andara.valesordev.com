@@ -198,12 +198,24 @@ class States(Base):
                 self.assertEqual((s.state, s.raw), ("normal", "—"), name)
 
     def test_none_is_accepted_only_when_the_rule_exists(self):
-        self.fake(rules=fixture("alert_rules_list_paused.json"))
-        self.grafana().confirm_exists()
+        self.fake(rules=live(fixture("alert_rules_list_paused.json")))
+        with mock.patch.object(rule_backend, "now_utc", lambda: NOW):
+            self.grafana().confirm_exists()
         self.ruler().confirm_exists()
         self.fake(rules=fixture("alert_rules_list_empty.json"))
-        with self.assertRaisesRegex(rule_backend.Inconclusive, "not defined in grafana solo7dev, so an empty read proves nothing"):
+        with self.assertRaisesRegex(rule_backend.Inconclusive,
+                                    "not live in grafana solo7dev \\(not defined\\), so an empty read proves nothing"):
             self.grafana().confirm_exists()
+
+    def test_a_rule_paused_or_stale_by_the_end_is_not_accepted(self):
+        """A Grafana-managed rule paused mid-run drops its instances: that empty read is not "normal"."""
+        for doc, why in ((fixture("alert_rules_list_paused.json"), "paused"),
+                         (live(fixture("alert_rules_list_paused.json"), health="error"), "health 'error'"),
+                         (live(fixture("alert_rules_list_paused.json"), lastEvaluation="2026-10-27T14:50:00Z"), "lastEvaluation \\S+ is 600s old")):
+            self.fake(rules=doc)
+            with mock.patch.object(rule_backend, "now_utc", lambda: NOW):
+                with self.assertRaisesRegex(rule_backend.Inconclusive, "not live in grafana solo7dev \\(%s" % why):
+                    self.grafana().confirm_exists()
         for fetch in (lambda env: None, lambda env: ruler_yaml("Other")):
             with self.assertRaisesRegex(rule_backend.Inconclusive, "not defined in ruler solo7"):
                 self.ruler(fetch).confirm_exists()

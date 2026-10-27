@@ -149,9 +149,14 @@ class Backend:
         return gcx.metrics_query(self.stack, expr, env=self.env)
 
     def confirm_exists(self):
-        """Before any "none" is accepted: the rule exists in this backend, or an empty read proves nothing."""
+        """Before any "none" is accepted: the rule is still live in this backend, or an empty read proves nothing.
+        A Grafana-managed rule paused (or stale, or unhealthy) since selection has dropped its instances, so it is
+        held to select()'s live check, not to being defined."""
         if self.kind == GRAFANA:
-            exists = gcx.rule_defined(self.stack, self.group, self.rule, env=self.env) is not None
+            why = gcx.rule_check(gcx.rule_defined(self.stack, self.group, self.rule, env=self.env), now_utc())
+            if why:
+                raise Inconclusive("%s is not live in %s (%s), so an empty read proves nothing" % (self.rule, self, why))
+            return
         else:
             try:
                 exists = ruler_read.rule_loaded(self.fetch(self.ruler_env), self.rule)

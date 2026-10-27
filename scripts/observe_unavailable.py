@@ -17,7 +17,8 @@ Takes andara-<env>'s server away for real and watches, through gcx (scripts/gcx.
      environment and namespace, to DEADLINE (default 300 s) + the rule's `for` + ALERT_SETTLE.
   3. Scales it back to 1 whatever happened and waits for andara-0 to be Ready (`drill: server-restored`).
   4. Polls until the expr no longer names the namespace and the rule is normal, to DEADLINE + ALERT_SETTLE.
-     `drill: end`.
+     `drill: end`. Then confirms the rule is still live in the backend (AC-5): an empty read from a rule deleted
+     or paused mid-drill is inconclusive, exit 1, not a clear.
 
 Each poll prints `record <time> <rule> <state> (gcx: <raw>) expr: <namespaces>`, and the drill passes on that
 record alone: the rule fired, then cleared, and no other environment or namespace moved, in the expr's result
@@ -241,14 +242,14 @@ def main_for(env):
     problems = drill(b, ns, deadline, lambda: read(b, expr),
                      lambda: kubectl("-n", ns, "scale", "statefulset", "andara", "--replicas=0"),
                      lambda: restore(ns, deadline))
-    # An empty final read is "normal" only while the rule exists: a rule deleted mid-drill clears nothing.
+    for p in problems:
+        say("FAIL %s" % p)
+    # An empty final read is "normal" only while the rule is live: a rule deleted or paused mid-drill clears nothing.
     try:
         b.confirm_exists()
     except rule_backend.Inconclusive as e:
         say("FAIL inconclusive: %s" % e)
         sys.exit(1)
-    for p in problems:
-        say("FAIL %s" % p)
     if problems:
         sys.exit(1)
     say("ok — %s fired for %s and cleared, following its server down and back, and nothing else moved" % (RULE, ns))

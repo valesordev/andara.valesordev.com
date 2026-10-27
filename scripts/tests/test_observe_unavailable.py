@@ -150,24 +150,33 @@ class Drill(unittest.TestCase):
         self.assertEqual([k[:2] for k in self.kubectl], [("-n", "andara-dev"), ("restore", "andara-dev")])
         self.assertRegex(out.getvalue(), r"drill: end \S+ \(aborted: gcx: solo7dev metrics query: timed out")
 
-    def test_a_rule_deleted_after_firing_is_inconclusive_not_cleared(self):
-        """AC-5: the final empty read is "normal" only once the rule is confirmed to exist (PR #664, Codex)."""
-        class Vanishing(Sequenced):
-            def __call__(self, context, *args, **kw):
-                if args[:3] == ("alert", "rules", "list") and self.n > 4:
-                    return fixture("alert_rules_list_empty.json")
-                return super().__call__(context, *args, **kw)
+    def test_a_rule_deleted_or_paused_after_firing_is_inconclusive_not_cleared(self):
+        """AC-5: the final empty read is "normal" only while the rule is still live (PR #664, Codex)."""
+        paused = copy.deepcopy(live_server_rules())
+        for r in paused[0]["rules"]:
+            r["isPaused"] = True
+        for later, why in ((fixture("alert_rules_list_empty.json"), "not defined"), (paused, "paused")):
+            class Vanishing(Sequenced):
+                def __call__(self, context, *args, **kw):
+                    if args[:3] == ("alert", "rules", "list") and self.n > 4:
+                        return later
+                    return super().__call__(context, *args, **kw)
 
-        polls = FIRE_AND_CLEAR[:5] + [(EMPTY, instances(None))]   # cleared: dev has no instance at all
-        out = io.StringIO()
-        self.gcx = Vanishing(live_server_rules(), polls)
-        with mock.patch.object(gcx, "run", self.gcx), mock.patch.object(gcx, "write_config", lambda e=None: []), \
-                mock.patch.object(rule_backend.ruler_read, "fetch", lambda e: None), \
-                mock.patch.dict(os.environ, CREDS, clear=True), contextlib.redirect_stdout(out):
-            with self.assertRaises(SystemExit) as e:
-                ou.main_for("dev")
-        self.assertEqual(e.exception.code, 1, out.getvalue())
-        self.assertIn("inconclusive: AndaraServerUnavailable is not defined in grafana solo7dev", out.getvalue())
+            moved = instances(None)
+            [i for i in moved if i["labels"]["environment"] == "staging"][0]["state"] = "Alerting"
+            polls = FIRE_AND_CLEAR[:5] + [(EMPTY, moved)]   # cleared: dev has no instance; staging moved too
+            out = io.StringIO()
+            self.gcx = Vanishing(live_server_rules(), polls)
+            with mock.patch.object(gcx, "run", self.gcx), mock.patch.object(gcx, "write_config", lambda e=None: []), \
+                    mock.patch.object(rule_backend.ruler_read, "fetch", lambda e: None), \
+                    mock.patch.dict(os.environ, CREDS, clear=True), contextlib.redirect_stdout(out):
+                with self.assertRaises(SystemExit) as e:
+                    ou.main_for("dev")
+            text = out.getvalue()
+            self.assertEqual(e.exception.code, 1, text)
+            self.assertIn("inconclusive: AndaraServerUnavailable is not live in grafana solo7dev (%s" % why, text)
+            # The record's own findings still print, before the inconclusive line.
+            self.assertLess(text.index("another environment or namespace moved"), text.index("FAIL inconclusive"))
 
     def test_normal_while_the_expr_still_names_dev_has_not_cleared(self):
         code, out, _ = self.main(live_server_rules(), FIRE_AND_CLEAR[:5] + [(NAMES_DEV, instances("Normal"))])
