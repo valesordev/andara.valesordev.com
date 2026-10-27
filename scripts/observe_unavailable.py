@@ -241,6 +241,12 @@ def main_for(env):
     problems = drill(b, ns, deadline, lambda: read(b, expr),
                      lambda: kubectl("-n", ns, "scale", "statefulset", "andara", "--replicas=0"),
                      lambda: restore(ns, deadline))
+    # An empty final read is "normal" only while the rule exists: a rule deleted mid-drill clears nothing.
+    try:
+        b.confirm_exists()
+    except rule_backend.Inconclusive as e:
+        say("FAIL inconclusive: %s" % e)
+        sys.exit(1)
     for p in problems:
         say("FAIL %s" % p)
     if problems:
