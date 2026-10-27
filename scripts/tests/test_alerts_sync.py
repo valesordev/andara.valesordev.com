@@ -70,7 +70,25 @@ def serve():
     return srv
 
 
+def unmarked():
+    """The chart's rule file without its `# env:` markers: what the ruler mechanics below run on, since
+    sync refuses the marked file itself (AW-INF-047). Written once, removed at exit."""
+    with open(alerts_sync.ALERTS) as f:
+        text = alerts_sync.ENV_MARKER.sub("", f.read())
+    fd, path = tempfile.mkstemp(suffix=".yaml", prefix="alerts-unmarked-")
+    with os.fdopen(fd, "w") as f:
+        f.write(text)
+    __import__("atexit").register(os.unlink, path)
+    return path
+
+
+UNMARKED = unmarked()
+
+
 def script(cmd, env=None, rules=None):
+    # A sync always gets the unmarked copy; a diff does unless the test names its file in ALERTS_FILE.
+    if rules is None and (cmd == "sync" or "ALERTS_FILE" not in (env or {})):
+        rules = UNMARKED
     full = dict(os.environ, PATH="/usr/bin:/bin")
     for k in alerts_sync.SECRETS:
         full.pop(k, None)
@@ -78,6 +96,65 @@ def script(cmd, env=None, rules=None):
     code = "import sys; sys.path.insert(0, %r); import alerts_sync; sys.exit(alerts_sync.run(%r%s))" % (
         os.path.join(REPO, "scripts"), cmd, ", rules_file=%r" % rules if rules else "")
     return subprocess.run([sys.executable, "-c", code], capture_output=True, text=True, env=full)
+
+
+class Frozen(unittest.TestCase):
+    """AW-INF-047 AC-8: the ruler is frozen. No workflow syncs it, and sync refuses the marked file
+    before any credential or network call (ADR-0012 decision 7, amendment of 2026-10-19)."""
+
+    def test_no_workflow_syncs_or_diffs_the_ruler(self):
+        self.assertFalse(os.path.exists(os.path.join(REPO, ".github", "workflows", "alerts.yaml")))
+        workflows = os.path.join(REPO, ".github", "workflows")
+        for name in os.listdir(workflows):
+            with open(os.path.join(workflows, name)) as f:
+                text = f.read()
+            for call in ("alerts-sync", "alerts-diff", "alerts_sync.py"):
+                self.assertNotIn(call, text, "%s calls %s" % (name, call))
+
+    def test_the_chart_file_is_marked(self):
+        self.assertEqual(sorted(set(alerts_sync.env_markers(alerts_sync.ALERTS))), ["dev", "prod"])
+
+    def test_sync_of_the_marked_file_exits_1_naming_the_marker_with_no_keys(self):
+        r = script("sync", {}, rules=alerts_sync.ALERTS)
+        self.assertEqual(r.returncode, 1, r.stderr)
+        self.assertIn("`# env:` markers (dev, prod)", r.stderr)
+        self.assertNotIn("unset", r.stderr)
+
+    def test_the_default_file_is_refused_too(self):
+        code = "import sys; sys.path.insert(0, %r); import alerts_sync; sys.exit(alerts_sync.run('sync', env={}))" % (
+            os.path.join(REPO, "scripts"))
+        r = subprocess.run([sys.executable, "-c", code], capture_output=True, text=True)
+        self.assertEqual(r.returncode, 1, r.stderr)
+        self.assertIn("`# env:` markers", r.stderr)
+
+    @unittest.skipUnless(os.access(TOOL, os.X_OK), "bin/mimirtool absent; run `make bootstrap`")
+    def test_sync_of_the_marked_file_never_reaches_the_ruler_even_with_keys(self):
+        srv = serve()
+        self.addCleanup(srv.server_close)
+        self.addCleanup(srv.shutdown)
+        env = {"MIMIR_ADDRESS": "http://127.0.0.1:%d" % srv.server_address[1], "MIMIR_TENANT_ID": "t1",
+               "MIMIR_API_KEY": "read-key", "MIMIR_API_KEY_WRITE": "write-key"}
+        r = script("sync", env, rules=alerts_sync.ALERTS)
+        self.assertEqual(r.returncode, 1, r.stderr)
+        self.assertEqual(Ruler.calls, [])
+
+    def test_a_marker_mid_line_or_in_a_name_is_not_one(self):
+        with tempfile.NamedTemporaryFile("w", suffix=".yaml", delete=False) as f:
+            f.write("groups:\n- name: g  # env:dev is a comment here\n  rules: []\n")
+        self.addCleanup(os.unlink, f.name)
+        self.assertEqual(alerts_sync.env_markers(f.name), [])
+
+    @unittest.skipUnless(os.access(TOOL, os.X_OK), "bin/mimirtool absent; run `make bootstrap`")
+    def test_diff_still_reads_a_marked_file(self):
+        srv = serve()
+        self.addCleanup(srv.server_close)
+        self.addCleanup(srv.shutdown)
+        env = {"MIMIR_ADDRESS": "http://127.0.0.1:%d" % srv.server_address[1], "MIMIR_TENANT_ID": "t1",
+               "MIMIR_API_KEY": "read-key"}
+        r = script("diff", env, rules=alerts_sync.ALERTS)
+        self.assertEqual(r.returncode, 1, r.stderr)
+        self.assertIn("differs from files/alerts.yaml", r.stderr)
+        self.assertTrue(Ruler.calls)
 
 
 class Secrets(unittest.TestCase):
@@ -146,7 +223,7 @@ class Guards(unittest.TestCase):
         import io
         err, out = io.StringIO(), io.StringIO()
         with contextlib.redirect_stderr(err), contextlib.redirect_stdout(out):
-            rc = alerts_sync.run(cmd, env=self.ENV, find_tool=find_tool)
+            rc = alerts_sync.run(cmd, rules_file=UNMARKED, env=self.ENV, find_tool=find_tool)
         return rc, out.getvalue(), err.getvalue()
 
     def test_a_tool_that_exits_0_without_a_summary_is_a_failure(self):
@@ -290,7 +367,7 @@ class AgainstARuler(unittest.TestCase):
         os.chmod(tool, 0o755)
         import contextlib, io
         with contextlib.redirect_stdout(io.StringIO()):
-            rc = alerts_sync.run("sync", env=dict(self.env), find_tool=lambda: tool)
+            rc = alerts_sync.run("sync", rules_file=UNMARKED, env=dict(self.env), find_tool=lambda: tool)
         self.assertEqual(rc, 0)
         seen = open(dump).read()
         self.assertIn("MIMIR_API_KEY=read-key", seen)
@@ -361,7 +438,7 @@ class AgainstARuler(unittest.TestCase):
 
     def test_alerts_file_names_the_file_that_is_read(self):
         script("sync", self.env)
-        with open(alerts_sync.ALERTS) as f:
+        with open(UNMARKED) as f:
             doc = yaml.safe_load(f)
         doc["groups"][0]["rules"][0]["for"] = "7m"
         with tempfile.NamedTemporaryFile("w", suffix=".yaml", delete=False) as f:
@@ -388,7 +465,7 @@ class AgainstARuler(unittest.TestCase):
 
     def test_an_edited_rule_names_its_group_and_exits_1(self):
         script("sync", self.env)
-        with open(alerts_sync.ALERTS) as f:
+        with open(UNMARKED) as f:
             doc = yaml.safe_load(f)
         doc["groups"][0]["rules"][0]["for"] = "7m"
         edited = doc["groups"][0]["name"]

@@ -25,8 +25,10 @@ anything other than a 5xx.
 ```
 
 Per environment, `sum by (namespace)` after lifting the namespace out of the router name
-(`<namespace>-<ingress>-…`), because on the cluster Traefik's series carry `namespace="traefik"` —
-the form `files/alerts.yaml` evaluates (`AW-INF-008`). The SLO is each environment's own.
+(`<namespace>-<ingress>-…`), because on the cluster Traefik's series carry `namespace="traefik"`
+(`AW-INF-008`). The SLO is each environment's own. The alert, `IngressErrorRateHigh` in
+`files/alerts.yaml`, also derives `environment` from that namespace by ADR-0012 decision 9's table, and
+sums `by (environment, namespace)` (`AW-INF-047`).
 
 What it counts: Connect and gRPC-Web requests, and every request Traefik refused to forward — no
 ready endpoint (`503`), backend TLS verification failed or the dial timed out (`502`, `504`).

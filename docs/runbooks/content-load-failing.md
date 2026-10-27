@@ -5,7 +5,7 @@ SPDX-License-Identifier: CC-BY-SA-4.0
 
 # ContentLoadFailing
 
-**Alert:** `max by (namespace, pack) (andara_content_pending_seconds) > 300` for 5 m. A pack's Active Pointer
+**Alert:** `max by (environment, namespace, pack) (andara_content_pending_seconds) > 300` for 5 m. A pack's Active Pointer
 has named a version for more than five minutes that the World is not serving, and nothing the
 Builder did explains it. **Severity:** ticket. **SLO:** `docs/specs/slo/content-freshness.md`.
 **Ships with:** `AW-SRV-012`.

@@ -417,6 +417,24 @@ def test_alert_rules():
         if p.returncode:
             fail("promtool %s %s:\n%s" % (" ".join(args[:2]), os.path.relpath(args[2], REPO),
                                            (p.stdout + p.stderr).strip()))
+    for name in rules_without_labelled_case():
+        fail("%s: no case in %s expects an alert of %s carrying both environment and namespace "
+             "(ADR-0012 decision 1, AW-INF-047)" % (os.path.relpath(ALERTS, REPO),
+                                                     os.path.relpath(ALERTS_TEST, REPO), name))
+
+
+def rules_without_labelled_case(alerts=ALERTS, alerts_test=ALERTS_TEST):
+    """Every rule in the file has a promtool case whose expected alert carries `environment` and
+    `namespace`: the label set is each alert's identity and routing key, so a rule added later
+    without one fails here rather than paging with neither."""
+    with open(alerts) as f:
+        names = [r["alert"] for g in yaml.safe_load(f)["groups"] for r in g["rules"]]
+    with open(alerts_test) as f:
+        tests = yaml.safe_load(f)["tests"]
+    covered = {c["alertname"] for t in tests for c in t.get("alert_rule_test") or []
+               if any({"environment", "namespace"} <= set(a.get("exp_labels") or {})
+                      for a in c.get("exp_alerts") or [])}
+    return [n for n in names if n not in covered]
 
 
 def test_degraded_hold_floor():

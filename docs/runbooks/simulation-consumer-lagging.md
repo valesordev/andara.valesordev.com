@@ -1,6 +1,6 @@
 # SimulationConsumerLagging
 
-**Alert:** `max by (namespace) (andara_consumer_lag) > 400` for 2 m (`files/alerts.yaml`).
+**Alert:** `max by (environment, namespace) (andara_consumer_lag) > 400` for 2 m (`files/alerts.yaml`).
 **Severity:** page. **SLO:** `docs/specs/slo/kafka-availability.md`, which is also where the 400 comes from.
 **Ships with:** `AW-INF-039`.
 

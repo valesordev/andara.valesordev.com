@@ -91,7 +91,7 @@ that the first live ticks after a restart read under the threshold.
 
 ## Alert
 
-**`SimulationConsumerLagging`**: `max by (namespace) (andara_consumer_lag) > 400` for 2 m. Severity
+**`SimulationConsumerLagging`**: `max by (environment, namespace) (andara_consumer_lag) > 400` for 2 m. Severity
 `page`, `slo: kafka-availability`. It is never per Partition: the `max` pages the environment once.
 
 Runbook: `docs/runbooks/simulation-consumer-lagging.md`.

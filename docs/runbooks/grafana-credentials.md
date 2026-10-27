@@ -304,25 +304,24 @@ and that story also deletes its line here. A retiring name that nothing uses any
     name it until it is set.
   - Read by `make env-recover` and `make observe-unavailable` (through `scripts/grafana_http.py`), and by
     `alerts_sync.py` as a fallback key.
-- `ANDARA_ALERTS_CI_READ`: removed by `AW-INF-077`.
-  - Access policy `andara-alerts-ci-read` (`rules:read alerts:read`).
-  - A repository secret.
-  - Read by the `alerts` workflow's diff, and by its sync to plan.
-- `ANDARA_RULES_CI_WRITE`: removed by `AW-INF-077`.
-  - Access policy `andara-rules-ci-write` (`rules:write`).
-  - A secret of `andara-main`.
-  - Read by the `alerts` workflow's sync on `main`.
 
-Click path for all three: `grafana.com` → My Account → Security → Access Policies, on the `solo7` stack's
-realm.
+Click path: `grafana.com` → My Account → Security → Access Policies, on the `solo7` stack's realm. It has
+no `credentials.yaml` entry, and its expiry is not known, so nothing warns before it stops working.
 
-None of the three has a `credentials.yaml` entry, so nothing warns before one stops working:
-- The two `ANDARA_*` tokens were made without an expiry, before the 90-day rule.
-- `GRAFANA_CLOUD_READ_TOKEN`'s expiry is not known.
+## Unused, still to delete by hand
 
-On 2026-10-19 the `alerts` sync on `main` got `401 invalid token` with `ANDARA_ALERTS_CI_READ`. If the
-ruler path still needs one of them before `AW-INF-077`, re-make it with an expiry (as above) and add its
-entry.
+`AW-INF-047` deleted the `alerts` workflow, the last reader of these two. Nothing in this repo reads them,
+but each still exists on GitHub and as a `grafana.com` access policy until it is deleted by hand:
+- `ANDARA_RULES_CI_WRITE`, a secret of the `andara-main` environment (access policy `andara-rules-ci-write`,
+  `rules:write`). A re-run of an old `alerts` run could still read it and write the frozen ruler, so Brian
+  deletes it at `AW-INF-070`'s step 4(ii-a), before the ruler namespace; `make alerts-delete` refuses while
+  `gh secret list --env andara-main` lists it.
+- `ANDARA_ALERTS_CI_READ`, a repository secret (access policy `andara-alerts-ci-read`,
+  `rules:read alerts:read`). It has answered `401 invalid token` since 2026-10-19 and is not rotated
+  (Brian, 2026-10-25: the rules are Grafana-managed only). Deleted with the ruler path in `AW-INF-077`.
+
+Click path for both policies: `grafana.com` → My Account → Security → Access Policies, on the `solo7`
+stack's realm. Both were made without an expiry, before the 90-day rule.
 
 ## On the stacks, and not this repo's
 

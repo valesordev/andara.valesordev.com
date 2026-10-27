@@ -1,19 +1,28 @@
 # Prometheus alerting rules for the andara-server workload (AW-INF-003).
 #
 # Symptom-based, tied to docs/specs/slo/world-write-availability.md. Each alert names its
-# runbook; a rule without one is an incomplete story (CLAUDE.md §7). Mounted by the
-# compose Prometheus and shipped as a ConfigMap by the chart, so one file is evaluated in
-# both places.
+# runbook; a rule without one is an incomplete story (CLAUDE.md §7). This file is the source
+# of the Grafana-managed rules in every Grafana Cloud stack (ADR-0012 decision 1, AW-INF-047):
+# deploy/terraform/grafana/modules/stack/rules.tf reads it and renders one rule group per
+# `groups[]` entry. The chart also ships it as a ConfigMap.
 #
-# One tenant, several environments (AW-INF-008). On the cluster `dev` and `prod` are two
-# namespaces whose series land in the same Grafana Cloud tenant, so every alert has to
-# carry the namespace it is about — a `dev` outage pages as `dev`, and never needs `prod`
-# to be down too before it fires. Rules that compare one series with itself already do;
-# every aggregation is `by (namespace)`; and a series whose own `namespace` is not the
-# Andara one (Traefik's, cert-manager's) has it rewritten to the one it describes. The
-# compose stack has no `namespace` label at all: `by (namespace)` over it is one group with
-# no namespace, which is the behavior these rules had before. deploy/helm/tests/
-# alerts_test.yaml proves both shapes under `promtool test rules` in `make helm-test`.
+# Several environments per stack (AW-INF-008, ADR-0012 decisions 1 and 9). `solo7dev` holds
+# `local`, `dev` and `staging`, told apart by the `environment` label the collectors stamp,
+# with `namespace` as the source within one. So every alert carries both labels it is about:
+# a `dev` outage pages as `dev`, and never needs another environment to be down too before it
+# fires. Rules that compare one series with itself already do; every aggregation is
+# `by (environment, namespace)` and every join `on (environment, namespace)`; and a series
+# whose own `namespace` is not the Andara one (Traefik's, cert-manager's) has both rewritten
+# to the ones it describes, from decision 9's table. A series with no `namespace` (the
+# retired compose stack's shape) aggregates to one group with neither label.
+# deploy/helm/tests/alerts_test.yaml proves both shapes under `promtool test rules` in
+# `make helm-test`.
+#
+# A line ending `# env:<environment>` is an absence line that only a stack requiring that
+# environment evaluates (ADR-0012 decision 12): the renderer drops it for every other stack,
+# so each one is an independent `or` operand after a never-true `vector(0) < 0`. Prometheus
+# reads the marker as a comment. `scripts/alerts_sync.py sync` refuses a file that has one: the
+# legacy ruler is frozen at AW-INF-047 (ADR-0012 decision 7, amendment of 2026-10-19).
 groups:
   - name: andara-server
     rules:
@@ -28,18 +37,27 @@ groups:
         # the target list and its `up` goes stale. `up == 0` there is the rarer case, a
         # Ready pod whose /metrics the scraper cannot reach. absent() of the whole job
         # would need every environment gone before it fired; so one absent() per
-        # environment that must exist, each carrying its namespace. `andara-local` is not
-        # in the list on purpose: it is a developer install, not an environment that must
-        # be up. The absent() lines are guarded by the presence of any namespaced series:
-        # compose has none, and there `absent(...andara-prod...)` would be true forever.
-        # Compose is the reverse of the cluster — its scrape target is static, so a
-        # stopped server is `up == 0`, never no `up`, and it needs no absent() of its own.
+        # environment that must exist, each carrying its environment and namespace (absent()
+        # copies only its equality matchers' labels onto the result). Each is marked
+        # `# env:<environment>`, and a stack renders only the ones its required_environments
+        # names (ADR-0012 decision 12). `local` is never required: it is a developer install,
+        # not an environment that must be up.
+        #
+        # The absent() lines are guarded by the presence of the box's chart scrape
+        # (ADR-0014 §9, A3): any `up` with a namespace, other than Fleet's `andara-shared`
+        # series (which reach the stack through the receiver, not the metrics collector, so
+        # they'd satisfy the guard while the collector that scrapes the server is dead and
+        # page a collector fault as "server unavailable") and CI's (`cluster="ci"`, which
+        # never says anything about the box). With nothing reporting at all, no absence is
+        # meaningful, and every line stays silent. A statically scraped server that stops
+        # is `up == 0`, never no `up`, and needs no absent() of its own.
         expr: |
-          max by (namespace) (up{job="andara-server"}) == 0
+          max by (environment, namespace) (up{job="andara-server"}) == 0
             or (
-                 absent(up{job="andara-server", namespace="andara-dev"})
-              or absent(up{job="andara-server", namespace="andara-prod"})
-            ) and on() count(up{namespace!=""}) > 0
+                 vector(0) < 0
+              or absent(up{job="andara-server", environment="dev", namespace="andara-dev"})    # env:dev
+              or absent(up{job="andara-server", environment="prod", namespace="andara-prod"})  # env:prod
+            ) and on() count(up{cluster!="ci", namespace!="", namespace!="andara-shared"}) > 0
         for: 2m
         labels:
           severity: page
@@ -49,7 +67,8 @@ groups:
           runbook: docs/runbooks/server-unavailable.md
       - alert: AndaraServerCrashLooping
         # kube-state-metrics labels each series with the pod's own namespace (its scrape
-        # sets none of its own to collide with), so this is per-environment as written.
+        # sets none of its own to collide with), and the destinations stamp the environment
+        # from it, so this is per-environment as written.
         expr: |
           increase(kube_pod_container_status_restarts_total{container="server", pod=~"andara-[0-9]+"}[10m]) > 3
         for: 0m
@@ -85,9 +104,9 @@ groups:
         # the alert resolves once the container is Ready, after keep_firing_for. Any other exit
         # code (1, 5, and 2, which is Go's exit on a panic) is AndaraServerCrashLooping's.
         # Each clause is empty where the other applies: compose has no kube-state-metrics.
-        # The `and on (namespace)` matches per namespace, which is per server while each
-        # environment runs one server pod; if AW-INF-011 ever scales the StatefulSet, change both
-        # `max by (namespace)` and the `on` to (namespace, pod). The exit code outlives the
+        # The `and on (environment, namespace)` matches per namespace, which is per server while
+        # each environment runs one server pod; if AW-INF-011 ever scales the StatefulSet, add
+        # `pod` to both `max by` lists and to the `on`. The exit code outlives the
         # recovery, so a fixed server that later goes unready for another reason (a readiness
         # probe) pages this again; the runbook says how to tell. One alert name, one runbook,
         # for compose and the cluster.
@@ -95,13 +114,13 @@ groups:
           andara_recovery_state_hash_match == 0
           or
           (
-            max by (namespace) (
+            max by (environment, namespace) (
                 kube_pod_container_status_last_terminated_exitcode{container="server", pod=~"andara-[0-9]+"} == 8
               or
                 kube_pod_container_status_last_terminated_exitcode{container="server", pod=~"andara-[0-9]+"} == 6
             )
-            and on (namespace)
-            max by (namespace) (
+            and on (environment, namespace)
+            max by (environment, namespace) (
               kube_pod_container_status_ready{container="server", pod=~"andara-[0-9]+"} == 0
             )
           )
@@ -148,7 +167,7 @@ groups:
         # that might see it, so the page neither resolves nor re-fires. The cost is a resolve
         # 2 m after a real recovery.
         expr: |
-          max by (namespace) (andara_ingress_degraded) == 1
+          max by (environment, namespace) (andara_ingress_degraded) == 1
         for: 30s
         keep_firing_for: 2m
         labels:
@@ -164,7 +183,7 @@ groups:
         # docs/specs/slo/kafka-availability.md. Not SimulationLagging: the tick can run on time
         # while the Commands it applies arrive late, and the runbook tells the two apart first.
         expr: |
-          max by (namespace) (andara_consumer_lag) > 400
+          max by (environment, namespace) (andara_consumer_lag) > 400
         for: 2m
         labels:
           severity: page
@@ -232,11 +251,11 @@ groups:
         # Only while the World is ticking (the SLO's measurement condition). A server that
         # has stopped produces no boundaries, and the projector's lag grows without anything
         # being stale; that is AndaraServerUnavailable's or SimulationLagging's to report.
-        # `on(namespace)` matches the cluster's per-environment series, and matches the
-        # label-less compose ones to each other.
+        # `on (environment, namespace)` matches the cluster's per-environment series, and
+        # matches the label-less compose ones to each other.
         expr: |
           (andara_state_projector_lag_seconds > andara_state_projector_lag_budget_seconds)
-            and on(namespace) (sum by (namespace) (rate(andara_ticks_total[5m])) > 0)
+            and on (environment, namespace) (sum by (environment, namespace) (rate(andara_ticks_total[5m])) > 0)
         for: 5m
         labels:
           severity: ticket
@@ -253,8 +272,8 @@ groups:
         # with the projector disabled has no Deployment and no series, and compose has no
         # kube_* series at all.
         expr: |
-          max by (namespace) (kube_deployment_spec_replicas{deployment="andara-projector-state"}) > 0
-            unless on(namespace) max by (namespace) (up{job="andara-projector-state"} == 1)
+          max by (environment, namespace) (kube_deployment_spec_replicas{deployment="andara-projector-state"}) > 0
+            unless on (environment, namespace) max by (environment, namespace) (up{job="andara-projector-state"} == 1)
         for: 10m
         labels:
           severity: ticket
@@ -271,7 +290,7 @@ groups:
     # either.
     rules:
       - alert: ContentLoadFailing
-        expr: max by (namespace, pack) (andara_content_pending_seconds) > 300
+        expr: max by (environment, namespace, pack) (andara_content_pending_seconds) > 300
         for: 5m
         labels:
           severity: ticket
@@ -286,11 +305,11 @@ groups:
     # not a drop. The target is 99.5 % over 28 days (Brian, 2026-09-20).
     rules:
       - alert: SessionsDroppingAtRate
-        # A ratio across Sessions, so both sides are summed — by namespace, or one
-        # environment's streams would be diluted by the other's.
+        # A ratio across Sessions, so both sides are summed — by environment and namespace, or
+        # one environment's streams would be diluted by another's.
         expr: |
-          sum by (namespace) (rate(andara_session_egress_drops_total{reason=~"buffer_full|draining"}[5m])) * 60
-            > 0.01 * sum by (namespace) (avg_over_time(andara_stream_subscribers[5m]))
+          sum by (environment, namespace) (rate(andara_session_egress_drops_total{reason=~"buffer_full|draining"}[5m])) * 60
+            > 0.01 * sum by (environment, namespace) (avg_over_time(andara_stream_subscribers[5m]))
         for: 5m
         labels:
           severity: page
@@ -314,10 +333,21 @@ groups:
         # without honor_labels, so the Certificate's arrives as `exported_namespace`; it is
         # put back where the summary and routing read it. Where there is no
         # exported_namespace the regex does not match and `namespace` is left as it is.
+        #
+        # The series' `environment` is cert-manager's own namespace's (`unknown`, outside
+        # decision 9's table), so it is derived from that `namespace` the same way, one
+        # label_replace per environment of the table. A Certificate in a namespace outside
+        # the table (`andara-ca`, in cert-manager's) keeps the `environment` it arrived with,
+        # `unknown` or none, and routes through the root receiver to Slack, never IRM.
         expr: |
           (
-            label_replace(certmanager_certificate_expiration_timestamp_seconds{name=~"andara-.*"},
-                          "namespace", "$1", "exported_namespace", "(.+)")
+            label_replace(label_replace(label_replace(label_replace(
+              label_replace(certmanager_certificate_expiration_timestamp_seconds{name=~"andara-.*"},
+                            "namespace", "$1", "exported_namespace", "(.+)"),
+              "environment", "local", "namespace", "andara-local|andara-ci"),
+              "environment", "dev", "namespace", "andara-dev"),
+              "environment", "staging", "namespace", "andara-staging"),
+              "environment", "prod", "namespace", "andara-prod")
             - time()
           ) < 7 * 24 * 3600
         for: 15m
@@ -341,16 +371,27 @@ groups:
         # count on `router="<namespace>-andara-…"` on every kind run, which is what keeps
         # that naming observed rather than assumed. (An Ingress that names no entrypoint
         # gets one router per entrypoint, prefixed `websecure-…`; the chart always names
-        # one.)
+        # one.) The environment follows from that namespace by decision 9's table, in both the
+        # numerator and the denominator, before either is summed.
         expr: |
           (
-            sum by (namespace) (label_replace(
-              rate(traefik_router_requests_total{router=~"andara-.*", code=~"5.."}[10m]),
-              "namespace", "$1", "router", "(andara-[a-z0-9]+)-andara.*"))
+            sum by (environment, namespace) (
+              label_replace(label_replace(label_replace(label_replace(
+                label_replace(rate(traefik_router_requests_total{router=~"andara-.*", code=~"5.."}[10m]),
+                              "namespace", "$1", "router", "(andara-[a-z0-9]+)-andara.*"),
+                "environment", "local", "namespace", "andara-local|andara-ci"),
+                "environment", "dev", "namespace", "andara-dev"),
+                "environment", "staging", "namespace", "andara-staging"),
+                "environment", "prod", "namespace", "andara-prod"))
             /
-            sum by (namespace) (label_replace(
-              rate(traefik_router_requests_total{router=~"andara-.*"}[10m]),
-              "namespace", "$1", "router", "(andara-[a-z0-9]+)-andara.*"))
+            sum by (environment, namespace) (
+              label_replace(label_replace(label_replace(label_replace(
+                label_replace(rate(traefik_router_requests_total{router=~"andara-.*"}[10m]),
+                              "namespace", "$1", "router", "(andara-[a-z0-9]+)-andara.*"),
+                "environment", "local", "namespace", "andara-local|andara-ci"),
+                "environment", "dev", "namespace", "andara-dev"),
+                "environment", "staging", "namespace", "andara-staging"),
+                "environment", "prod", "namespace", "andara-prod"))
           ) > 0.01
         for: 10m
         labels:
