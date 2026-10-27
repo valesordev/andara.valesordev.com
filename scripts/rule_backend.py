@@ -135,12 +135,6 @@ class Backend:
                 "(2 × %ds interval + %ds poll)" % (self.rule, self.group, self.stack, self.stack, self.matchers,
                                                   POLL, self.settle, self.interval, POLL)]
 
-    def for_rule(self, rule):
-        """The same backend for another rule of alerts.yaml (its group read from the file)."""
-        group, _ = alerts_rule(rule)
-        return Backend(self.kind, self.stack, rule, group, self.interval, self.selectors, None, self.ruler_env,
-                       self.env, self.fetch)
-
     def instances(self):
         name = "^%s$" % re.escape(self.rule)
         if self.kind == GRAFANA:
@@ -199,7 +193,8 @@ def record_line(rule, s):
 
 class Watch(threading.Thread):
     """Polls backend's rule every POLL seconds from start() to stop(), printing and keeping each (time, state);
-    a run asserts over this record, never over a reconstructed window."""
+    a run asserts over this record, never over a reconstructed window. Reads start at most POLL apart: the wait
+    after each is POLL less the read's own time."""
 
     def __init__(self, backend, say, poll=POLL, clock=time.time):
         super().__init__(daemon=True)
@@ -211,6 +206,7 @@ class Watch(threading.Thread):
     def run(self):
         self.started = self.clock()
         while True:
+            t0 = self.clock()
             try:
                 s = self.backend.sample(self.clock)
                 self.samples.append(s)
@@ -218,7 +214,7 @@ class Watch(threading.Thread):
             except gcx.GcxError as e:
                 self.errors.append((self.clock(), str(e)))
                 self.say("record %s %s read failed: %s" % (stamp(self.clock()), self.backend.rule, e))
-            if self._halt.wait(self.poll):
+            if self._halt.wait(max(0.0, self.poll - (self.clock() - t0))):
                 break
 
     def stop(self):

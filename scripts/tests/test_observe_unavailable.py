@@ -95,12 +95,12 @@ class Drill(unittest.TestCase):
         p = mock.patch.object(ou, "kubectl", lambda *a: self.kubectl.append(a) or "")
         p.start()
         self.addCleanup(p.stop)
-        p = mock.patch.object(ou, "restore", lambda ns, d: self.kubectl.append(("restore", ns)))
+        p = mock.patch.object(ou, "restore", lambda ns, d: self.kubectl.append(("restore", ns, self.gcx.n)))
         p.start()
         self.addCleanup(p.stop)
 
     def main(self, rules, polls, ruler=None, env=None):
-        f = Sequenced(rules, polls)
+        f = self.gcx = Sequenced(rules, polls)
         out = io.StringIO()
         with mock.patch.object(gcx, "run", f), mock.patch.object(gcx, "write_config", lambda e=None: []), \
                 mock.patch.object(rule_backend.ruler_read, "fetch", lambda e: ruler), \
@@ -122,15 +122,38 @@ class Drill(unittest.TestCase):
             self.assertRegex(out, r"observe-unavailable: %s \d{4}-\d\d-\d\dT\d\d:\d\d:\d\dZ" % step)
         self.assertRegex(out, r"record \S+ AndaraServerUnavailable firing \(gcx: Alerting\) expr: \['andara-dev'\]")
         self.assertRegex(out, r"record \S+ AndaraServerUnavailable pending \(gcx: Pending\)")
+        # Restored on the first firing poll (the before read and polls 1 to 3), not after the deadline.
         self.assertEqual(self.kubectl, [("-n", "andara-dev", "scale", "statefulset", "andara", "--replicas=0"),
-                                        ("restore", "andara-dev")])
+                                        ("restore", "andara-dev", 4)])
 
     def test_never_fires_fails_and_still_restores(self):
         polls = FIRE_AND_CLEAR[:3]                # pending to the deadline
         code, out, _ = self.main(live_server_rules(), polls)
         self.assertEqual(code, 1)
         self.assertIn("FAIL AndaraServerUnavailable never fired for andara-dev", out)
-        self.assertEqual(self.kubectl[-1], ("restore", "andara-dev"))
+        self.assertEqual(self.kubectl[-1][:2], ("restore", "andara-dev"))
+
+    def test_a_backend_error_mid_drill_restores_and_ends(self):
+        class Failing(Sequenced):
+            def __call__(self, context, *args, **kw):
+                if args[:2] == ("metrics", "query") and self.n == 2:
+                    raise gcx.GcxError("gcx: solo7dev metrics query: timed out after 120s")
+                return super().__call__(context, *args, **kw)
+
+        out = io.StringIO()
+        self.gcx = Failing(live_server_rules(), FIRE_AND_CLEAR)
+        with mock.patch.object(gcx, "run", self.gcx), mock.patch.object(gcx, "write_config", lambda e=None: []), \
+                mock.patch.object(rule_backend.ruler_read, "fetch", lambda e: None), \
+                mock.patch.dict(os.environ, CREDS, clear=True), contextlib.redirect_stdout(out):
+            with self.assertRaises(gcx.GcxError):
+                ou.main_for("dev")
+        self.assertEqual([k[:2] for k in self.kubectl], [("-n", "andara-dev"), ("restore", "andara-dev")])
+        self.assertRegex(out.getvalue(), r"drill: end \S+ \(aborted: gcx: solo7dev metrics query: timed out")
+
+    def test_normal_while_the_expr_still_names_dev_has_not_cleared(self):
+        code, out, _ = self.main(live_server_rules(), FIRE_AND_CLEAR[:5] + [(NAMES_DEV, instances("Normal"))])
+        self.assertEqual(code, 1)
+        self.assertIn("fired for andara-dev but never cleared", out)
 
     def test_never_clears_fails(self):
         code, out, _ = self.main(live_server_rules(), FIRE_AND_CLEAR[:5])
@@ -167,7 +190,7 @@ class Drill(unittest.TestCase):
                                  ruler=ruler_yaml(ou.RULE))
         self.assertEqual((code, self.kubectl), (1, []))
         self.assertIn("backend: ruler solo7", out)
-        self.assertIn("runs after cutover step 4(v)", out)
+        self.assertIn("runs after cutover step 4(v): AndaraServerUnavailable is evaluated by the legacy ruler solo7", out)
         self.assertFalse([c for c in f.calls if c[1:3] == ("metrics", "query")])
 
     def test_live_rule_without_the_dev_absence_operand_refuses_without_scaling(self):
@@ -196,6 +219,37 @@ class Pure(unittest.TestCase):
         self.assertFalse(ou.has_dev_absence(fixture("alert_rules_list_server_paused.json")[0]["rules"][0]["query"]))
         self.assertFalse(ou.has_dev_absence('absent(up{job="andara-server", environment="prod", namespace="andara-prod"})'))
         self.assertFalse(ou.has_dev_absence(None))
+        for one in ('absent(up{job="andara-server", environment="dev"})',
+                    'absent(up{job="andara-server", namespace="andara-dev"})',
+                    'absent(up{environment="dev", namespace="andara-staging"})',
+                    'absent(up{environment!="dev", namespace="andara-dev"})',
+                    'absent(up{environment="dev"}) or absent(up{namespace="andara-dev"})'):
+            self.assertFalse(ou.has_dev_absence(one), one)
+
+    def test_a_ruler_backend_is_refused_on_its_kind_alone(self):
+        b = rule_backend.Backend(rule_backend.RULER, "solo7", ou.RULE, "andara-server", 60, {"namespace": "andara-dev"},
+                                 query=DEV_ABSENCE)
+        with self.assertRaisesRegex(ou.Refused, "evaluated by the legacy ruler solo7"):
+            ou.ready_to_drill(b)
+
+    def test_poll_spacing_counts_the_read(self):
+        """At most POLL from the start of one read to the start of the next, however long the read takes."""
+        t = [0.0]
+        starts, slept = [], []
+
+        def reader():
+            starts.append(t[0])
+            t[0] += 4.0                            # a 4 s gcx round trip
+            return ou.Reading(t[0], set(), "pending", "Pending", {})
+
+        def sleep(s):
+            slept.append(s)
+            t[0] += s
+
+        with contextlib.redirect_stdout(io.StringIO()):
+            ou.poll(reader, lambda r: False, 25, [], clock=lambda: t[0], sleep=sleep)
+        self.assertEqual(slept[0], 6.0)
+        self.assertTrue(all(b - a <= ou.POLL for a, b in zip(starts, starts[1:])), starts)
 
     def test_rule_for(self):
         self.assertEqual(ou.rule_for(), 120)

@@ -155,10 +155,12 @@ def kubectl(*args):
 
 
 def poll(reader, done, deadline, record, clock=None, sleep=None):
-    """Read every POLL seconds into record until done(reading) or deadline seconds pass; True when done."""
+    """Read into record until done(reading) or deadline seconds pass, reads starting at most POLL apart; True when
+    done."""
     clock, sleep = clock or time.monotonic, sleep or time.sleep
     end = clock() + deadline
     while True:
+        t0 = clock()
         r = reader()
         record.append(r)
         say(r.line())
@@ -166,7 +168,7 @@ def poll(reader, done, deadline, record, clock=None, sleep=None):
             return True
         if clock() > end:
             return False
-        sleep(POLL)
+        sleep(max(0.0, POLL - (clock() - t0)))
 
 
 def restore(ns, deadline):
@@ -192,20 +194,30 @@ def drill(b, ns, deadline, reader, scale_down, restore_up):
         sys.exit(1)
     record = []
     say("drill: start %s (scaling statefulset/andara in %s to 0)" % (rule_backend.stamp(time.time()), ns))
-    scale_down()
+    aborted = "aborted"
     try:
-        poll(reader, lambda r: r.state == gcx.FIRING, deadline + rule_for() + b.settle, record)
+        scale_down()
+        try:
+            poll(reader, lambda r: r.state == gcx.FIRING, deadline + rule_for() + b.settle, record)
+        finally:
+            restore_up()
+            say("drill: server-restored %s (andara-0 Ready in %s)" % (rule_backend.stamp(time.time()), ns))
+        if any(r.state == gcx.FIRING for r in record):
+            poll(reader, lambda r: r.state == gcx.NORMAL and ns not in r.namespaces, deadline + b.settle, record)
+        aborted = None
+    except BaseException as e:
+        aborted = "aborted: %s" % e
+        raise
     finally:
-        restore_up()
-        say("drill: server-restored %s (andara-0 Ready in %s)" % (rule_backend.stamp(time.time()), ns))
-    if any(r.state == gcx.FIRING for r in record):
-        poll(reader, lambda r: r.state == gcx.NORMAL and ns not in r.namespaces, deadline + b.settle, record)
-    say("drill: end %s" % rule_backend.stamp(time.time()))
+        say("drill: end %s%s" % (rule_backend.stamp(time.time()), " (%s)" % aborted if aborted else ""))
     return judge(before, record, ns)
 
 
 def main():
-    env = sys.argv[1] if len(sys.argv) > 1 else ""
+    main_for(sys.argv[1] if len(sys.argv) > 1 else "")
+
+
+def main_for(env):
     if env != "dev":
         say("ENV=%s: only dev; taking prod's server away is an outage, not a check" % (env or "<unset>"))
         sys.exit(3)

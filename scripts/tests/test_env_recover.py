@@ -519,6 +519,20 @@ class Main(unittest.TestCase):
         self.assertEqual((status, calls), (3, []))
         self.assertIn("GRAFANA_SOLO7DEV_READ_TOKEN", err.getvalue())
 
+    def test_a_gcx_failure_during_selection_is_inconclusive(self):
+        def select(*a, **k):
+            raise gcx.GcxError("gcx: solo7dev alert rules list --limit 0: exit 1: Error: unauthorized")
+
+        err = io.StringIO()
+        with mock.patch.object(env_recover.rule_backend, "credentials", lambda env, e=None: ("solo7dev", {}, {})), \
+                mock.patch.object(gcx, "write_config", lambda e=None: []), \
+                mock.patch.object(env_recover.rule_backend, "select", select), \
+                mock.patch.object(env_recover, "Run", lambda *a: self.fail("reached the run")), \
+                contextlib.redirect_stderr(err):
+            status = env_recover.main(["dev", "andara-dev"])
+        self.assertEqual(status, 1)
+        self.assertIn("inconclusive: backend selection: gcx: solo7dev alert rules list", err.getvalue())
+
     def test_an_inconclusive_selection_exits_1_before_the_cluster(self):
         """AC-2: paused, live in both, unhealthy: rule_backend.select's message, exit 1, nothing touched."""
         def select(*a, **k):
@@ -610,9 +624,10 @@ class Main(unittest.TestCase):
                     trace_id=lambda self, since: "", rebound_counters=rec("rebound_counters"),
                     assert_no_further_restart=rec("assert_no_further_restart"))
             self.assertEqual(status, 1, (failing, nth))
-            # A failure before the watch is stopped stops it in the run's finally.
-            seen = [e for e in events if e not in ("dump", "cleanup")]
-            self.assertEqual(seen[:upto], full[:upto], (failing, nth))
+            # Nothing runs after the failing step, and a failure before the watch is stopped stops it in the
+            # run's finally.
+            want = full[:upto] + ([] if "watch_stop" in full[:upto] else ["watch_stop"])
+            self.assertEqual([e for e in events if e not in ("dump", "cleanup")], want, (failing, nth))
 
     def test_a_restart_during_cleanup_fails_the_run(self):
         for fail_on, expect in ((None, 0), (2, 1)):

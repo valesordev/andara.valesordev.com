@@ -10,6 +10,7 @@ import json
 import os
 import socket
 import sys
+import time
 import unittest
 import urllib.error
 from unittest import mock
@@ -214,6 +215,10 @@ class States(Base):
             self.assertEqual(rule_backend.fold([{"state": gcx.state(raw), "raw_state": raw}]), (want, raw))
         mixed = [{"state": "normal", "raw_state": "Normal"}, {"state": "firing", "raw_state": "Alerting"}]
         self.assertEqual(rule_backend.fold(mixed), ("firing", "Normal, Alerting"))
+        # RecoveryStateMismatch's two clauses can give one environment two instances: firing wins over pending.
+        both = [{"state": "pending", "raw_state": "Pending"}, {"state": "firing", "raw_state": "Alerting"}]
+        self.assertEqual(rule_backend.fold(both)[0], "firing")
+        self.assertEqual(rule_backend.fold(list(reversed(both)))[0], "firing")
         self.assertEqual(rule_backend.fold([{"state": "error", "raw_state": "Error"}])[0], "error")
 
     def test_series_reads_follow_the_backend(self):
@@ -256,13 +261,40 @@ class Watching(unittest.TestCase):
         self.assertIn("'error' is not firing, pending or normal", p[0])
         self.assertIn("(90s, over the 60s interval)", p[1])
 
+    def test_poll_spacing_counts_the_read(self):
+        """The watch waits POLL less the read's own time, so reads start at most POLL apart."""
+        t = [0.0]
+        waits = []
+
+        class B:
+            rule, interval = RULE, 60
+
+            def sample(self, clock):
+                t[0] += 3.0                        # a 3 s gcx round trip
+                return rule_backend.Sample(clock(), "normal", "Normal")
+
+        w = rule_backend.Watch(B(), lambda line: None, poll=10, clock=lambda: t[0])
+
+        def wait(s):
+            waits.append(s)
+            t[0] += s
+            return len(waits) >= 3
+
+        w._halt.wait = wait
+        w.run()
+        self.assertEqual(waits, [7.0, 7.0, 7.0])
+
     def test_the_thread_records_every_poll_and_prints_each(self):
         lines = []
         w = rule_backend.Watch(self.backend(["normal", gcx.GcxError("boom"), "firing"] + ["normal"] * 1000),
                                lines.append, poll=0.001)
         w.start()
+        deadline = time.monotonic() + 10
         while len(w.samples) < 3:
-            pass
+            if time.monotonic() > deadline or not w.is_alive():
+                w.stop()
+                self.fail("the watch stopped recording: %r" % w.samples)
+            time.sleep(0.001)
         w.stop()
         self.assertEqual([s.state for s in w.samples[:2]], ["normal", "firing"])
         self.assertEqual(len(w.errors), 1)
