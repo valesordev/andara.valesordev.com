@@ -58,8 +58,15 @@ config change plus a design conversation. Assuming the permissive version and re
 not.
 
 Character names are globally unique, immutable after creation, and reserved on deletion. Deletion is
-soft: the Character leaves the roster, the name stays reserved, World state is retained for a stated
+soft: the Character can no longer be selected, the name stays reserved, World state is retained for a stated
 window.
+
+The window is `character.delete_retention`, default 30 days. Until the purge, the deleted Character
+keeps its dormant body and still counts against the cap of five, so deleting doesn't free a slot
+inside the window. The purge removes the body and frees the slot, and nothing else: the roster
+entry stays `DELETED` (listed by `ListCharacters`) and the name stays reserved. *(Brian, 2026-10-27,
+resolving `AW-SRV-032`'s carried `[ASSUMPTION]`s at its §8. The earlier wording said "the Character
+leaves the roster", but the pinned contract keeps the `DELETED` entry.)*
 
 ### Session lifecycle
 

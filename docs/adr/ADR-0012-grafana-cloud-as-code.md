@@ -67,7 +67,7 @@ prove before its criterion that depends on them is written as passing:
   `firing`), `health`, `isPaused`, `lastEvaluation`, `labels` and its current `alerts[]`; `gcx alert instances
   list` returns each instance's `ruleName`, `ruleUid`, `labels`, `state`, `activeAt` and `value`, and with
   `--datasource grafanacloud-prom` reads the data-source-managed (ruler) alerts. Whether "Recovering" (during
-  `keep_firing_for`) reads as `firing` **[verify in 047]**.
+  `keep_firing_for`) reads as `firing` **[verify in AW-INF-070 step 4(vi)]** *(moved from 047, 2026-10-27)*.
 - The stack's data sources have the fixed UIDs `grafanacloud-prom`, `grafanacloud-logs` and `grafanacloud-traces`
   (seen in `solo7`) **[verify in solo7dev]**.
 - IRM resources are in the same Terraform provider (`grafana_oncall_*`) with a separate `oncall_access_token`
@@ -104,7 +104,7 @@ rule the §8 check is supposed to exercise; `make up` would be verifying a rule 
   `exec_err_state = "Error"` (a failed evaluation raises Grafana's own `DatasourceError` alert, which is routed
   and so surfaces, instead of being silent), `for`, `keep_firing_for`, `labels` and `annotations` copied
   as written, annotation templates translated by the renderer if the template syntax differs
-  **[verify in 047]**.
+  ~~**[verify in 047]**~~ *Settled 2026-10-27 (AW-INF-047 §8): no translation.*
 - Folder `Andara`; one `grafana_rule_group` per `groups[]` entry of `alerts.yaml`, **named as the file names
   it** (`andara-server`, `andara-recovery`, `andara-tick`, `andara-snapshots`, `andara-projections`,
   `andara-content`, `andara-sessions`, `andara-edge`). `andara` was only ever the ruler's namespace. The file
@@ -187,7 +187,7 @@ is not a test.
 |---|---|
 | Is the rule **defined** (also true for a paused rule)? | `alert rules list --limit 0 --group <group>` → the rule by `name` / `uid`, its `isPaused` as planned. `terraform plan` showing no diff is the other half. |
 | Is the rule **live** (evaluating)? | the same → `health == "ok"`, `isPaused == false`, and `lastEvaluation` within twice the group's `interval`. A paused rule is defined and never live; a check that needs a live rule fails on a paused one. |
-| What is the rule's state for `environment="dev"`? | `alert instances list --name '^RecoveryStateMismatch$' --json ruleName,labels,state,activeAt` → filter `labels.environment == "dev"` (and `labels.namespace`) in the wrapper; the wrapper maps the instance `state` to one vocabulary: `Alerting` (Grafana-managed) and `firing` (ruler) are **firing**; `Pending` is pending; `Normal` and `Normal (NoData)` are **not** firing. `Recovering`, during `keep_firing_for`, is **[verify in 047]**: the drills must treat it as firing for AC-7's "the alert outlives the process" only if `gcx` reports it. |
+| What is the rule's state for `environment="dev"`? | `alert instances list --name '^RecoveryStateMismatch$' --json ruleName,labels,state,activeAt` → filter `labels.environment == "dev"` (and `labels.namespace`) in the wrapper; the wrapper maps the instance `state` to one vocabulary: `Alerting` (Grafana-managed) and `firing` (ruler) are **firing**; `Pending` is pending; `Normal` and `Normal (NoData)` are **not** firing. `Recovering`, during `keep_firing_for`, is **[verify in AW-INF-070 step 4(vi)]** *(moved from 047, 2026-10-27)*: the drills must treat it as firing for AC-7's "the alert outlives the process" only if `gcx` reports it. |
 | Is anything firing or pending for a rule before a drill starts (`stack_recover_mismatch.sh`'s "not already firing")? | `alert instances list --name '^<rule>$' --state firing` and `--state pending` → none for the environment; the 15 m `keep_firing_for` wait-out message stays. |
 | Did metrics arrive (`observe-check`)? | `metrics query -d grafanacloud-prom 'up{job="andara-server",environment="dev"}' --since 5m` (a series is the answer); `metrics series -d grafanacloud-prom --since 5m '{__name__=~"andara_.*"}'` (a selector is required) for the keep-list. |
 | Did logs arrive? | `logs query -d grafanacloud-logs '{…environment="dev"…}' --since 5m --limit 5` |
@@ -878,7 +878,9 @@ The module drops every line marked `# env:<environment>` whose value is not in t
 `AW-INF-047` reshapes `AndaraServerUnavailable` so the group starts with a never-true term (`vector(0) < 0`) and
 every marked line is `or …`, so any subset parses. So `solo7dev` renders the `dev` absence once `dev` is
 required (and `staging`'s when it exists), `solo7` renders `prod`'s once prod is, and neither renders the other's.
-`local` is never required. The rules' existing guard (`and on() count(up{environment!=""}) > 0`) is retained.
+`local` is never required. The rules' existing guard is retained. *(Superseded 2026-10-21 by `ADR-0014` §9
+and A3: the guard is now `and on() count(up{cluster!="ci", namespace!="", namespace!="andara-shared"}) > 0`.
+Annotated 2026-10-27 at `AW-INF-047`'s §8.)*
 **The check:** `make tf-test` renders every rule for every stack and parses it (`promtool check rules` on the
 rendered output); a stack whose rendered rule names an environment outside its `required_environments` fails the
 test. The rule semantics (thresholds, `for`) are not touched.
@@ -1227,7 +1229,10 @@ PR #595). The routing test runs against the pinned binary in `make check`. No de
   - `solo7dev`'s token reads contact points and the policy through the provider (2026-10-17 amendment).
     `solo7`'s provider reads wait for prod (AW-INF-078).
   - No `andara-reader` role is made.
-- **Still open:** `Recovering` during `keep_firing_for` stays **[verify in 047]**.
+- **Still open:** `Recovering` during `keep_firing_for` is **[verify in AW-INF-070 step 4(vi)]**. *(Moved
+  2026-10-27 at `AW-INF-047`'s §8: 047 applies the rules paused, so it can't observe a rule leaving `firing`.)*
+  `AW-INF-047` settled annotation templates: `{{ $labels.namespace }}/{{ $labels.name }}` is valid Grafana
+  template syntax, and no translation is needed.
 - **`make gcx-only-check`** matches the pattern list AW-INF-075's contract named. That list adds
   `/prometheus/config/v1/rules` to the enforcement bullet's. The bullet's single exception (`alerts_sync.py`) is
   now a per-file list, `scripts/gcx_only_exceptions.txt`, where each line names the story that removes it.
