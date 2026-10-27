@@ -60,6 +60,15 @@ func TestProductionBuildSeedsNothing(t *testing.T) {
 	}
 }
 
+// The sizing build and its tests compile. Nothing in make check builds with
+// -tags sizing, so without this a broken andara-server-sizing would stay
+// green until measure_tick.sh built it.
+func TestSizingBuildCompiles(t *testing.T) {
+	if out, err := exec.Command("go", "vet", "-tags", "sizing,integration", ".").CombinedOutput(); err != nil {
+		t.Fatalf("go vet -tags sizing,integration: %v\n%s", err, out)
+	}
+}
+
 // AW-SRV-065 AC-7: a build with both fault and sizing fails, naming the two
 // tags as mutually exclusive.
 func TestFaultAndSizingDoNotBuildTogether(t *testing.T) {

@@ -248,14 +248,17 @@ func TestSizingBuildRefusesContentWithoutTheMerchant(t *testing.T) {
 }
 
 // AC-6: off local, off the memory source, or with snapshots on, the sizing
-// build exits 1 before anything is built, naming the key.
+// build exits 1 before anything is built, naming the key, its value and the
+// value required. The content validates, so the guard is the only exit 1.
 func TestSizingBuildRefusesToBootOutsideLocal(t *testing.T) {
+	content := sizingContent(t, true)
 	for _, c := range []struct {
-		arg, env, key string
+		arg, env, key, value, required string
 	}{
-		{"", "dev", "ANDARA_ENV"},
-		{"--sim-source=kafka", "", "sim.source"},
-		{"--snapshot-interval=1m", "", "snapshot.interval"},
+		{"", "", "", "", ""},
+		{"", "dev", "ANDARA_ENV", "dev", "local"},
+		{"--sim-source=kafka", "", "sim.source", "kafka", "memory"},
+		{"--snapshot-interval=1m", "", "snapshot.interval", "1m0s", "0"},
 	} {
 		env := func(k string) (string, bool) {
 			if k == "ANDARA_ENV" && c.env != "" {
@@ -263,17 +266,26 @@ func TestSizingBuildRefusesToBootOutsideLocal(t *testing.T) {
 			}
 			return emptyEnv(k)
 		}
-		args := []string{"--content-source=dir", "--content-path=" + t.TempDir(), "--sim-source=memory", "--snapshot-interval=0", "--validate-only"}
+		args := []string{"--content-source=dir", "--content-path=" + content, "--sim-source=memory", "--snapshot-interval=0", "--validate-only"}
 		if c.arg != "" {
 			args = append(args, c.arg)
 		}
 		stderr := &lockedBuffer{}
-		if code := run(args, env, &bytesDiscard{}, stderr); code != 1 {
+		code := run(args, env, &bytesDiscard{}, stderr)
+		line := grepLines(stderr.String(), "sizing build: refusing to boot")
+		if c.key == "" {
+			if code != 0 || line != "" {
+				t.Fatalf("local, memory, no snapshots: exit %d; %s", code, stderr.String())
+			}
+			continue
+		}
+		if code != 1 {
 			t.Errorf("%s: exit %d, want 1", c.key, code)
 		}
-		line := grepLines(stderr.String(), "sizing build: refusing to boot")
-		if !strings.Contains(line, `"key":"`+c.key+`"`) {
-			t.Errorf("%s: no refusal naming it:\n%s", c.key, stderr.String())
+		for _, want := range []string{`"level":"ERROR"`, `"key":"` + c.key + `"`, `"value":"` + c.value + `"`, `"required":"` + c.required + `"`} {
+			if !strings.Contains(line, want) {
+				t.Errorf("%s: refusal lacks %s:\n%s", c.key, want, stderr.String())
+			}
 		}
 	}
 }
