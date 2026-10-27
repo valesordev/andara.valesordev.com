@@ -191,6 +191,7 @@ func (rt *Runtime) StartTickLoop(ctx context.Context) (*tickloop.Loop, error) {
 		Commands:         rt.Commands,
 		OnTick:           rt.onTick(),
 		OnSwap:           rt.onSwap(),
+		BeforeTick:       rt.BeforeTick,
 	})
 	if err != nil {
 		_ = source.Close()
@@ -203,6 +204,10 @@ func (rt *Runtime) StartTickLoop(ctx context.Context) (*tickloop.Loop, error) {
 	rt.Engine = engine
 	if cfg.SimSource == "kafka" {
 		rt.live = loop.Live
+	}
+	rt.loop.Store(loop)
+	if rt.draining.Load() {
+		loop.Draining()
 	}
 	// The bodies as recovery left them; the loop keeps the gauge current.
 	rt.observeCharacters(engine)

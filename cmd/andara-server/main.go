@@ -71,7 +71,7 @@ func run(args []string, env config.EnvLookup, stdout, stderr io.Writer) (exit in
 	rt.BuildVersion = version
 	code := rt.LoadContent(ctx)
 	if rt.ContentMetrics != nil {
-		rt.ContentMetrics.SetBuild(version, commit, cfg.Environment)
+		rt.ContentMetrics.SetBuild(version, commit, cfg.Environment, buildTags)
 	}
 	if cfg.ValidateOnly || code != boot.ExitOK {
 		return code
@@ -131,6 +131,11 @@ func run(args []string, env config.EnvLookup, stdout, stderr io.Writer) (exit in
 	// (AW-SRV-012), and ReconcileContent below brings the World to what the
 	// content source names through the loop. A bad broker fails the boot
 	// here, before anything is served.
+	// A fault build's injectors (AW-SRV-066); nothing in production.
+	if err := installFaults(rt, env, tel.Log); err != nil {
+		tel.Log.Error("fault", "detail", err.Error())
+		return boot.ExitFail
+	}
 	loop, err := rt.StartTickLoop(ctx)
 	if err != nil {
 		tel.Log.Error("tick loop", "detail", err.Error())

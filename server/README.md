@@ -15,6 +15,7 @@ server/canonical/  deterministic protobuf encoding for anything that feeds the S
 server/boot/       load orchestration, /livez /startedz /readyz /metrics
 server/config/     flag > env > file > default
 server/telemetry/  JSON logs, Prometheus registry, boot traces
+server/fault/      fault injectors, compiled only into a -tags fault build (AW-SRV-066)
 ```
 
 ## Configuration
@@ -149,12 +150,33 @@ the server container sources it before exec. Probes, all on `http.port`:
 
 | Path | 200 when | Probe |
 |------|----------|-------|
-| `/livez` | always, while the process runs. It must never depend on Kafka or a datastore | liveness |
+| `/livez` | the tick loop hasn't started, is completing ticks, or the server is draining. 503 `{"reason":"tick_wedged"}` (`application/json`) once a started loop has completed no tick in `sim.tick_budget_ms × 100` (5 s at the default). It never depends on Kafka or a datastore (`AW-SRV-066`) | liveness |
 | `/startedz` | recovery has finished and the gRPC listener serves, whether or not the World waits for content. It stays 200 until exit, through the drain (`AW-SRV-042`) | startup |
 | `/readyz` | content is in effect and the server isn't draining. 503 while it waits for content | readiness |
 
 Start-up is judged on `/startedz`, not `/readyz`. A fresh environment waits for its
 first content indefinitely, and a startup probe on `/readyz` would restart it forever.
+
+**`/livez` (`AW-SRV-066`; that story's Interface contract is the pin, and a change here cites
+it).** Liveness restarts a pod only for a frozen World. The wedge clock starts at the loop's
+first tick, so recovery (budgeted by `/startedz`) and a World waiting for content are live, and so
+is a draining pod, whose loop stops on purpose. A broker that's down leaves the World read-only and
+still ticking, which is live too. The threshold comes from `sim.tick_budget_ms`, with no key of
+its own. A wedge logs `tick loop wedged` at `warn` once, with `last_tick` and `since_seconds`,
+and the tick that ends it logs `tick loop resumed` at `info` with `last_tick` and
+`wedged_seconds`, the time the World stood still. `andara_probe_state{probe}` is `startup`,
+`readiness`, `liveness`: 1 exactly when `/startedz`, `/readyz` or `/livez` would answer 200,
+evaluated at scrape from the handlers' own predicates, all three present from boot. It puts probe
+flapping on the tick dashboard, since the server can't see the kubelet's results.
+
+**The `fault` build.** `go build -tags fault ./cmd/andara-server` compiles `server/fault` in. It is
+for the liveness test and is never shipped. The production binary has no fault package in its
+dependencies and reads no fault variable (`cmd/andara-server/faults_test.go`). The fault build
+reports `andara_build_info{build_tags="fault"}`, and reads:
+
+| Variable | Effect |
+|----------|--------|
+| `ANDARA_FAULT_WEDGE_TICK_AFTER` | a positive duration: once that much loop time has passed since the first tick, the next tick blocks until shutdown. `/livez` turns 503 `tick_wedged` past the threshold. Anything else is exit 1 |
 
 Dir-mode files are protobuf JSON (`formatVersion`, one Zone per `.json` file). That is the test
 and CLI surface, not the Builder language (ADR-0009).
@@ -272,7 +294,8 @@ exits 1 naming the tick.
 | `andara_tick_duration_seconds` | histogram | — | 1; a bucket boundary at exactly `0.05` |
 | `andara_zone_tick_duration_seconds` | histogram | `zone` | Zones |
 | `andara_ticks_total`, `andara_tick_overruns_total` | counter | — | 1 |
-| `andara_simulation_lag_seconds` | gauge | — | 1 — the symptom; `SimulationLagging` |
+| `andara_simulation_lag_seconds` | gauge (evaluated at scrape) | — | 1 — the symptom; `SimulationLagging`. While the loop is started and not draining it reads `max(<the loop's last set value>, now − <the next tick's due time>)`, so a frozen World shows as rising lag rather than the value it froze at (`AW-SRV-066`) |
+| `andara_probe_state` | gauge (evaluated at scrape) | `probe` | 3: `startup`, `readiness`, `liveness`, each 0 or 1 (`AW-SRV-066`) |
 | `andara_tick_applied_records_total` | counter | — | 1 |
 | `andara_tick_deferred_records` | gauge | — | 1 |
 | `andara_tick_input_starved_total` | counter | — | 1 |
@@ -289,7 +312,9 @@ Logs: `tick` at `info` once a second with `tick`, `lag_ms`, `consumer_lag`, `def
 `checkpoint_age_ticks`, `applied_offsets`; `tick overran its budget` at `warn` with `tick`,
 `duration_ms`, `budget_ms`, and the slowest `zone`; `tick input starved` at `warn`; `zone faulted` at
 `error` with `tick`, `zone`, `partition`, `offset`, `panic`; `tick boundary lost; exiting into
-recovery` at `error` with `lost_tick`, `last_delivered_tick`, `err`. Spans: `sim.tick` per tick with
+recovery` at `error` with `lost_tick`, `last_delivered_tick`, `err`; `tick loop wedged` at `warn`
+with `last_tick`, `since_seconds`, and `tick loop resumed` at `info` with `last_tick`,
+`wedged_seconds`, once per wedge each (`AW-SRV-066`). Spans: `sim.tick` per tick with
 `record_count`, `event_count`, `overrun`, `starved`, `lag_seconds`, and `sim.zone_tick` per Zone —
 always started, exported one in a hundred plus every overrun (`telemetry.TickSampler`) and the tick
 that stopped on a lost boundary (`boundary_lost=true`). Per-Entity
@@ -1430,7 +1455,7 @@ reports the same: `content` (one entry per pack, sorted) and `content_digest`. T
 | `andara_content_reload_stall_seconds` | histogram | — | 1; the in-tick cost of applying one swap (AC-9: under `sim.tick_budget_ms / 2`). Preparing it is in-tick too and not in this metric: checking the base, the Zones and the fallbacks, and the whole-World digest, about 1 ms at the sizing fixture. So is a stage miss, where `Prepare` resolves from the store on the tick goroutine; that happens only on replay or for a swap this process did not produce |
 | `andara_content_relocations_total` | counter | `zone` | Zones in the content set |
 | `andara_content_cache_hits_total` | counter | `outcome` | `hit`, `miss` |
-| `andara_build_info` | gauge, always 1 | `version`, `commit`, `env`, `pack`, `content_version` | one series per pack in effect; before any content, one with `pack` and `content_version` empty |
+| `andara_build_info` | gauge, always 1 | `version`, `commit`, `env`, `build_tags`, `pack`, `content_version` | one series per pack in effect; before any content, one with `pack` and `content_version` empty. `build_tags` is `""` for the production binary, `fault` or `sizing` for a test build, one value per process (`AW-SRV-066`, `AW-SRV-065`) |
 
 Warnings appear in both counters: `validation_errors_total` counts every finding by code,
 `load_warnings_total` counts only the advisory ones, so an operator can ask whether a content pack is

@@ -12,6 +12,7 @@ import (
 	"sync/atomic"
 	"time"
 
+	"github.com/prometheus/client_golang/prometheus"
 	"github.com/prometheus/client_golang/prometheus/promhttp"
 	"go.opentelemetry.io/otel/attribute"
 
@@ -189,6 +190,15 @@ type Runtime struct {
 	deployOnce sync.Once
 	deploy     *interruption
 	now        func() time.Time
+	// BeforeTick is handed to the tick loop (tickloop.Options.BeforeTick):
+	// set only by a fault build's injector (AW-SRV-066), nil otherwise.
+	BeforeTick func(ctx context.Context, now time.Time)
+	// loop is the running tick loop, as /livez sees it (AW-SRV-066): nil
+	// until StartTickLoop. Atomic because the recovery server's probes are
+	// served while StartTickLoop runs.
+	loop atomic.Pointer[tickloop.Loop]
+	// probeOnce registers andara_probe_state with the first Handler.
+	probeOnce sync.Once
 }
 
 // LoadVerbs builds the verb table and the command metrics. A verb table
@@ -499,10 +509,20 @@ func (rt *Runtime) countComponents(set []sim.Component) int {
 	return len(set)
 }
 
-// Handler serves /livez, /startedz, /readyz, and /metrics.
+// Handler serves /livez, /startedz, /readyz, and /metrics, and registers
+// andara_probe_state, which mirrors the three probes, on the first call.
 func (rt *Runtime) Handler() http.Handler {
+	rt.probeOnce.Do(rt.registerProbeState)
 	mux := http.NewServeMux()
+	// /livez: 503 only for a frozen World, a started loop that hasn't
+	// completed a tick in sim.tick_budget_ms × 100 (AW-SRV-066). Never Kafka.
 	mux.HandleFunc("/livez", func(w http.ResponseWriter, _ *http.Request) {
+		if !rt.Live() {
+			w.Header().Set("Content-Type", "application/json")
+			w.WriteHeader(http.StatusServiceUnavailable)
+			_, _ = w.Write([]byte(`{"reason":"tick_wedged"}`))
+			return
+		}
 		w.WriteHeader(http.StatusOK)
 		_, _ = w.Write([]byte("ok\n"))
 	})
@@ -537,6 +557,17 @@ func (rt *Runtime) Handler() http.Handler {
 // effect, and the first live tick has completed within 10 tick budgets of
 // schedule (AW-SRV-007). Nothing else answers /readyz.
 func (rt *Runtime) Ready() bool {
+	if !rt.readyNow() {
+		return false
+	}
+	// The first serving answer ends the interruption (AW-SRV-054 AC-7).
+	rt.observeServing()
+	return true
+}
+
+// readyNow is Ready's predicate, without ending the interruption: what a
+// scrape of andara_probe_state reads.
+func (rt *Runtime) readyNow() bool {
 	if !rt.ready.Load() {
 		return false
 	}
@@ -545,17 +576,53 @@ func (rt *Runtime) Ready() bool {
 			return false
 		}
 	}
-	// The first serving answer ends the interruption (AW-SRV-054 AC-7).
-	rt.observeServing()
 	return true
+}
+
+// Live is /livez's predicate (AW-SRV-066): false only when the tick loop has
+// begun, the server isn't draining, and no tick has completed within
+// sim.tick_budget_ms × 100. Before the loop starts — recovery, or a World
+// waiting for content — and through the drain, it is true.
+func (rt *Runtime) Live() bool {
+	if rt.draining.Load() {
+		return true
+	}
+	l := rt.loop.Load()
+	return l == nil || !l.Wedged()
 }
 
 // Drain flips readiness off. The gateway calls it when Shutdown begins, so
 // a load balancer stops routing here while in-flight work finishes
-// (AW-SRV-005 AC-8).
+// (AW-SRV-005 AC-8). The loop is told too: a drain stops it on purpose, and a
+// tick that stalls behind the drain isn't a wedge.
 func (rt *Runtime) Drain() {
 	rt.draining.Store(true)
 	rt.ready.Store(false)
+	if l := rt.loop.Load(); l != nil {
+		l.Draining()
+	}
+}
+
+// registerProbeState registers andara_probe_state{probe}: 1 exactly when
+// /startedz, /readyz or /livez would answer 200, evaluated at scrape from the
+// handlers' own predicates (AW-SRV-066 AC-7). Three series from the first
+// scrape.
+func (rt *Runtime) registerProbeState() {
+	for _, p := range []struct {
+		name string
+		ok   func() bool
+	}{{"startup", rt.Started}, {"readiness", rt.readyNow}, {"liveness", rt.Live}} {
+		rt.Tel.Reg.MustRegister(prometheus.NewGaugeFunc(prometheus.GaugeOpts{
+			Name:        "andara_probe_state",
+			Help:        "1 when the probe's endpoint would answer 200, else 0: startup /startedz, readiness /readyz, liveness /livez.",
+			ConstLabels: prometheus.Labels{"probe": p.name},
+		}, func() float64 {
+			if p.ok() {
+				return 1
+			}
+			return 0
+		}))
+	}
 }
 
 // contentOptions flattens the content.* configuration for the adapter, the

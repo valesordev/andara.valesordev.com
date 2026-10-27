@@ -5,6 +5,7 @@ package tickloop
 
 import (
 	"github.com/prometheus/client_golang/prometheus"
+	dto "github.com/prometheus/client_model/go"
 )
 
 // Metrics is AW-SRV-002's observability contract: the three tick SLIs,
@@ -30,6 +31,35 @@ type Metrics struct {
 	HandoffRetries       prometheus.Counter // andara_handoff_retries_total
 	HandoffStaleArrivals prometheus.Counter // andara_handoff_stale_arrivals_total
 	HandoffPlacedEntries prometheus.Gauge   // andara_handoff_placed_entries
+
+	// lagNow reads andara_simulation_lag_seconds at scrape from the value Lag
+	// was last set to (AW-SRV-066 AC-9); nil reads that value. Lag itself is
+	// what the loop sets, and what a test reads.
+	lagNow func(set float64) float64
+}
+
+// lagCollector exports andara_simulation_lag_seconds as Metrics.lagNow reads
+// it: a wedged loop sets nothing, so a gauge set only by the loop would hold
+// still while the World is frozen.
+type lagCollector struct{ m *Metrics }
+
+func (c lagCollector) Describe(ch chan<- *prometheus.Desc) { ch <- c.m.Lag.Desc() }
+
+func (c lagCollector) Collect(ch chan<- prometheus.Metric) {
+	v := gaugeValue(c.m.Lag)
+	if c.m.lagNow != nil {
+		v = c.m.lagNow(v)
+	}
+	ch <- prometheus.MustNewConstMetric(c.m.Lag.Desc(), prometheus.GaugeValue, v)
+}
+
+// gaugeValue is a gauge's current value.
+func gaugeValue(g prometheus.Gauge) float64 {
+	var m dto.Metric
+	if err := g.Write(&m); err != nil {
+		return 0
+	}
+	return m.GetGauge().GetValue()
 }
 
 // TickBuckets place the 50 ms Tick Budget on a boundary (ADR-0008), so the
@@ -69,7 +99,7 @@ func NewMetrics(reg prometheus.Registerer) *Metrics {
 		m.PublishFailures.WithLabelValues(k)
 	}
 	if reg != nil {
-		reg.MustRegister(m.TickDuration, m.ZoneTickDuration, m.Ticks, m.Overruns, m.Lag, m.AppliedRecords,
+		reg.MustRegister(m.TickDuration, m.ZoneTickDuration, m.Ticks, m.Overruns, lagCollector{m}, m.AppliedRecords,
 			m.DeferredRecords, m.InputStarved, m.ConsumerLag, m.CheckpointAge, m.ZoneFaults, m.PublishFailures, m.BoundaryLost,
 			m.HandoffsInTransit, m.HandoffRetries, m.HandoffStaleArrivals, m.HandoffPlacedEntries)
 	}

@@ -44,12 +44,13 @@ type Metrics struct {
 	// tick spent inside it, which must stay under sim.tick_budget_ms / 2.
 	ReloadStall prometheus.Histogram
 	// BuildInfo is andara_build_info: always 1, one series per pack in effect
-	// naming its content_version, with the build's version, commit and env.
+	// naming its content_version, with the build's version, commit, env and
+	// build tags (AW-SRV-065, AW-SRV-066).
 	// Before any content is in effect, one series with both empty.
 	BuildInfo *prometheus.GaugeVec
 
 	mu      sync.Mutex
-	build   [3]string // version, commit, env
+	build   [4]string // version, commit, env, build_tags
 	content map[string]uint64
 	// pendingFn reads andara_content_pending_seconds at scrape time: a gauge
 	// of seconds-since cannot be set once and left, so it is computed.
@@ -104,7 +105,7 @@ func NewMetrics(reg prometheus.Registerer) *Metrics {
 		BuildInfo: prometheus.NewGaugeVec(prometheus.GaugeOpts{
 			Name: "andara_build_info",
 			Help: "Always 1: the running build, and the content version of each pack in effect.",
-		}, []string{"version", "commit", "env", "pack", "content_version"}),
+		}, []string{"version", "commit", "env", "build_tags", "pack", "content_version"}),
 		pendingD: prometheus.NewDesc("andara_content_pending_seconds",
 			"Seconds since a pack's Active Pointer moved to a version that is neither in effect nor refused for a Builder's reason; 0 otherwise.",
 			[]string{"pack"}, nil),
@@ -131,10 +132,11 @@ func NewMetrics(reg prometheus.Registerer) *Metrics {
 	return m
 }
 
-// SetBuild names the running build on andara_build_info.
-func (m *Metrics) SetBuild(version, commit, env string) {
+// SetBuild names the running build on andara_build_info. tags is the build
+// tag the binary was compiled with: "" for production, "fault" or "sizing".
+func (m *Metrics) SetBuild(version, commit, env, tags string) {
 	m.mu.Lock()
-	m.build = [3]string{version, commit, env}
+	m.build = [4]string{version, commit, env, tags}
 	content := m.content
 	m.mu.Unlock()
 	m.buildInfo(content)
@@ -148,7 +150,7 @@ func (m *Metrics) buildInfo(content map[string]uint64) {
 	m.BuildInfo.Reset()
 	b := m.build
 	if len(content) == 0 {
-		m.BuildInfo.WithLabelValues(b[0], b[1], b[2], "", "").Set(1)
+		m.BuildInfo.WithLabelValues(b[0], b[1], b[2], b[3], "", "").Set(1)
 		return
 	}
 	packs := make([]string, 0, len(content))
@@ -157,7 +159,7 @@ func (m *Metrics) buildInfo(content map[string]uint64) {
 	}
 	sort.Strings(packs)
 	for _, p := range packs {
-		m.BuildInfo.WithLabelValues(b[0], b[1], b[2], p, strconv.FormatUint(content[p], 10)).Set(1)
+		m.BuildInfo.WithLabelValues(b[0], b[1], b[2], b[3], p, strconv.FormatUint(content[p], 10)).Set(1)
 	}
 }
 
