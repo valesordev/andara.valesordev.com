@@ -297,13 +297,15 @@ These are the ruler-era credentials. Each one goes when the story named next to 
 and that story also deletes its line here. A retiring name that nothing uses any more fails
 `scripts/tests/test_runbook_credentials.py`.
 
-- `GRAFANA_CLOUD_READ_TOKEN`: removed by whichever of `AW-INF-069` and `AW-INF-077` removes its last use.
-  - A Cloud access policy on the `solo7` stack's realm, with at least `metrics:read` and `rules:read`.
-    `make env-recover` reads rule state with it.
-  - Exported by the operator before a run. It is not in `.local/box.env` today, so both targets stop and
-    name it until it is set.
-  - Read by `make env-recover` and `make observe-unavailable` (through `scripts/grafana_http.py`), and by
-    `alerts_sync.py` as a fallback key.
+- `GRAFANA_CLOUD_READ_TOKEN`: removed by `AW-INF-077`, with the ruler.
+  - A Cloud access policy on the `solo7` stack's realm, with at least `rules:read`.
+  - Exported by the operator before a run, with `GRAFANA_CLOUD_PROM_URL` and `GRAFANA_CLOUD_PROM_USER` (or
+    `MIMIR_ADDRESS`, `MIMIR_TENANT_ID` and `MIMIR_API_KEY` set directly). It is not in `.local/box.env` today,
+    so both targets exit 3 and name what is missing until it is set.
+  - Read only as the ruler key's fallback: by `scripts/ruler_read.py`, which `make env-recover` and
+    `make observe-unavailable` use to tell whether the legacy ruler still holds their rule (backend selection,
+    `AW-INF-069`), and by `alerts_sync.py`. Their rule state and series reads go through `gcx` with
+    `GRAFANA_SOLO7DEV_READ_TOKEN` and `GRAFANA_SOLO7_READ_TOKEN`.
 
 Click path: `grafana.com` → My Account → Security → Access Policies, on the `solo7` stack's realm. It has
 no `credentials.yaml` entry, and its expiry is not known, so nothing warns before it stops working.

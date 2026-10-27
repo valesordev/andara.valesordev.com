@@ -15,29 +15,36 @@ container, and the kernel ignores a SIGKILL a namespace's init gets from inside 
 container's ID on andara-0's node (a kind node container: this runs on the box), never matched
 by process name, because another environment's server can share the node.
 
+Before the first poll it selects the backend that evaluates RecoveryStateMismatch for dev
+(scripts/rule_backend.py, AW-INF-069): the Grafana-managed rule in solo7dev when it is live, the legacy
+ruler in solo7 when it holds the rule, inconclusive when both or neither do. It prints `backend: grafana
+solo7dev` or `backend: ruler solo7`, then what it reads. Every rule-state and series read goes through gcx
+(scripts/gcx.py) against that backend; the ruler's rule config (scripts/ruler_read.py) is the one direct read.
+
 Steps (each printed as `env-recover: <step>`):
-  AC-2  RecoveryStateMismatch is loaded in the ruler and not already firing; players A and B
+  AC-2  RecoveryStateMismatch is live in the selected backend and not already firing; players A and B
         enter play through the edge, A moves to Room 1; a complete round R newer than the one
         recorded before play; A moves to Room 2, which only the log tail holds.
   AC-3  SIGKILL from the node: restartCount +1, same pod UID, exit code 137, within 10 s.
   AC-4  andara-0 Ready within ENV_RECOVER_RTO of the kill, no further restart.
-  AC-5  Grafana Cloud: andara_recovery_round_tick == R and andara_recovery_state_hash_match == 1
+  AC-5  the backend's stack: andara_recovery_round_tick == R and andara_recovery_state_hash_match == 1
         sampled after the kill.
   AC-6  Both `play` clients reconnect; A reads Room 2, B the spawn Room; no already_live, waiting
         line or despawn line between the kill and the reconnect.
-  AC-7  RecoveryStateMismatch never fired from the start of the run to its end.
+  AC-7  RecoveryStateMismatch never fired from the start of the run to its end: polled every 10 s
+        through gcx, each `record <time> <rule> <state> (gcx: <raw>)` printed, asserted over that record
+        once the rule is confirmed to exist in the backend; ALERT_SETTLE is the group's interval × 2 + 10 s.
 
 Environment: ANDARA_BOOTSTRAP_OPERATOR (user:password); ENV_RECOVER_RTO (seconds, default 120);
-GRAFANA_CLOUD_READ_TOKEN and GRAFANA_CLOUD_PROM_URL / _PROM_USER, as scripts/grafana_http.py reads them;
-MIMIR_ADDRESS, MIMIR_TENANT_ID and MIMIR_API_KEY (the ruler read, AC-2), defaulting from the PROM
-pair and GRAFANA_CLOUD_READ_TOKEN (which carries rules:read) when unset. Credentials go in an isolated $XDG_CONFIG_HOME.
+GRAFANA_SOLO7DEV_READ_TOKEN (dev's stack) and GRAFANA_SOLO7_READ_TOKEN (the ruler's alerts), from the
+environment or .local/box.env; MIMIR_ADDRESS, MIMIR_TENANT_ID and MIMIR_API_KEY (the ruler read), defaulting
+from GRAFANA_CLOUD_PROM_URL / _PROM_USER and GRAFANA_CLOUD_READ_TOKEN when unset. The CLI's credentials go in
+an isolated $XDG_CONFIG_HOME.
 
 Exit codes: 0 the gate held; 1 an assertion failed, a precondition is missing, or the run was
-inconclusive; 2 usage or refusal.
+inconclusive; 2 usage or refusal; 3 a credential unset (named, before any gcx call).
 """
 
-import base64
-import importlib.util
 import json
 import os
 import re
@@ -47,13 +54,15 @@ import subprocess
 import sys
 import tempfile
 import time
-import urllib.error
-import urllib.parse
-import urllib.request
 
 import yaml
 
 import kube
+
+sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+import gcx  # noqa: E402
+import grafana_stack  # noqa: E402
+import rule_backend  # noqa: E402
 
 HERE = os.path.dirname(os.path.abspath(__file__))
 REPO = os.path.dirname(HERE)
@@ -64,24 +73,13 @@ ROUND_WAIT = 120          # snapshot.interval 60 s by default (story assumption)
 PLAY_WAIT = 20
 RECONNECT_WAIT = 60
 METRIC_WAIT = 120
-ALERT_SETTLE = 130        # two of the ruler's default 1 m evaluations after the recovered 1 is scraped
 RULE = "RecoveryStateMismatch"
-RULER_NAMESPACE = "andara"
 PASSWORD = "env-recover-password-1"
 ROOM_1 = "Market Plaza"
 ROOM_2 = "Town Hall"
 SPAWN_ROOM = "Purgatory"
 DESPAWN_LINES = ("leaves the world.", "fades from the world.")
 ALREADY_LIVE = ("reason=already_live", "Waiting for your previous session to end")
-RULER_VARS = ("MIMIR_ADDRESS", "MIMIR_TENANT_ID", "MIMIR_API_KEY")
-READ_VARS = ("GRAFANA_CLOUD_READ_TOKEN", "GRAFANA_CLOUD_PROM_URL", "GRAFANA_CLOUD_PROM_USER")
-
-
-def _load(name):
-    spec = importlib.util.spec_from_file_location(name, os.path.join(HERE, name + ".py"))
-    mod = importlib.util.module_from_spec(spec)
-    spec.loader.exec_module(mod)
-    return mod
 
 
 class Failed(Exception):
@@ -158,7 +156,7 @@ def check_restart(before, after):
     return None
 
 
-# --- Grafana Cloud (AC-5, AC-7) -------------------------------------------------------------
+# --- the backend's stack (AC-5, AC-7) -------------------------------------------------------
 
 def vector(results):
     """[(labels, float value)] of an instant query's result."""
@@ -197,63 +195,16 @@ def check_rebound(despawned, reconnected):
     return None
 
 
-class Grafana:
-    def __init__(self):
-        self.oc = _load("grafana_http")
-        self.prom = self.oc.Backend("PROM", os.environ["GRAFANA_CLOUD_READ_TOKEN"].strip())
-
-    def instant(self, q):
-        return self.oc.instant(self.prom, q)
-
-    def firing_between(self, ns, start, end, state="firing"):
-        """Samples of ALERTS{alertname=RULE, namespace, alertstate=state} over [start, end]."""
-        q = 'ALERTS{alertname="%s",namespace="%s",alertstate="%s"}' % (RULE, ns, state)
-        body = self.prom.get("/api/v1/query_range", {"query": q, "start": "%.0f" % start,
-                                                     "end": "%.0f" % end, "step": "15"})
-        if body.get("status") != "success":
-            raise Failed("prom query_range %s: %s" % (q, body.get("error")))
-        return body["data"]["result"]
-
-    def observed_states(self, ns, start, end):
-        q = 'ALERTS{alertname="AndaraServerUnavailable",namespace="%s"}' % ns
-        body = self.prom.get("/api/v1/query_range", {"query": q, "start": "%.0f" % start,
-                                                     "end": "%.0f" % end, "step": "15"})
-        return sorted({r["metric"].get("alertstate", "?") for r in body.get("data", {}).get("result", [])})
-
-
-def missing_credentials(environ):
-    """The variables AC-2 and AC-5 need that aren't set, ruler defaults filled as alerts_sync has them."""
-    sync = _load("alerts_sync")
-    env = dict(sync.resolve_env(environ))
-    key = env.get("MIMIR_API_KEY", "").strip() or environ.get("GRAFANA_CLOUD_READ_TOKEN", "").strip()
-    if key:
-        env["MIMIR_API_KEY"] = key
-    else:
-        env.pop("MIMIR_API_KEY", None)
-    return [k for k in READ_VARS if not environ.get(k, "").strip()] + sync.missing(env, RULER_VARS), env
-
-
-def rule_loaded(ruler_yaml):
-    """True when the ruler's namespace body names RecoveryStateMismatch."""
-    doc = yaml.safe_load(ruler_yaml) or {}
-    groups = doc if isinstance(doc, dict) else {}
-    return any(r.get("alert") == RULE for g in (groups.get(RULER_NAMESPACE) or []) for r in (g.get("rules") or []))
-
-
-def fetch_ruler(env):
-    sync = _load("alerts_sync")
-    url = "%s/prometheus/config/v1/rules/%s" % (env["MIMIR_ADDRESS"].rstrip("/"), RULER_NAMESPACE)
-    req = urllib.request.Request(url)
-    token = base64.b64encode(("%s:%s" % (env["MIMIR_TENANT_ID"], env["MIMIR_API_KEY"])).encode()).decode()
-    req.add_header("Authorization", "Basic " + token)
-    req.add_header("X-Scope-OrgID", env["MIMIR_TENANT_ID"])
-    try:
-        with urllib.request.build_opener(sync.NoRedirect).open(req, timeout=60) as r:
-            return r.read().decode()
-    except urllib.error.HTTPError as e:
-        raise Failed("the ruler refused the rules read: HTTP %d" % e.code)
-    except (urllib.error.URLError, TimeoutError) as e:
-        raise Failed("could not reach the ruler: %s" % e)
+def check_quiet(watch):
+    """None when the record shows RecoveryStateMismatch never firing over a window it fully covers (AC-7),
+    else why not. The caller has confirmed the rule exists in the backend: an empty record is then normal."""
+    problems = watch.problems()
+    if problems:
+        return "inconclusive: " + "; ".join(problems)
+    fired = watch.firing()
+    if fired:
+        return "%s fired during the run (first at %s, gcx: %s)" % (RULE, rule_backend.stamp(fired[0].t), fired[0].raw)
+    return None
 
 
 # --- the CLI and the players (AC-2, AC-6) ---------------------------------------------------
@@ -404,17 +355,17 @@ class Run:
         return p
 
     # the steps
-    def preflight(self, g, ruler_env):
+    def preflight(self, g):
+        """g is the selected backend: the rule is live there (rule_backend.select), so it exists."""
         if not shutil.which("kubectl") or not shutil.which("docker"):
             raise Failed("kubectl and docker are needed here: this runs on the box, where the nodes are")
         if not os.access(self.cli, os.X_OK):
             raise Failed("no %s; run `make build` first" % self.cli)
-        if not rule_loaded(fetch_ruler(ruler_env)):
-            raise Failed("inconclusive: %s is not loaded in the tenant's ruler (namespace %s); "
-                         "`make alerts-sync` delivers it" % (RULE, RULER_NAMESPACE))
-        say("%s is loaded in the ruler" % RULE)
-        if g.firing_between(self.ns, time.time() - 120, time.time()):
-            raise Failed("inconclusive: %s is already firing for %s" % (RULE, self.ns))
+        say("%s is live in %s" % (RULE, g))
+        s = g.sample()
+        say(rule_backend.record_line(RULE, s))
+        if s.state != gcx.NORMAL:
+            raise Failed("inconclusive: %s is already %s for %s (gcx: %s)" % (RULE, s.state, self.ns, s.raw))
         if not self.pod()["ready"]:
             raise Failed("%s is not Ready; nothing to kill" % POD)
 
@@ -480,7 +431,7 @@ class Run:
         return t_kill, seen - t_kill, before["restarts"], now["restarts"]
 
     def recovered_metrics(self, g, r, t_kill):
-        sel = '{namespace="%s"}' % self.ns
+        sel = "{%s}" % g.matchers
         end, why = time.monotonic() + METRIC_WAIT, ""
         while time.monotonic() < end:
             why = check_recovery(
@@ -499,12 +450,11 @@ class Run:
         never reaches it. The recovered process began its counters at 0 (AC-6). The sums are
         namespace-wide: run it alone on dev, and not within the 180 s linkdead grace of a prior run,
         whose players the recovered process would re-mark linkdead and then despawn."""
-        sel = '{namespace="%s"}' % self.ns
         end, why = time.monotonic() + METRIC_WAIT, ""
         while time.monotonic() < end:
             why = check_rebound(
-                vector(g.instant('sum(andara_events_emitted_total{type="character_despawned",namespace="%s"})' % self.ns)),
-                vector(g.instant('sum(andara_linkdead_outcomes_total{outcome="reconnected",namespace="%s"})' % self.ns)))
+                vector(g.instant('sum(andara_events_emitted_total{type="character_despawned",%s})' % g.matchers)),
+                vector(g.instant('sum(andara_linkdead_outcomes_total{outcome="reconnected",%s})' % g.matchers)))
             if not why:
                 return
             time.sleep(5)
@@ -593,19 +543,38 @@ class Run:
         shutil.rmtree(self.work, ignore_errors=True)
 
 
+def backend(env, environ=None):
+    """Credentials (Exit 3), the gcx config, and the backend evaluating RULE for env (Inconclusive)."""
+    stack, ruler_env, merged = rule_backend.credentials(env, environ)
+    gcx.write_config(merged)
+    return rule_backend.select(env, RULE, stack, ruler_env, merged)
+
+
 def main(argv):
     env, ns = check_args(argv)
-    run = Run(env, ns, os.environ)
-    t_start = time.time()
     try:
-        absent, ruler_env = missing_credentials(os.environ)
-        if absent:
-            raise Failed("%s unset; cannot verify" % ", ".join(absent))
+        g = backend(env)
+    except grafana_stack.Exit as e:
+        print("env-recover: %s" % e, file=sys.stderr)
+        return e.code
+    except rule_backend.Inconclusive as e:
+        print("env-recover: inconclusive: %s" % e, file=sys.stderr)
+        return 1
+    except gcx.GcxError as e:
+        print("env-recover: inconclusive: backend selection: %s" % e, file=sys.stderr)
+        return 1
+    for line in g.header():
+        say(line)
+    run = Run(env, ns, os.environ)
+    watch = None
+    try:
         if not re.fullmatch(r"[0-9]+", run.rto) or int(run.rto) <= 0:
             raise Failed("ENV_RECOVER_RTO=%s is not a whole number of seconds above 0" % run.rto)
         run.rto = int(run.rto)
-        g = Grafana()
-        run.preflight(g, ruler_env)
+        run.preflight(g)
+        # From here to the end of the run, every 10 s: AC-7 asserts over this record.
+        watch = rule_backend.Watch(g, say)
+        watch.start()
         run.setup_cli()
         r = run.play_until_round()
         # Before the kill: the absence window is the kill to the reconnect, not Ready to it.
@@ -622,14 +591,19 @@ def main(argv):
         say("hash match; recovery.run trace %s" % (run.trace_id(since) or "n/a"))
         run.rebound_counters(g)
         say("the server's own counters: no despawn since the recovery, both players reconnected")
-        say("waiting %ds for the ruler to judge the recovered 1" % ALERT_SETTLE)
-        time.sleep(ALERT_SETTLE)
+        say("waiting %ds (ALERT_SETTLE) for %s to judge the recovered 1" % (g.settle, g))
+        time.sleep(g.settle)
         run.rebound_counters(g)   # sampled again: a despawn after the first sample is still the recovery's
-        now = time.time()
-        if g.firing_between(ns, t_start, now):
-            raise Failed("%s fired during the run" % RULE)
-        say("%s did not fire; AndaraServerUnavailable observed as %s" %
-            (RULE, ", ".join(g.observed_states(ns, t_start, now)) or "inactive"))
+        watch.stop()
+        try:
+            g.confirm_exists()
+        except rule_backend.Inconclusive as e:
+            raise Failed("inconclusive: %s" % e)
+        why = check_quiet(watch)
+        if why:
+            raise Failed(why)
+        say("%s did not fire: %d polls over %.0fs, none firing" %
+            (RULE, len(watch.samples), watch.stopped - watch.started))
         # Last, after every blocking check: a second crash or a reschedule at any point since
         # Ready would still pass each check above.
         run.assert_no_further_restart(b_restarts)
@@ -651,6 +625,8 @@ def main(argv):
             print("env-recover: could not collect logs: %s" % d, file=sys.stderr)
         status = 1
     finally:
+        if watch is not None and watch.stopped is None:
+            watch.stop()
         run.cleanup()
     if status == 0:
         # cleanup() blocks for up to ~140 s; a second crash or reschedule in that window is still the run's.

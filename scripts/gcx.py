@@ -51,8 +51,10 @@ AGENT_ENV = ("CLAUDECODE", "CLAUDE_CODE", "CURSOR_AGENT", "GITHUB_COPILOT", "AMA
              "PI_CODING_AGENT", "GCX_AGENT_MODE")
 
 # Instance state, one vocabulary: Grafana-managed rules say Alerting/Normal, the ruler says firing.
+# Recovering (a Grafana-managed rule inside keep_firing_for) is still firing, when gcx reports it
+# (AW-INF-069 [verify 069]).
 FIRING, PENDING, NORMAL = "firing", "pending", "normal"
-STATES = {"alerting": FIRING, "firing": FIRING, "pending": PENDING,
+STATES = {"alerting": FIRING, "firing": FIRING, "recovering": FIRING, "pending": PENDING,
           "normal": NORMAL, "normal (nodata)": NORMAL, "inactive": NORMAL}
 
 
@@ -171,19 +173,33 @@ def rule_defined(context, group, rule, **kw):
     return None
 
 
-def rule_live(context, group, rule, now, **kw):
-    """True when the rule is evaluating: health ok, not paused, last evaluated within twice the group's interval.
-    now is a datetime (UTC)."""
+def rule_check(r, now):
+    """None when the rule (as rule_defined returns it) is evaluating, else why not: not defined, paused, health
+    not ok, or last evaluated longer ago than twice the group's interval (with its age). now is a UTC datetime."""
     import datetime
-    r = rule_defined(context, group, rule, **kw)
-    if not r or r.get("isPaused") or r.get("health") != "ok" or not r.get("interval"):
-        return False
+    if not r:
+        return "not defined"
+    if r.get("isPaused"):
+        return "paused"
+    if r.get("health") != "ok":
+        return "health %r, not ok" % r.get("health")
+    if not r.get("interval"):
+        return "no group interval"
     last = r.get("lastEvaluation") or ""
     try:
         at = datetime.datetime.strptime(last.replace("Z", "+0000")[:19] + "+0000", "%Y-%m-%dT%H:%M:%S%z")
     except ValueError:
-        return False
-    return (now - at).total_seconds() <= 2 * float(r["interval"])
+        return "lastEvaluation %r unreadable" % last
+    age = (now - at).total_seconds()
+    if age > 2 * float(r["interval"]):
+        return "lastEvaluation %s is %.0fs old, over twice the group's %ss interval" % (last, age, r["interval"])
+    return None
+
+
+def rule_live(context, group, rule, now, **kw):
+    """True when the rule is evaluating: health ok, not paused, last evaluated within twice the group's interval.
+    now is a datetime (UTC)."""
+    return rule_check(rule_defined(context, group, rule, **kw), now) is None
 
 
 def state(raw):
@@ -192,8 +208,9 @@ def state(raw):
 
 
 def instances(context, name, labels=None, state_filter=None, datasource=None, **kw):
-    """Alert instances of rules matching the name regex, as {ruleName, labels, state, activeAt}, state mapped
-    by state(); filtered to those whose labels include every item of labels. datasource reads the ruler."""
+    """Alert instances of rules matching the name regex, as {ruleName, labels, state, raw_state, activeAt}, state
+    mapped by state() and raw_state as gcx printed it; filtered to those whose labels include every item of
+    labels. datasource reads the ruler."""
     args = ["alert", "instances", "list", "--name", name, "--json", "ruleName,labels,state,activeAt"]
     if state_filter:
         args += ["--state", state_filter]
@@ -203,7 +220,7 @@ def instances(context, name, labels=None, state_filter=None, datasource=None, **
     for i in normalise(run(context, *args, **kw)):
         lab = i.get("labels") or {}
         if all(lab.get(k) == v for k, v in (labels or {}).items()):
-            out.append(dict(i, labels=lab, state=state(i.get("state"))))
+            out.append(dict(i, labels=lab, state=state(i.get("state")), raw_state=i.get("state")))
     return out
 
 

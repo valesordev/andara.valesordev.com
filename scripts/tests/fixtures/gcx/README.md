@@ -14,6 +14,9 @@ The `Pending` instance state is the vocabulary ADR-0012 names; no pending instan
 |---|---|
 | `alert_rules_list.json` | `alert rules list --limit 0 [--group <g>]`: a list of groups, each with its `rules` |
 | `alert_rules_list_empty.json` | the same with no Grafana-managed rule, or an unknown `--group`: `null` |
+| `alert_rules_list_paused.json` | `alert rules list --limit 0 --group andara-recovery` against `solo7dev` before its cutover, recorded 2026-10-27: every rule `isPaused`, `lastEvaluation` the zero time |
+| `alert_rules_list_server_paused.json` | the same for `--group andara-server`, recorded 2026-10-27: `AndaraServerUnavailable`'s `query` as rendered without `dev`'s absence operand (`required_environments = []`) |
+| `alert_instances_legacy_firing.json` | **constructed, not recorded**: `alert instances list --datasource grafanacloud-prom --name <re> --json ruleName,labels,state,activeAt` against `solo7` with a ruler alert firing. The shape is the recorded `--json` one; the ruler's state word is `firing` and its labels carry `namespace` and no `environment`. Nothing was firing in the ruler to record (AW-INF-069) |
 | `alert_instances_json.json` | `alert instances list --name <re> --json ruleName,labels,state,activeAt` |
 | `alert_instances_json_empty.json` | the same with no `--name` match and no `--name`: one object, every field null |
 | `alert_instances_name_empty.json` | the same with `--name` matching nothing: `[]` |

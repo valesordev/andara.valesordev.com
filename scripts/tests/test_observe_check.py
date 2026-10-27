@@ -1,8 +1,8 @@
 # SPDX-License-Identifier: Apache-2.0
 # Copyright 2026 Valesor Development
 
-"""make observe-check through gcx (AW-INF-075 AC-11), and observe_unavailable.py still loading its helpers from
-scripts/grafana_http.py (AC-12)."""
+"""make observe-check through gcx (AW-INF-075 AC-11). observe_unavailable.py's tests are
+test_observe_unavailable.py (AW-INF-069), which moved it off scripts/grafana_http.py."""
 import contextlib
 import io
 import json
@@ -129,30 +129,6 @@ class Check(unittest.TestCase):
         with self.assertRaises(grafana_stack.Exit) as e:
             observe_check.since_ok("an hour")
         self.assertEqual(e.exception.code, 2)
-
-
-class Unavailable(unittest.TestCase):
-    """AC-12: observe_unavailable.py loads scripts/grafana_http.py and still refuses anything but dev."""
-
-    def test_prod_exits_3_with_the_module_loaded(self):
-        import observe_unavailable
-        self.assertEqual(observe_unavailable.oc.__name__, "grafana_http")
-        for name in ("Backend", "BackendError", "instant", "need", "ALERTS"):
-            self.assertTrue(hasattr(observe_unavailable.oc, name), name)
-        with mock.patch.object(sys, "argv", ["observe_unavailable.py", "prod"]), \
-                contextlib.redirect_stdout(io.StringIO()):
-            with self.assertRaises(SystemExit) as e:
-                observe_unavailable.main()
-        self.assertEqual(e.exception.code, 3)
-
-    def test_env_recover_builds_its_backend_from_grafana_http(self):
-        import env_recover
-        with mock.patch.dict(os.environ, {"GRAFANA_CLOUD_READ_TOKEN": "t", "GRAFANA_CLOUD_PROM_URL": "https://p.invalid",
-                                          "GRAFANA_CLOUD_PROM_USER": "1"}):
-            g = env_recover.Grafana()
-        self.assertEqual(g.oc.__name__, "grafana_http")
-        self.assertIsInstance(g.prom, g.oc.Backend)
-        self.assertTrue(callable(g.oc.instant))
 
 
 if __name__ == "__main__":

@@ -1,7 +1,9 @@
 # SPDX-License-Identifier: Apache-2.0
 # Copyright 2026 Valesor Development
 
-"""`make env-recover`'s guard, kill mechanism and assertions (AW-INF-034)."""
+"""`make env-recover`'s guard, kill mechanism and assertions (AW-INF-034), on the backend AW-INF-069 selects."""
+import contextlib
+import io
 import json
 import os
 import subprocess
@@ -14,6 +16,8 @@ from unittest import mock
 REPO = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 sys.path.insert(0, os.path.join(REPO, "scripts"))
 import env_recover  # noqa: E402
+import gcx  # noqa: E402
+import rule_backend  # noqa: E402
 
 
 def make(*args):
@@ -150,72 +154,36 @@ class Rebound(unittest.TestCase):
 
 class Inconclusive(unittest.TestCase):
 
-    def test_rule_not_loaded(self):
-        loaded = yaml_rules("RecoveryStateMismatch")
-        self.assertTrue(env_recover.rule_loaded(loaded))
-        self.assertFalse(env_recover.rule_loaded(yaml_rules("Other")))
-        self.assertFalse(env_recover.rule_loaded(yaml_rules("RecoveryStateMismatch").replace("andara:", "other:")))
-        self.assertFalse(env_recover.rule_loaded(""))
-        self.assertFalse(env_recover.rule_loaded("andara: []"))
-
     def test_newer_round_is_inconclusive(self):
         env_recover.check_round_unchanged(60, 60)
         with self.assertRaisesRegex(env_recover.Failed, "inconclusive"):
             env_recover.check_round_unchanged(90, 60)
 
-    def _preflight(self, loaded, firing):
+    def _preflight(self, state):
         run = env_recover.Run("dev", "andara-dev", {})
         self.addCleanup(run.cleanup)
         run.pod = lambda: {"ready": True}
-        g = types.SimpleNamespace(firing_between=lambda *a: [{"metric": {}}] if firing else [])
-        real = (env_recover.fetch_ruler, env_recover.shutil.which, os.access)
-        env_recover.fetch_ruler = lambda env: yaml_rules("RecoveryStateMismatch" if loaded else "Other")
+        g = types.SimpleNamespace(sample=lambda: rule_backend.Sample(0, state, state.title()))
+        real = env_recover.shutil.which
         env_recover.shutil.which = lambda n: "/bin/" + n
         run.cli = "/bin/true"
         try:
-            run.preflight(g, {})
+            run.preflight(g)
         finally:
-            env_recover.fetch_ruler, env_recover.shutil.which = real[0], real[1]
+            env_recover.shutil.which = real
 
-    def test_rule_not_loaded_is_inconclusive(self):
-        with self.assertRaisesRegex(env_recover.Failed, "inconclusive.*not loaded"):
-            self._preflight(loaded=False, firing=False)
+    def test_alert_already_firing_or_pending_is_inconclusive(self):
+        for state in ("firing", "pending"):
+            with self.assertRaisesRegex(env_recover.Failed, "inconclusive.*already %s" % state):
+                self._preflight(state)
 
-    def test_alert_already_firing_is_inconclusive(self):
-        with self.assertRaisesRegex(env_recover.Failed, "inconclusive.*already firing"):
-            self._preflight(loaded=True, firing=True)
-
-    def test_preflight_passes_when_loaded_and_quiet(self):
-        self._preflight(loaded=True, firing=False)
+    def test_preflight_passes_when_quiet(self):
+        self._preflight("normal")
 
     def test_newest_round_is_the_first_complete_row(self):
         table = "TICK AGE ZONES COMPLETE\n90 1s 2 false\n60 61s 2 true\n30 2m 2 true\n"
         self.assertEqual(env_recover.newest_round(table), 60)
         self.assertEqual(env_recover.newest_round("TICK AGE ZONES COMPLETE\n"), 0)
-
-    def test_missing_credentials_name_the_variable(self):
-        absent, _ = env_recover.missing_credentials({"GRAFANA_CLOUD_READ_TOKEN": "t"})
-        self.assertIn("GRAFANA_CLOUD_PROM_URL", absent)
-        self.assertNotIn("MIMIR_API_KEY", absent)
-        absent, _ = env_recover.missing_credentials({})
-        self.assertIn("MIMIR_API_KEY", absent)
-        absent, env = env_recover.missing_credentials({
-            "GRAFANA_CLOUD_READ_TOKEN": "t", "GRAFANA_CLOUD_PROM_URL": "https://p.example/api/prom",
-            "GRAFANA_CLOUD_PROM_USER": "123", "MIMIR_API_KEY": "k"})
-        self.assertEqual(absent, [])
-        self.assertEqual(env["MIMIR_TENANT_ID"], "123")
-
-    def test_ruler_key_defaults_to_the_read_token_and_an_explicit_key_wins(self):
-        base = {"GRAFANA_CLOUD_READ_TOKEN": " t ", "GRAFANA_CLOUD_PROM_URL": "https://p.example/api/prom",
-                "GRAFANA_CLOUD_PROM_USER": "123"}
-        absent, env = env_recover.missing_credentials(base)
-        self.assertEqual((absent, env["MIMIR_API_KEY"]), ([], "t"))
-        _, env = env_recover.missing_credentials(dict(base, MIMIR_API_KEY="k"))
-        self.assertEqual(env["MIMIR_API_KEY"], "k")
-        _, env = env_recover.missing_credentials(dict(base, MIMIR_API_KEY="  "))
-        self.assertEqual(env["MIMIR_API_KEY"], "t")
-        absent, _ = env_recover.missing_credentials({"MIMIR_API_KEY": "  "})
-        self.assertIn("MIMIR_API_KEY", absent)
 
 
 class RunSteps(unittest.TestCase):
@@ -314,18 +282,20 @@ class RunSteps(unittest.TestCase):
             queries.append(q)
             return [{"metric": {}, "value": [0, str(v)]} for _, v in next(answers)]
 
-        g = types.SimpleNamespace(instant=instant)
+        g = types.SimpleNamespace(instant=instant, matchers='environment="dev",namespace="andara-dev"')
         env_recover.time.sleep, real_sleep = lambda s: None, env_recover.time.sleep
         self.addCleanup(setattr, env_recover.time, "sleep", real_sleep)
         # despawn absent (empty), reconnected absent on the first pass, then 2.
         run.rebound_counters(g)
-        self.assertEqual(queries[0], 'sum(andara_events_emitted_total{type="character_despawned",namespace="andara-dev"})')
-        self.assertEqual(queries[1], 'sum(andara_linkdead_outcomes_total{outcome="reconnected",namespace="andara-dev"})')
+        self.assertEqual(queries[0], 'sum(andara_events_emitted_total{type="character_despawned",'
+                                     'environment="dev",namespace="andara-dev"})')
+        self.assertEqual(queries[1], 'sum(andara_linkdead_outcomes_total{outcome="reconnected",'
+                                     'environment="dev",namespace="andara-dev"})')
         self.assertEqual(len(queries), 4)
 
     def test_rebound_counters_fail_at_the_deadline(self):
         run = self.run_()
-        g = types.SimpleNamespace(instant=lambda q: [])
+        g = types.SimpleNamespace(instant=lambda q: [], matchers='namespace="andara-dev"')
         real = env_recover.METRIC_WAIT
         env_recover.METRIC_WAIT = 0
         self.addCleanup(setattr, env_recover, "METRIC_WAIT", real)
@@ -474,12 +444,34 @@ class RunSteps(unittest.TestCase):
                                                   ["account", "set-status", "acc-b", "disabled"]])
 
 
-class Main(unittest.TestCase):
-    CREDS = {"GRAFANA_CLOUD_READ_TOKEN": "t", "GRAFANA_CLOUD_PROM_URL": "https://p.example/api/prom",
-             "GRAFANA_CLOUD_PROM_USER": "123", "MIMIR_API_KEY": "k"}
+class FakeWatch:
+    """rule_backend.Watch's surface, its record given."""
 
-    def go(self, environ, events=None, **overrides):
-        """main() with the cluster-touching pieces stubbed; returns (status, events)."""
+    def __init__(self, events, samples=(), problems=()):
+        self.events, self.samples, self._problems = events, list(samples), list(problems)
+        self.started = self.stopped = None
+
+    def start(self):
+        self.events.append("watch")
+        self.started = 0.0
+
+    def stop(self):
+        self.events.append("watch_stop")
+        self.stopped = 60.0
+        return self
+
+    def problems(self):
+        return self._problems
+
+    def firing(self):
+        return [x for x in self.samples if x.state == "firing"]
+
+
+class Main(unittest.TestCase):
+    CREDS = {"ANDARA_BOX_ENV": "/nonexistent"}
+
+    def go(self, environ, events=None, watch=None, exists=True, **overrides):
+        """main() with the backend, the watch and the cluster-touching pieces stubbed; returns (status, events)."""
         events = [] if events is None else events
 
         class FakeRun(env_recover.Run):
@@ -492,32 +484,59 @@ class Main(unittest.TestCase):
 
         for name, fn in overrides.items():
             setattr(FakeRun, name, fn)
-        real = (env_recover.Run, env_recover.Grafana)
-        env_recover.Run, env_recover.Grafana = FakeRun, lambda: types.SimpleNamespace(
-            firing_between=lambda *a: events.append("firing_between") or [],
-            observed_states=lambda *a: events.append("observed_states") or [])
-        try:
-            with mock.patch.dict(os.environ, environ, clear=True):
-                status = env_recover.main(["dev", "andara-dev"])
-        finally:
-            env_recover.Run, env_recover.Grafana = real
+
+        def confirm():
+            events.append("confirm_exists")
+            if not exists:
+                raise rule_backend.Inconclusive("RecoveryStateMismatch is not defined in grafana solo7dev")
+
+        g = types.SimpleNamespace(header=lambda: ["backend: grafana solo7dev"], settle=0, confirm_exists=confirm,
+                                  matchers='environment="dev",namespace="andara-dev"', __str__=lambda: "grafana solo7dev")
+        w = watch or FakeWatch(events)
+        with mock.patch.object(env_recover, "Run", FakeRun), mock.patch.object(env_recover, "backend", lambda env: g), \
+                mock.patch.object(env_recover.rule_backend, "Watch", lambda b, say: w), \
+                mock.patch.dict(os.environ, environ, clear=True):
+            status = env_recover.main(["dev", "andara-dev"])
         return status, events
 
     def test_bad_rto_fails_before_the_cluster(self):
         for rto in ("abc", "1.5", "0", ""):
             touched = []
             status, _ = self.go(dict(self.CREDS, ENV_RECOVER_RTO=rto),
-                                preflight=lambda self, g, e: touched.append(1))
+                                preflight=lambda self, g: touched.append(1))
             self.assertEqual((status, touched), (1, []), rto)
 
-    def test_whitespace_token_is_missing(self):
-        touched = []
-        status, _ = self.go(dict(self.CREDS, GRAFANA_CLOUD_READ_TOKEN="  "),
-                            preflight=lambda self, g, e: touched.append(1))
-        self.assertEqual((status, touched), (1, []))
+    def test_an_unset_credential_exits_3_before_any_gcx_call(self):
+        """AC-6."""
+        calls = []
+        env = {"GRAFANA_SOLO7DEV_READ_TOKEN": "  ", "GRAFANA_SOLO7_READ_TOKEN": "t",
+               "GRAFANA_CLOUD_PROM_URL": "https://p.example/api/prom", "GRAFANA_CLOUD_PROM_USER": "1",
+               "GRAFANA_CLOUD_READ_TOKEN": "t", "ANDARA_BOX_ENV": "/nonexistent"}
+        err = io.StringIO()
+        with mock.patch.object(gcx, "run", lambda *a, **k: calls.append(a)), mock.patch.dict(os.environ, env, clear=True), \
+                contextlib.redirect_stderr(err):
+            status = env_recover.main(["dev", "andara-dev"])
+        self.assertEqual((status, calls), (3, []))
+        self.assertIn("GRAFANA_SOLO7DEV_READ_TOKEN", err.getvalue())
+
+    def test_an_inconclusive_selection_exits_1_before_the_cluster(self):
+        """AC-2: paused, live in both, unhealthy: rule_backend.select's message, exit 1, nothing touched."""
+        def select(*a, **k):
+            raise rule_backend.Inconclusive("RecoveryStateMismatch is live in neither backend: grafana solo7dev: paused")
+
+        err = io.StringIO()
+        with mock.patch.object(env_recover.rule_backend, "credentials", lambda env, e=None: ("solo7dev", {}, {})), \
+                mock.patch.object(gcx, "write_config", lambda e=None: []), \
+                mock.patch.object(env_recover.rule_backend, "select", select), \
+                mock.patch.object(env_recover, "Run", lambda *a: self.fail("reached the run")), \
+                contextlib.redirect_stderr(err):
+            status = env_recover.main(["dev", "andara-dev"])
+        self.assertEqual(status, 1)
+        self.assertIn("inconclusive: RecoveryStateMismatch is live in neither backend: grafana solo7dev: paused",
+                      err.getvalue())
 
     def test_unexpected_exception_dumps_and_cleans_up(self):
-        def boom(self, g, e):
+        def boom(self, g):
             raise RuntimeError("boom")
 
         status, events = self.go(self.CREDS, preflight=boom)
@@ -537,7 +556,7 @@ class Main(unittest.TestCase):
             got.append(t_ready)
             raise env_recover.Failed("stop")
 
-        self.go(self.CREDS, preflight=lambda self, g, e: None, setup_cli=setup, play_until_round=lambda self: 60,
+        self.go(self.CREDS, preflight=lambda self, g: None, setup_cli=setup, play_until_round=lambda self: 60,
                 kill=lambda self: (1000.0, 5.0, 0, 1), rebind=rebind)
         self.assertEqual(got, [1005.0])
 
@@ -556,17 +575,17 @@ class Main(unittest.TestCase):
             raise env_recover.Failed("stop")
 
         status, _ = self.go(
-            self.CREDS, preflight=lambda self, g, e: None, setup_cli=setup, play_until_round=lambda self: 60,
+            self.CREDS, preflight=lambda self, g: None, setup_cli=setup, play_until_round=lambda self: 60,
             kill=lambda self: (1000.0, 5.0, 0, 1), rebind=lambda self, marks, t_ready: events.append("rebind"),
             recovered_metrics=metrics)
         self.assertEqual((status, events), (1, ["rebind", "metrics"]))
 
     def test_the_end_of_run_checks_run_in_order_and_fail_the_run(self):
-        full = ["rebind", "recovered_metrics", "rebound_counters", "rebound_counters", "firing_between",
-                "observed_states", "assert_no_further_restart"]
+        full = ["watch", "rebind", "recovered_metrics", "rebound_counters", "rebound_counters", "watch_stop",
+                "confirm_exists", "assert_no_further_restart"]
         # (name that fails, which call of it, events seen up to and including the failure)
-        for failing, nth, upto in (("rebound_counters", 1, 3), ("rebound_counters", 2, 4),
-                                   ("assert_no_further_restart", 1, 7)):
+        for failing, nth, upto in (("rebound_counters", 1, 4), ("rebound_counters", 2, 5),
+                                   ("assert_no_further_restart", 1, 8)):
             events = []
 
             class P:
@@ -585,13 +604,15 @@ class Main(unittest.TestCase):
 
             with mock.patch.object(env_recover.time, "sleep", lambda s: None):
                 status, _ = self.go(
-                    self.CREDS, events=events, preflight=lambda self, g, e: None, setup_cli=setup,
+                    self.CREDS, events=events, preflight=lambda self, g: None, setup_cli=setup,
                     play_until_round=lambda self: 60, kill=lambda self: (1000.0, 5.0, 0, 1),
                     rebind=rec("rebind"), recovered_metrics=rec("recovered_metrics"),
                     trace_id=lambda self, since: "", rebound_counters=rec("rebound_counters"),
                     assert_no_further_restart=rec("assert_no_further_restart"))
             self.assertEqual(status, 1, (failing, nth))
-            self.assertEqual([e for e in events if e not in ("dump", "cleanup")], full[:upto], (failing, nth))
+            # A failure before the watch is stopped stops it in the run's finally.
+            seen = [e for e in events if e not in ("dump", "cleanup")]
+            self.assertEqual(seen[:upto], full[:upto], (failing, nth))
 
     def test_a_restart_during_cleanup_fails_the_run(self):
         for fail_on, expect in ((None, 0), (2, 1)):
@@ -611,7 +632,7 @@ class Main(unittest.TestCase):
 
             with mock.patch.object(env_recover.time, "sleep", lambda s: None):
                 status, _ = self.go(
-                    self.CREDS, events=events, preflight=lambda self, g, e: None, setup_cli=setup,
+                    self.CREDS, events=events, preflight=lambda self, g: None, setup_cli=setup,
                     play_until_round=lambda self: 60, kill=lambda self: (1000.0, 5.0, 0, 1),
                     rebind=lambda self, *a: None, recovered_metrics=lambda self, *a: None,
                     trace_id=lambda self, since: "", rebound_counters=lambda self, g: None,
@@ -634,10 +655,57 @@ class Main(unittest.TestCase):
             events.append("kill")
             raise env_recover.Failed("stop here")
 
-        status, _ = self.go(self.CREDS, preflight=lambda self, g, e: None, setup_cli=lambda self: setup(self),
+        status, _ = self.go(self.CREDS, preflight=lambda self, g: None, setup_cli=lambda self: setup(self),
                             play_until_round=lambda self: 60, kill=kill)
         self.assertEqual(status, 1)
-        self.assertEqual(events, ["lines", "lines", "kill"])
+        self.assertEqual([e for e in events if not e.startswith("watch")], ["lines", "lines", "kill"])
+
+
+class Quiet(unittest.TestCase):
+    """AC-7 over the run's own record, and "none" only once the rule exists in the backend."""
+
+    def ok_run(self, watch, exists=True):
+        class P:
+            def lines(self):
+                return []
+
+        def setup(self):
+            self.players = {"a": P(), "b": P()}
+
+        err = io.StringIO()
+        with mock.patch.object(env_recover.time, "sleep", lambda s: None), contextlib.redirect_stderr(err):
+            status, events = Main.go(Main(), Main.CREDS, watch=watch, exists=exists,
+                                     preflight=lambda self, g: None, setup_cli=setup, play_until_round=lambda self: 60,
+                                     kill=lambda self: (1000.0, 5.0, 0, 1), rebind=lambda self, *a: None,
+                                     recovered_metrics=lambda self, *a: None, trace_id=lambda self, since: "",
+                                     rebound_counters=lambda self, g: None, assert_no_further_restart=lambda self, *a: None)
+        return status, err.getvalue()
+
+    def sample(self, state):
+        return rule_backend.Sample(1000.0, state, {"firing": "Alerting"}.get(state, state.title()))
+
+    def test_a_quiet_record_passes(self):
+        status, err = self.ok_run(FakeWatch([], [self.sample("normal"), self.sample("pending")]))
+        self.assertEqual(status, 0, err)
+
+    def test_an_empty_record_passes_once_the_rule_exists(self):
+        self.assertEqual(self.ok_run(FakeWatch([]))[0], 0)
+
+    def test_an_empty_record_for_a_rule_that_is_gone_is_inconclusive(self):
+        status, err = self.ok_run(FakeWatch([]), exists=False)
+        self.assertEqual(status, 1)
+        self.assertIn("inconclusive: RecoveryStateMismatch is not defined", err)
+
+    def test_a_firing_sample_fails(self):
+        status, err = self.ok_run(FakeWatch([], [self.sample("normal"), self.sample("firing")]))
+        self.assertEqual(status, 1)
+        self.assertIn("RecoveryStateMismatch fired during the run", err)
+        self.assertIn("gcx: Alerting", err)
+
+    def test_a_gap_in_the_record_is_inconclusive(self):
+        status, err = self.ok_run(FakeWatch([], [self.sample("normal")], problems=["no successful poll from a to b"]))
+        self.assertEqual(status, 1)
+        self.assertIn("inconclusive: no successful poll", err)
 
 
 def shutil_rm(path):

@@ -17,6 +17,16 @@ No `andara-server` pod has been scrapeable for two minutes. Players cannot conne
 players' streams have dropped and their Characters are linkdead (`AW-SRV-015`). Every second past
 `session.linkdead_grace` (180 s) despawns them — that is the clock you are on.
 
+## During a drill
+
+`make observe-unavailable ENV=dev` takes `andara-dev`'s server away on purpose, to prove this alert fires
+and clears (`AW-INF-069`). An `environment="dev"` page inside its window is the drill, not an outage. The
+drill's output is the annotation to read. It prints `observe-unavailable: drill: start <UTC>`,
+`drill: server-restored <UTC>` and `drill: end <UTC>`, one `record <UTC> AndaraServerUnavailable <state>
+(gcx: <raw>)` line per 10 s poll between them, and `backend:` naming the stack it read. A page for `dev`
+inside that window needs nothing. A page outside it, or for any other environment, is real: follow the
+steps below.
+
 ## How to confirm
 
 ```

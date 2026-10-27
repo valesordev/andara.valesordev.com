@@ -5,8 +5,7 @@
 #
 # <path>                              <story that removes it>
 scripts/alerts_sync.py                AW-INF-077  # the ruler sync and its mimirtool calls
-scripts/grafana_http.py               AW-INF-069  # env_recover.py's and observe_unavailable.py's reads
-scripts/env_recover.py                AW-INF-069  # its range queries and the ruler config read
+scripts/ruler_read.py                 AW-INF-077  # the drills' ruler config read (backend selection, AW-INF-069)
 scripts/stack_smoke.sh                AW-INF-064  # compose-side Prometheus and Loki queries
 scripts/stack_recover.sh              AW-INF-064
 scripts/stack_recover_mismatch.sh     AW-INF-064

@@ -126,7 +126,7 @@ class Shapes(FakeGcx):
     def test_state_vocabulary(self):
         for raw, want in [("Alerting", "firing"), ("firing", "firing"), ("Pending", "pending"),
                           ("Normal", "normal"), ("Normal (NoData)", "normal"), ("inactive", "normal"),
-                          ("Recovering", "recovering")]:
+                          ("Recovering", "firing"), ("Error", "error")]:
             self.assertEqual(gcx.state(raw), want, raw)
 
     def test_metrics(self):

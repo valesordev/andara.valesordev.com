@@ -1,0 +1,61 @@
+[
+  {
+    "name": "andara-server",
+    "file": "Andara",
+    "folderUid": "andara",
+    "rules": [
+      {
+        "state": "inactive",
+        "name": "AndaraServerUnavailable",
+        "uid": "eg2i0bv3njdvkd",
+        "folderUid": "andara",
+        "health": "ok",
+        "type": "alerting",
+        "query": "max by (environment, namespace) (up{job=\"andara-server\"}) == 0\n  or (\n       vector(0) < 0\n  ) and on() count(up{cluster!=\"ci\", namespace!=\"\", namespace!=\"andara-shared\"}) > 0\n",
+        "lastEvaluation": "0001-01-01T00:00:00Z",
+        "evaluationTime": 0,
+        "isPaused": true,
+        "labels": {
+          "severity": "page",
+          "slo": "world-write-availability"
+        },
+        "annotations": {
+          "runbook": "docs/runbooks/server-unavailable.md",
+          "summary": "No ready andara-server pod for 2 minutes \u2014 players cannot connect"
+        },
+        "queriedDatasourceUIDs": [
+          "grafanacloud-prom"
+        ]
+      },
+      {
+        "state": "inactive",
+        "name": "AndaraServerCrashLooping",
+        "uid": "fg2i0bv3q1a80f",
+        "folderUid": "andara",
+        "health": "ok",
+        "type": "alerting",
+        "query": "increase(kube_pod_container_status_restarts_total{container=\"server\", pod=~\"andara-[0-9]+\"}[10m]) > 3\n",
+        "lastEvaluation": "0001-01-01T00:00:00Z",
+        "evaluationTime": 0,
+        "isPaused": true,
+        "labels": {
+          "severity": "page",
+          "slo": "world-write-availability"
+        },
+        "annotations": {
+          "runbook": "docs/runbooks/server-crashlooping.md",
+          "summary": "andara-server restarted more than 3 times in 10 minutes"
+        },
+        "queriedDatasourceUIDs": [
+          "grafanacloud-prom"
+        ]
+      }
+    ],
+    "totals": {
+      "inactive": 2
+    },
+    "interval": 60,
+    "lastEvaluation": "0001-01-01T00:00:00Z",
+    "evaluationTime": 0
+  }
+]

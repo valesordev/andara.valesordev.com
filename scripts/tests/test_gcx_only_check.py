@@ -98,8 +98,7 @@ class Tree(unittest.TestCase):
         self.assertEqual(errors, [])
         self.assertEqual(allowed, {
             "scripts/alerts_sync.py": "AW-INF-077",
-            "scripts/grafana_http.py": "AW-INF-069",
-            "scripts/env_recover.py": "AW-INF-069",
+            "scripts/ruler_read.py": "AW-INF-077",
             "scripts/stack_smoke.sh": "AW-INF-064",
             "scripts/stack_recover.sh": "AW-INF-064",
             "scripts/stack_recover_mismatch.sh": "AW-INF-064",

@@ -650,7 +650,7 @@ gcx-check:
 gcx-only-check:
 	@$(PY) $(SCRIPTS)/gcx_only_check.py
 
-## observe-unavailable: scale andara-dev's server to 0 and back, and assert AndaraServerUnavailable names andara-dev and clears, no other namespace moving (GRAFANA_CLOUD_* from the environment) — ENV=dev
+## observe-unavailable: scale andara-dev's server to 0 and back, and assert through gcx that AndaraServerUnavailable fires for dev and clears, nothing else moving; refuses before cutover step 4(v) (GRAFANA_SOLO7DEV/SOLO7_READ_TOKEN, the MIMIR_* ruler read; AW-INF-069) — ENV=dev
 observe-unavailable:
 	@$(PY) $(SCRIPTS)/observe_unavailable.py "$(ENV)"
 
