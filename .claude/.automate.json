@@ -1,8 +1,8 @@
 {
-  "source": "automate.system9studios.com@6c0bb19",
+  "source": "automate.system9studios.com@a4406ab",
   "target": "andaras-world",
   "repo": "system9studios/automate.system9studios.com",
-  "ref": "v0.12.0",
+  "ref": "v0.13.1",
   "files": {
     ".claude/skills/arch-start-sprint/SKILL.md": "d7a7f1bd70a5226c750c2cb76a8c46f1b858054b286f48e060106b6d85e96366",
     ".claude/skills/arch-start-sprint/references/examples.md": "c0e7eda4f832e4db41f7198f2438962be501d2668b0bbb0a696624f2cc199f36",
@@ -52,7 +52,7 @@
     ".claude/skills/release-plan/references/formats.md": "9ced5f729224e234fc1662c33d1efc7544e23163fe530b83b9f236a843433a32",
     ".claude/skills/release-review/SKILL.md": "bb11580872c930bd515d63a670f337607c9fd22cb4c093a5ce7646fddae6de29",
     ".claude/skills/release-review/references/examples.md": "df640e70958e2c34040f67d1f8ea35cb9972fda31c2fa7a0e0e3c0373d7f8ee2",
-    ".claude/skills/role/SKILL.md": "8574a227d2b617979fc6504d78052eb5671eb06069d461a401825eaa624f988c",
+    ".claude/skills/role/SKILL.md": "4a92cc0a10edb8cb056759b3b12cd6320480ed4dee3bc250d458cfc499376d2a",
     ".claude/skills/role/references/examples.md": "628608bd52ab697512d0e930f49492b8721e0e6d8c69d0616ef2e15e802b2c26",
     ".claude/skills/role/references/stories-on-github.md": "36b29d1b014f46d94fc0d1f1a7b567a493baa61d223969f413944e10a201663f",
     ".claude/skills/sprint-run/SKILL.md": "63b1f68e5b02ca2c901fb775a05433414fc691e9664d2566b05c864d918ba019",
@@ -60,10 +60,10 @@
     ".claude/skills/sre-start-sprint/SKILL.md": "d589b573900687577742e011b5db348d0a0ce1c60376724090e930fee3f3b16d",
     ".claude/skills/sre-start-sprint/references/examples.md": "a22df600f0c3f11a3fc70c435de07f18d9837e4cc6d3fe440758bd31d28e62c2",
     ".claude/bin/codex-review": "050bbfd5df0df227b1d398a1c9318529f6d5533eee6bbb3591a1d2130dcacc2f",
-    ".claude/bin/coordinator": "1a6cc44c054c333d30f726101b4cfb86cddfdf20069b400a5bea52b949bd21ba",
+    ".claude/bin/coordinator": "a1405db5dab7c4c5c53d7ce8ccca4e19b92cdeaef9662ad2e315f3a92d3cb2f0",
     ".claude/bin/ghapp": "b9c523248921777bcc02c47d805feb782b6f614882cf784d0567f2f7e40eadd1",
     ".claude/bin/project-mirror": "5afd8e1e543d2244d4f7cb2f08083e516e29ebadb01e4dbfbe73bb9647a9c011",
-    ".claude/bin/role": "0602b733cbedd1032fa5b6a421e8f7cd5c088bb4a941a4b32b10199de8795838",
+    ".claude/bin/role": "53e3c097c65c5adc37c9e30949d676765f99ffd87820850e540999b33bfe9971",
     ".claude/bin/sprint-state": "db86f12d2c60c0bf39502d28242969b746682212e518dc07528ffff7954c8d6f",
     ".claude/bin/story": "c2bc192073c12c8e49a7e38cd6c4264002bd08334cf14da46fe4360919b81f38",
     ".github/workflows/story-merge.yml": "b24ef1fcca6325fe50c86507560df0fbd3e443332be138679dc701a176b21b23",
@@ -79,7 +79,7 @@
     ".claude/skills/mechanic-spec/references/examples.md": "ee708c3c4d365081ce1aa89dc14dcc5e3c8714b806f43884d01602527b3623c2",
     ".claude/skills/mechanic-spec/references/template.md": "ed4e5e2cdf39d09175305e860b659913065fda2dbd2a101156fafc78325923a1",
     ".claude/bin/update-agents": "bea7e78639cb0295ffc2f5d6cb4cd72f95ce61d6c01f7cdc459c852d605d8491",
-    ".claude/roles/_repo.md": "de915da2eddc56ace098475fd6d899b57a8c87ebaa6d81fae194032f0c824da4",
+    ".claude/roles/_repo.md": "fc95993ac555e90cad25324458b73b46dd20e0c06c69499afc4eaefe3ad1f08b",
     ".claude/roles/architecture.md": "2060d12b3c81d81dbbefd7ed842a14fb5de9de04dffcb9b1410f447b7c432276",
     ".claude/roles/game-designer.md": "33bf61efd77c2ceb1c79e5e27291dcf4b6af3bb8cf316c0fde05087504fb877c",
     ".claude/roles/implementation.md": "2897a811ed6c39402856468b7d218096b9d2c7c528a0b98a4d77c3bc74b14478",
@@ -88,14 +88,15 @@
     ".claude/roles/sre.md": "0802a4f403f55e5e718b7508d1b16b59838f7487a86693a94f305914ac5e989e"
   },
   "hook_commands": [
+    "python3 \"${CLAUDE_PROJECT_DIR}/.claude/bin/role\" hook-post-worktree",
     "python3 \"${CLAUDE_PROJECT_DIR}/.claude/bin/role\" hook-pre-bash --project",
     "python3 \"${CLAUDE_PROJECT_DIR}/.claude/bin/role\" hook-pre-tool-use --project",
     "python3 \"${CLAUDE_PROJECT_DIR}/.claude/bin/role\" hook-pre-url --project",
     "python3 \"${CLAUDE_PROJECT_DIR}/.claude/bin/role\" hook-session-start"
   ],
   "sources": {
-    "automate.system9studios.com": "6c0bb19",
-    "automate.valesordev.com": "8d8f6bf"
+    "automate.system9studios.com": "a4406ab",
+    "automate.valesordev.com": "ddb5e53"
   },
   "settings": {
     "permissions.allow": [

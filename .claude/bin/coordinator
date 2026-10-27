@@ -1276,6 +1276,30 @@ def setup_worktree(ctx: Ctx, lane: dict, sid: str) -> tuple[Path, bool]:
     return path, fresh
 
 
+def lane_setup(ctx: Ctx, wt: Path, env: dict, log: Path, lane_dir: Path) -> None:
+    """_repo.md `setup:` (`make bootstrap`, say) in a lane's new worktree, with the lane's env and as
+    its user, before the lane starts: a fresh worktree has none of the tools a gitignored directory
+    holds. It runs outside the lane's session, so the lane's allow-list never needs it."""
+    cmd = role.setup_command(ctx.roles)
+    if not cmd:
+        return
+    shown = shlex.join(cmd)
+    try:
+        proc = ctx.host.start(cmd, wt, env, log, lane_dir)
+    except OSError as e:
+        raise CoordError(f"setup `{shown}` couldn't start: {e}") from e
+    try:
+        code = proc.wait(role.SETUP_TIMEOUT)
+    except subprocess.TimeoutExpired:
+        terminate(proc)
+        raise CoordError(f"setup `{shown}` timed out after {role.SETUP_TIMEOUT}s; its log: {log}") from None
+    except BaseException:   # Ctrl-C: the setup goes with the run
+        terminate(proc)
+        raise
+    if code != 0:
+        raise CoordError(f"setup `{shown}` failed (exit {code}); its log: {log}")
+
+
 def catch_up(host, wt: Path) -> None:
     """Bring a resumed lane's branch up to origin/main before the lane starts: rebase it while it's
     unpushed, merge origin/main once it's pushed (a lane never force-pushes). A lane could run either
@@ -1697,6 +1721,14 @@ def run_lane(ctx: Ctx, lane: dict, run_id: str, run_dir: Path, lane_dir: Path, a
         env.update(GIT_CONFIG_COUNT="1", GIT_CONFIG_KEY_0="include.path",
                    GIT_CONFIG_VALUE_0=str(auth / "gitconfig"))   # not the entries: see git_config_text
     env = host.lane_env(env, auth)
+    if fresh:   # a reused worktree ran it when it was made: a failed setup removes its worktree
+        try:
+            lane_setup(ctx, wt, env, run_dir / f"{name}.setup.log", lane_dir)
+        except BaseException:   # interrupted too: a worktree left behind would be reused unset-up
+            host.put_role(sid, None)
+            host.git(host.root, "worktree", "remove", "--force", str(wt))
+            host.rmtree(scratch)
+            raise
     # Between the process existing and the run owning it, a signal must wait: the handler
     # below only notes it, and it is raised once the lane is in `pending` (or has been stopped).
     deferred: list[int] = []

@@ -36,8 +36,11 @@ Report the current role and the roles this repo defines, then stop.
    works in `.claude/worktrees/<name>`, on a branch from `origin/main`, and the owner
    keeps the checkout they launched from. Create the role's branch there when work
    begins. If EnterWorktree fails, report it and stop: never work in the owner's
-   checkout instead. `Worktree: this session already works in …` needs nothing.
-   No `Worktree:` line (`/role none`, a cloud session) means stay where you are.
+   checkout instead. Entering it runs the repo's setup (`setup:` in `_repo.md`,
+   e.g. `make bootstrap`); if the hook reports `Setup failed`, report its output
+   and stop. `Worktree: this session already works in …` needs nothing, unless a
+   `Setup:` line follows: then run `.claude/bin/role setup` first, and stop if it
+   fails. No `Worktree:` line (`/role none`, a cloud session) means stay where you are.
    Scratch files (downloads, rendered configs, notes, PR bodies) stay in
    Claude Code's scratchpad directory, which still works from the worktree.
    Name each scratchpad file by its full literal path, every time, and never
