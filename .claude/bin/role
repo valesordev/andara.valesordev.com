@@ -20,6 +20,7 @@ Commands:
   role require <role> <session_id>
   role clear <session_id>
   role check-cmd               print the repo's check command (_repo.md `check:`)
+  role setup                   run the repo's setup command (_repo.md `setup:`) in this worktree
   role owners <path>…          print each path's owner: role names, `generated`, or `unowned`
   role reviewed                record HEAD as reviewed by /pre-pr
   role reviewed --show         report whether HEAD has been reviewed
@@ -29,6 +30,12 @@ Commands:
   role hook-pre-tool-use       (stdin: PreToolUse hook JSON; file tools)
   role hook-pre-bash           (stdin: PreToolUse hook JSON; Bash)
   role hook-pre-url            (stdin: PreToolUse hook JSON; WebFetch, browser navigation)
+  role hook-post-worktree      (stdin: PostToolUse hook JSON; EnterWorktree)
+
+Setup: `setup: <command>` in _repo.md (one command, no shell syntax, e.g. `make bootstrap`) is what
+a fresh worktree runs before any work: the toolchain a gitignored directory holds isn't in one.
+hook-post-worktree runs it once per worktree when a session enters one, and tells the session to
+stop if it fails; `role setup` runs it again. Coordinator lanes get theirs from the coordinator.
 
 Tools: `tools: [<tool>, ...]` in _repo.md (every role) and in a role's frontmatter name the CLIs
 the role uses, vendored as .claude/tools/<tool>.md (notes) and .json (domain, check, instead_of).
@@ -378,6 +385,51 @@ def worktree_line(root: Path, role: str, sid: str) -> str | None:
             f"the owner keeps the checkout this session started in)")
 
 
+SETUP_TIMEOUT = 840     # seconds: under the hook's own timeout (hooks.json), so the session hears why
+SETUP_DONE = "claude-setup"   # in a worktree's own git dir, so it goes with the worktree
+SETUP_TAIL = 20         # lines of a failed setup's output the session sees
+
+
+def setup_command(roles: Roles) -> list[str] | None:
+    """_repo.md `setup:` as argv, or None when the repo has none."""
+    s = roles.repo.get("setup") or ""
+    return shlex.split(s) if isinstance(s, str) and s.strip() else None
+
+
+def setup_marker(wt: Path) -> Path:
+    return Path(_git(wt, "rev-parse", "--absolute-git-dir")) / SETUP_DONE
+
+
+def needs_setup(roles: Roles, wt: Path) -> bool:
+    return bool(setup_command(roles)) and in_linked_worktree(wt) and not setup_marker(wt).is_file()
+
+
+def run_setup(roles: Roles, wt: Path) -> tuple[bool, str]:
+    """Run `setup:` in worktree wt: whether it passed, and what to tell the session."""
+    cmd = setup_command(roles)
+    shown = shlex.join(cmd)
+    try:
+        r = subprocess.run(cmd, cwd=wt, stdin=subprocess.DEVNULL, stdout=subprocess.PIPE,
+                           stderr=subprocess.STDOUT, text=True, timeout=SETUP_TIMEOUT)
+    except subprocess.TimeoutExpired:
+        return False, f"`{shown}` timed out after {SETUP_TIMEOUT}s in {wt}"
+    except OSError as e:
+        return False, f"`{shown}` couldn't start in {wt}: {e}"
+    if r.returncode != 0:
+        tail = "\n".join(r.stdout.rstrip().splitlines()[-SETUP_TAIL:])
+        return False, f"`{shown}` failed (exit {r.returncode}) in {wt}:\n{tail}"
+    setup_marker(wt).write_text(shown + "\n")
+    return True, f"`{shown}` ran in {wt}"
+
+
+def setup_line(roles: Roles, root: Path) -> str | None:
+    """What `role set` adds for a worktree that hasn't run `setup:` (one EnterWorktree didn't make)."""
+    if not needs_setup(roles, root):
+        return None
+    return (f"Setup: this worktree hasn't run `{shlex.join(setup_command(roles))}`: run "
+            f"`.claude/bin/role setup` before any other step, and stop if it fails")
+
+
 def head_sha(root: Path) -> str | None:
     try:
         return _git(root, "rev-parse", "HEAD")
@@ -626,6 +678,9 @@ def cmd_set(args: list[str]) -> int:
     wt = worktree_line(root, role, args[1])
     if wt:
         print(wt + "\n")
+        setup = setup_line(roles, root)
+        if setup:
+            print(setup + "\n")
     if prev and prev != role:
         print(f"(role changed: {prev} -> {role})\n")
     print(charter(roles, role))
@@ -672,6 +727,20 @@ def cmd_clear(args: list[str]) -> int:
 
 def cmd_check_cmd(_: list[str]) -> int:
     print(check_command(Roles(_root_or_die())))
+    return 0
+
+
+def cmd_setup(_: list[str]) -> int:
+    root = _root_or_die()
+    roles = Roles(root)
+    if not setup_command(roles):
+        print("role: this repo has no setup command (_repo.md `setup:`)")
+        return 0
+    ok, msg = run_setup(roles, root)
+    if not ok:
+        print(f"role: setup failed: {msg}", file=sys.stderr)
+        return 1
+    print(f"setup: {msg}")
     return 0
 
 
@@ -2965,6 +3034,48 @@ def hook_pre_url(args: list[str]) -> int:
     return _advise(_session_tools_advice(data, cwd, lambda roles, r: url_tool_advice(roles, r, url)))
 
 
+def entered_worktree(root: Path, data: dict) -> Path | None:
+    """The worktree an EnterWorktree call put the session in: its `path`, or its `name` under
+    .claude/worktrees/, or the one /role gave the session."""
+    ti = data.get("tool_input") or {}
+    cwd = Path(data.get("cwd") or os.getcwd())
+    if isinstance(ti.get("path"), str) and ti["path"]:
+        wt = Path(ti["path"]) if os.path.isabs(ti["path"]) else cwd / ti["path"]
+    elif isinstance(ti.get("name"), str) and ti["name"]:
+        wt = main_root(root) / WORKTREES / ti["name"]
+    else:
+        wt = session_worktree(root, data.get("session_id", "")) if SESSION_RE.match(data.get("session_id", "")) \
+            else None
+    return wt if wt and wt.is_dir() else None
+
+
+def hook_post_worktree(_: list[str]) -> int:
+    """After EnterWorktree: run the repo's `setup:` in a worktree that hasn't run it. A failure
+    blocks: the session reports it and stops rather than working without the repo's tools."""
+    if os.environ.get("COORDINATOR_LANE"):
+        return 0    # a lane's worktree was set up by the coordinator before the lane started
+    data = _hook_input()
+    root = repo_root(Path(data.get("cwd") or os.getcwd()))
+    if root is None:
+        return 0
+    wt = entered_worktree(root, data)
+    if wt is None or repo_root(wt) is None:
+        return 0
+    wt = repo_root(wt)
+    roles = Roles(wt)
+    if not needs_setup(roles, wt):
+        return 0
+    ok, msg = run_setup(roles, wt)
+    if ok:
+        print(json.dumps({"hookSpecificOutput": {"hookEventName": "PostToolUse",
+                                                 "additionalContext": f"Setup: {msg}."}}))
+    else:
+        print(json.dumps({"decision": "block", "reason": (
+            f"Setup failed: {msg}\nThis worktree doesn't have the repo's tools. Report this to the owner "
+            f"and stop; once it's fixed, `.claude/bin/role setup` runs it again.")}))
+    return 0
+
+
 COMMANDS = {
     "list": cmd_list,
     "help": cmd_help,
@@ -2973,6 +3084,7 @@ COMMANDS = {
     "require": cmd_require,
     "clear": cmd_clear,
     "check-cmd": cmd_check_cmd,
+    "setup": cmd_setup,
     "owners": cmd_owners,
     "reviewed": cmd_reviewed,
     "app-token": cmd_app_token,
@@ -2981,6 +3093,7 @@ COMMANDS = {
     "hook-pre-tool-use": hook_pre_tool_use,
     "hook-pre-bash": hook_pre_bash,
     "hook-pre-url": hook_pre_url,
+    "hook-post-worktree": hook_post_worktree,
 }
 
 

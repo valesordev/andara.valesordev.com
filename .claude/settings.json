@@ -39,6 +39,18 @@
           }
         ]
       }
+    ],
+    "PostToolUse": [
+      {
+        "matcher": "EnterWorktree",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "python3 \"${CLAUDE_PROJECT_DIR}/.claude/bin/role\" hook-post-worktree",
+            "timeout": 900
+          }
+        ]
+      }
     ]
   },
   "permissions": {

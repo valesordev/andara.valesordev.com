@@ -1,6 +1,7 @@
 ---
 generated: [gen/, docs/builders/reference.md]
 check: make check
+setup: make bootstrap
 lane_path: [bin/]
 project: Andara's World
 story_prefix: AW
