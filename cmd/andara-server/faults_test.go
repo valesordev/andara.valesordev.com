@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: Apache-2.0
 // Copyright 2026 Valesor Development
 
-//go:build !fault
+//go:build !fault && !sizing
 
 package main
 
