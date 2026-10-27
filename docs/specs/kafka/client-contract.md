@@ -237,7 +237,7 @@ contract pins and asserts it. The ingress never queries a broker config for this
   - **Removal:** the key goes away with compose (`ADR-0013`). Deleting it, together with its README row and its
     `ignore_env` entry, is part of compose's retirement (`AW-INF-067`), with the server half as an implementation
     story.
-- Entering and leaving log at `info` with `partition` and the cause (`produce_error` or `probe`, and the
+- Entering logs at `warn` (`partition degraded`) and leaving logs at `info`, each with `partition` and the cause (`produce_error` or `probe`, and the
   error name or `leader_absent` / `isr_below_min`).
 
 ### Metrics

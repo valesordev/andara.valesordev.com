@@ -878,7 +878,7 @@ The module drops every line marked `# env:<environment>` whose value is not in t
 `AW-INF-047` reshapes `AndaraServerUnavailable` so the group starts with a never-true term (`vector(0) < 0`) and
 every marked line is `or …`, so any subset parses. So `solo7dev` renders the `dev` absence once `dev` is
 required (and `staging`'s when it exists), `solo7` renders `prod`'s once prod is, and neither renders the other's.
-`local` is never required. The rules' existing guard (`and on() count(up{environment!=""}) > 0`) is retained.
+`local` is never required. The rules' existing guard is retained. *(Superseded 2026-10-21 by `ADR-0014` §9 and A3: the guard is now `and on() count(up{cluster!="ci", namespace!="", namespace!="andara-shared"}) > 0`. Annotated 2026-10-27 at `AW-INF-047`'s §8.)*
 **The check:** `make tf-test` renders every rule for every stack and parses it (`promtool check rules` on the
 rendered output); a stack whose rendered rule names an environment outside its `required_environments` fails the
 test. The rule semantics (thresholds, `for`) are not touched.
@@ -1227,7 +1227,7 @@ PR #595). The routing test runs against the pinned binary in `make check`. No de
   - `solo7dev`'s token reads contact points and the policy through the provider (2026-10-17 amendment).
     `solo7`'s provider reads wait for prod (AW-INF-078).
   - No `andara-reader` role is made.
-- **Still open:** `Recovering` during `keep_firing_for` stays **[verify in 047]**.
+- **Still open:** `Recovering` during `keep_firing_for` is **[verify in AW-INF-070 step 4(vi)]**. *(Moved 2026-10-27 at `AW-INF-047`'s §8: 047 applies the rules paused, so it can't observe a rule leaving `firing`.)* `AW-INF-047` settled annotation templates: `{{ $labels.namespace }}/{{ $labels.name }}` is valid Grafana template syntax, and no translation is needed.
 - **`make gcx-only-check`** matches the pattern list AW-INF-075's contract named. That list adds
   `/prometheus/config/v1/rules` to the enforcement bullet's. The bullet's single exception (`alerts_sync.py`) is
   now a per-file list, `scripts/gcx_only_exceptions.txt`, where each line names the story that removes it.
