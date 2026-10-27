@@ -55,6 +55,12 @@ func run(args []string, env config.EnvLookup, stdout, stderr io.Writer) (exit in
 		tel.Log.Error("telemetry", "detail", tel.SetupErr.Error())
 		return boot.ExitFail
 	}
+	// A sizing build boots only where its seeded World can reach no log and
+	// no store (AW-SRV-065 AC-6), before anything is built; nothing in
+	// production. It logged the setting it refused.
+	if err := guardBuild(&cfg, tel.Log); err != nil {
+		return boot.ExitFail
+	}
 
 	rt, err := boot.New(cfg, tel)
 	if err != nil {
@@ -131,6 +137,9 @@ func run(args []string, env config.EnvLookup, stdout, stderr io.Writer) (exit in
 		tel.Log.Error("fault", "detail", err.Error())
 		return boot.ExitFail
 	}
+	// A sizing build's seed (AW-SRV-065), placed by the loop once content is
+	// in effect; nothing in production.
+	seed := installSeed(rt, tel.Log)
 
 	// The tick loop (AW-SRV-002), recovered from the log and running before
 	// anything is served: the content in effect is whatever the log recorded
@@ -215,6 +224,21 @@ func run(args []string, env config.EnvLookup, stdout, stderr io.Writer) (exit in
 	case <-ctx.Done():
 		stopReconcile()
 		return signaled()
+	}
+
+	// The content is in effect: a sizing build seeds it now, before anything
+	// serves (AW-SRV-065). The seed logged its own failure.
+	if err := seed(ctx, loopDone); err != nil {
+		if ctx.Err() != nil {
+			return signaled()
+		}
+		lerr := halt()
+		_ = srv.Shutdown(context.Background())
+		if lerr != nil {
+			tel.Log.Error("tick loop", "detail", lerr.Error())
+			return boot.LoopExit(lerr)
+		}
+		return boot.ExitFail
 	}
 
 	// A spawn Room the content in effect lacks fails the boot. A World

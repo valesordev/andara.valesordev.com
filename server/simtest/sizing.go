@@ -5,6 +5,7 @@ package simtest
 
 import (
 	"fmt"
+	"slices"
 
 	"github.com/valesordev/andara/server/sim"
 )
@@ -114,15 +115,53 @@ func SizingEngineWith(seed uint64, content sim.ContentSource) (*sim.Engine, erro
 		return nil, err
 	}
 	e := sim.NewEngine(w, reg, sim.Config{Seed: seed, Partitions: AllPartitions(), Handlers: sim.Handlers(), Content: content})
+	versions := map[string]string{"andara.core": "core@1", "town": "town@1"}
+	if _, err := seedSizing(e, func(t *sim.Template) string { return versions[t.Pack()] }); err != nil {
+		return nil, err
+	}
+	return e, nil
+}
 
-	merchant, ok := reg.Get("town.Merchant")
-	if !ok {
-		return nil, fmt.Errorf("simtest: the sizing fixture needs town.Merchant")
+// Seeded is what SeedSizing placed, and over how much World.
+type Seeded struct {
+	Entities, Characters, Zones, Rooms int
+}
+
+// MissingTemplateError is a Template the sizing fixture instantiates that the
+// Engine's registry doesn't hold.
+type MissingTemplateError struct{ Ref sim.TemplateRef }
+
+func (e *MissingTemplateError) Error() string {
+	return fmt.Sprintf("the sizing fixture needs Template %s", e.Ref)
+}
+
+// SizingTemplates is what the fixture instantiates: Characters, and the
+// Merchants every other Entity is.
+var SizingTemplates = []sim.TemplateRef{"andara.core.Character", "town.Merchant"}
+
+// SeedSizing places the fixture's SizingEntities into e's World as it stands,
+// the way SizingEngine places them into SizingWorld: dealt over every Room in
+// Zone-ID then Room-ID order, the first SizingCharacters of them Characters,
+// each recording its Template's pack@version in effect. It is the sizing
+// build's seed (AW-SRV-065): e's World is whatever content is in effect, and
+// over the sizing zones it is the World SizingEngine builds. Nothing else may
+// touch e meanwhile, which in a running server means the loop's goroutine
+// between ticks.
+func SeedSizing(e *sim.Engine) (Seeded, error) { return seedSizing(e, e.ContentVersionOf) }
+
+func seedSizing(e *sim.Engine, versionOf func(*sim.Template) string) (Seeded, error) {
+	reg := e.Templates()
+	tmpl := make([]*sim.Template, len(SizingTemplates))
+	for i, ref := range SizingTemplates {
+		var ok bool
+		if reg != nil {
+			tmpl[i], ok = reg.Get(ref)
+		}
+		if !ok {
+			return Seeded{}, &MissingTemplateError{Ref: ref}
+		}
 	}
-	character, ok := reg.Get("andara.core.Character")
-	if !ok {
-		return nil, fmt.Errorf("simtest: the sizing fixture needs andara.core.Character")
-	}
+	character, merchant := tmpl[0], tmpl[1]
 
 	// A stable walk over (zone, room) so the fixture is the same World on
 	// every run: the Entity in slot i is always in the same Room.
@@ -130,12 +169,16 @@ func SizingEngineWith(seed uint64, content sim.ContentSource) (*sim.Engine, erro
 		zone sim.ZoneID
 		room sim.RoomID
 	}
+	w := e.World()
+	zones := make([]sim.ZoneID, 0, len(w.Zones))
+	for id := range w.Zones {
+		zones = append(zones, id)
+	}
+	slices.Sort(zones)
 	slots := make([]slot, 0, SizingRooms)
-	for z := 0; z < SizingZones; z++ {
-		id := sim.ZoneID(fmt.Sprintf("z%02d", z))
-		zone := w.Zones[id]
-		rooms := make([]sim.RoomID, 0, len(zone.Rooms))
-		for r := range zone.Rooms {
+	for _, id := range zones {
+		rooms := make([]sim.RoomID, 0, len(w.Zones[id].Rooms))
+		for r := range w.Zones[id].Rooms {
 			rooms = append(rooms, r)
 		}
 		sortRoomIDs(rooms)
@@ -144,22 +187,23 @@ func SizingEngineWith(seed uint64, content sim.ContentSource) (*sim.Engine, erro
 		}
 	}
 	if len(slots) == 0 {
-		return nil, fmt.Errorf("simtest: the sizing fixture built no Rooms")
+		return Seeded{}, fmt.Errorf("simtest: the sizing fixture has no Rooms to place Entities in")
 	}
 
+	state := e.State()
 	for i := 0; i < SizingEntities; i++ {
 		s := slots[i%len(slots)]
-		var state sim.EntityState
+		var ent sim.EntityState
 		if i < SizingCharacters {
-			state = sim.Instantiate(character, sim.EntityID(fmt.Sprintf("c%05d", i)), "core@1")
-			state.Name = fmt.Sprintf("Character %d", i)
+			ent = sim.Instantiate(character, sim.EntityID(fmt.Sprintf("c%05d", i)), versionOf(character))
+			ent.Name = fmt.Sprintf("Character %d", i)
 		} else {
-			state = sim.Instantiate(merchant, sim.EntityID(fmt.Sprintf("e%05d", i)), "town@1")
+			ent = sim.Instantiate(merchant, sim.EntityID(fmt.Sprintf("e%05d", i)), versionOf(merchant))
 		}
-		state.Room = s.room
-		e.State().Zones[s.zone].Entities[state.ID] = &state
+		ent.Room = s.room
+		state.Zones[s.zone].Entities[ent.ID] = &ent
 	}
-	return e, nil
+	return Seeded{Entities: SizingEntities, Characters: SizingCharacters, Zones: len(zones), Rooms: len(slots)}, nil
 }
 
 func sortRoomIDs(ids []sim.RoomID) {

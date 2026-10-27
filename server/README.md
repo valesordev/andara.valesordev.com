@@ -16,6 +16,7 @@ server/boot/       load orchestration, /livez /startedz /readyz /metrics
 server/config/     flag > env > file > default
 server/telemetry/  JSON logs, Prometheus registry, boot traces
 server/fault/      fault injectors, compiled only into a -tags fault build (AW-SRV-066)
+server/sizing/     the sizing fixture's seed, compiled only into a -tags sizing build (AW-SRV-065)
 ```
 
 ## Configuration
@@ -177,6 +178,28 @@ reports `andara_build_info{build_tags="fault"}`, and reads:
 | Variable | Effect |
 |----------|--------|
 | `ANDARA_FAULT_WEDGE_TICK_AFTER` | a positive duration: once that much loop time has passed since the first tick, the next tick blocks until shutdown. `/livez` turns 503 `tick_wedged` past the threshold. Anything else is exit 1 |
+
+**The `sizing` build.** `go build -tags sizing ./cmd/andara-server` is `andara-server-sizing`, the
+binary `make measure-tick` measures a loaded World with. It is never shipped. Once the content is in
+effect and before the Gateway serves, it places `server/simtest`'s sizing fixture
+(`SizingEntities` Entities, the first `SizingCharacters` of them Characters, the rest
+`town.Merchant`) over every Room in Zone-ID then Room-ID order, on the loop's goroutine, and logs one
+`warn` `sizing build: seeded World, not for serving players` with `entities`, `zones` and `rooms`.
+Against content holding the sizing Zones that is the World `simtest.SizingEngine` builds, and the tick
+loop, Handlers and telemetry run on it unchanged. It reports `andara_build_info{build_tags="sizing"}`.
+
+- It exits 1 before building anything unless `ANDARA_ENV=local`, `sim.source=memory` and
+  `snapshot.interval=0`, naming the key, its value and the value required: the seeded World is
+  never produced to the log or written to a Snapshot.
+- It exits 1 before serving when the content lacks `town.Merchant` or `andara.core.Character`, naming
+  the Template and `content.path`.
+- `sim.seed` is read as the production binary reads it; two boots with the same seed reach the same
+  State Hash at the same tick.
+- `fault` and `sizing` are mutually exclusive: a build with both fails to compile.
+- The production binary has neither `server/simtest` nor `server/sizing` in its dependencies, and no
+  flag, env var or config key seeds anything (`cmd/andara-server/sizing_off_test.go`).
+- Its in-process tests are `go test -tags sizing,integration ./cmd/andara-server`; the State Hash
+  test runs two 60 s boots.
 
 Dir-mode files are protobuf JSON (`formatVersion`, one Zone per `.json` file). That is the test
 and CLI surface, not the Builder language (ADR-0009).
