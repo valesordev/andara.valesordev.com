@@ -63,10 +63,10 @@ window.
 
 The window is `character.delete_retention`, default 30 days. Until the purge, the deleted Character
 keeps its dormant body and still counts against the cap of five, so deleting doesn't free a slot
-and can't be used to hold a sixth name. The roster lists it as `DELETED` until then. *(Brian,
-2026-10-27, resolving `AW-SRV-032`'s carried `[ASSUMPTION]`s at its §8. Earlier wording said "the
-Character leaves the roster". The pinned contract keeps a `DELETED` entry that `ListCharacters`
-returns, so "can no longer be selected" is the accurate statement.)*
+inside the window. The purge removes the body and frees the slot, and nothing else: the roster
+entry stays `DELETED` (listed by `ListCharacters`) and the name stays reserved. *(Brian, 2026-10-27,
+resolving `AW-SRV-032`'s carried `[ASSUMPTION]`s at its §8. The earlier wording said "the Character
+leaves the roster", but the pinned contract keeps the `DELETED` entry.)*
 
 ### Session lifecycle
 
