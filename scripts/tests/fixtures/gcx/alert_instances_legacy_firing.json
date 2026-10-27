@@ -1,0 +1,13 @@
+[
+  {
+    "activeAt": "2026-10-27T15:02:00Z",
+    "labels": {
+      "alertname": "RecoveryStateMismatch",
+      "namespace": "andara-dev",
+      "severity": "page",
+      "slo": "recovery"
+    },
+    "ruleName": "RecoveryStateMismatch",
+    "state": "firing"
+  }
+]

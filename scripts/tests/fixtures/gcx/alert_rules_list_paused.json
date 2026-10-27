@@ -1,0 +1,38 @@
+[
+  {
+    "name": "andara-recovery",
+    "file": "Andara",
+    "folderUid": "andara",
+    "rules": [
+      {
+        "state": "inactive",
+        "name": "RecoveryStateMismatch",
+        "uid": "eg2i0bv1kmfi8c",
+        "folderUid": "andara",
+        "health": "ok",
+        "type": "alerting",
+        "query": "andara_recovery_state_hash_match == 0\nor\n(\n  max by (environment, namespace) (\n      kube_pod_container_status_last_terminated_exitcode{container=\"server\", pod=~\"andara-[0-9]+\"} == 8\n    or\n      kube_pod_container_status_last_terminated_exitcode{container=\"server\", pod=~\"andara-[0-9]+\"} == 6\n  )\n  and on (environment, namespace)\n  max by (environment, namespace) (\n    kube_pod_container_status_ready{container=\"server\", pod=~\"andara-[0-9]+\"} == 0\n  )\n)\n",
+        "lastEvaluation": "0001-01-01T00:00:00Z",
+        "evaluationTime": 0,
+        "isPaused": true,
+        "labels": {
+          "severity": "page",
+          "slo": "recovery"
+        },
+        "annotations": {
+          "runbook": "docs/runbooks/recovery-state-mismatch.md",
+          "summary": "A recovery did not reproduce the recorded World state \u2014 the server refused to take traffic"
+        },
+        "queriedDatasourceUIDs": [
+          "grafanacloud-prom"
+        ]
+      }
+    ],
+    "totals": {
+      "inactive": 1
+    },
+    "interval": 60,
+    "lastEvaluation": "0001-01-01T00:00:00Z",
+    "evaluationTime": 0
+  }
+]
