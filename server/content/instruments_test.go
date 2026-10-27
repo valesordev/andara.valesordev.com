@@ -24,7 +24,7 @@ func TestLoader_InstrumentsALoadAndAPointerMove(t *testing.T) {
 	t.Cleanup(func() { _ = tp.Shutdown(context.Background()) })
 	reg := prometheus.NewRegistry()
 	m := NewMetrics(reg)
-	m.SetBuild("v1.2.3", "abc123", "test")
+	m.SetBuild("v1.2.3", "abc123", "test", "fault")
 
 	s := newFakeStore()
 	s.publish("andara.core", 1, 0, map[string]string{"core.json": zoneJSON("core", "void")})
@@ -66,7 +66,7 @@ func TestLoader_InstrumentsALoadAndAPointerMove(t *testing.T) {
 	if v := testutil.ToFloat64(m.ActiveVersion.WithLabelValues("andara.core")); v != 2 {
 		t.Errorf("andara_content_active_version{pack=andara.core} = %v, want 2", v)
 	}
-	want := `andara_build_info{commit="abc123",content_version="2",env="test",pack="andara.core",version="v1.2.3"} 1`
+	want := `andara_build_info{build_tags="fault",commit="abc123",content_version="2",env="test",pack="andara.core",version="v1.2.3"} 1`
 	if err := testutil.GatherAndCompare(reg, strings.NewReader("# HELP andara_build_info Always 1: the running build, and the content version of each pack in effect.\n# TYPE andara_build_info gauge\n"+want+"\n"), "andara_build_info"); err != nil {
 		t.Errorf("andara_build_info: %v", err)
 	}

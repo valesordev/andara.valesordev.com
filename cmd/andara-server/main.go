@@ -71,7 +71,7 @@ func run(args []string, env config.EnvLookup, stdout, stderr io.Writer) (exit in
 	rt.BuildVersion = version
 	code := rt.LoadContent(ctx)
 	if rt.ContentMetrics != nil {
-		rt.ContentMetrics.SetBuild(version, commit, cfg.Environment)
+		rt.ContentMetrics.SetBuild(version, commit, cfg.Environment, buildTags)
 	}
 	if cfg.ValidateOnly || code != boot.ExitOK {
 		return code
@@ -123,6 +123,12 @@ func run(args []string, env config.EnvLookup, stdout, stderr io.Writer) (exit in
 	// spawn Room is checked again below, against the content in effect.
 	if err := rt.StartRoster(ctx); err != nil {
 		tel.Log.Error("roster", "detail", err.Error())
+		return boot.ExitFail
+	}
+
+	// A fault build's injectors (AW-SRV-066); nothing in production.
+	if err := installFaults(rt, env, tel.Log); err != nil {
+		tel.Log.Error("fault", "detail", err.Error())
 		return boot.ExitFail
 	}
 

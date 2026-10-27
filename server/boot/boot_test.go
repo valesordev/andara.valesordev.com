@@ -92,7 +92,7 @@ func TestLoadContent_ValidThreeZones(t *testing.T) {
 	body := rr.Body.String()
 	for _, want := range []string{
 		`andara_content_active_version{pack="dir"} 0`,
-		`andara_build_info{commit="",content_version="0",env="",pack="dir",version=""} 1`,
+		`andara_build_info{build_tags="",commit="",content_version="0",env="",pack="dir",version=""} 1`,
 		"andara_content_reload_stall_seconds_count 1",
 	} {
 		if !strings.Contains(body, want) {
@@ -244,15 +244,6 @@ func TestLoadContent_OrphanWarnNotFatal(t *testing.T) {
 	line := findLog(t, logs, "orphan_room")
 	if line["level"] != "WARN" && line["level"] != "warn" {
 		t.Errorf("level = %v, want warn", line["level"])
-	}
-}
-
-func TestHandler_LivezAlwaysOK(t *testing.T) {
-	rt, _ := runtime(t, t.TempDir(), false)
-	rr := httptest.NewRecorder()
-	rt.Handler().ServeHTTP(rr, httptest.NewRequest(http.MethodGet, "/livez", nil))
-	if rr.Code != http.StatusOK {
-		t.Errorf("livez = %d", rr.Code)
 	}
 }
 

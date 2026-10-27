@@ -79,7 +79,7 @@ func TestKafka_APointerMoveSwapsTheWorldThroughTheLog(t *testing.T) {
 		t.Fatal(err)
 	}
 	m := NewMetrics(nil)
-	m.SetBuild("test", "abc123", "test")
+	m.SetBuild("test", "abc123", "test", "")
 	spans := tracetest.NewSpanRecorder()
 	tp := sdktrace.NewTracerProvider(sdktrace.WithSpanProcessor(spans))
 	defer func() { _ = tp.Shutdown(context.Background()) }()
@@ -196,7 +196,7 @@ func TestKafka_APointerMoveSwapsTheWorldThroughTheLog(t *testing.T) {
 	if v := testutil.ToFloat64(m.ActiveVersion.WithLabelValues(CorePack)); v != 2 {
 		t.Fatalf("andara_content_active_version{pack=andara.core} = %v, want 2", v)
 	}
-	if v := testutil.ToFloat64(m.BuildInfo.WithLabelValues("test", "abc123", "test", CorePack, "2")); v != 1 {
+	if v := testutil.ToFloat64(m.BuildInfo.WithLabelValues("test", "abc123", "test", "", CorePack, "2")); v != 1 {
 		t.Fatalf("andara_build_info{content_version=2} = %v, want 1", v)
 	}
 

@@ -124,7 +124,7 @@ func runState(cfg config.Projector, stderr io.Writer) int {
 		return projector.ExitConfig
 	}
 	if rt.ContentMetrics != nil {
-		rt.ContentMetrics.SetBuild(version, commit, cfg.Environment)
+		rt.ContentMetrics.SetBuild(version, commit, cfg.Environment, "")
 	}
 
 	ws, err := store.Open(store.Options{

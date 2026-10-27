@@ -63,6 +63,10 @@ type Options struct {
 	// OnSwap, if set, is called with the in-tick cost of each ContentSwap the
 	// tick applied (AW-SRV-012 AC-9), on the loop's goroutine.
 	OnSwap func(time.Duration)
+	// BeforeTick, if set, is called on the loop's goroutine before each tick
+	// runs, with the loop clock's now. A fault build's wedge blocks in it
+	// (AW-SRV-066); nil in the production binary.
+	BeforeTick func(ctx context.Context, now time.Time)
 }
 
 // Loop runs the tick loop.
@@ -97,6 +101,22 @@ type Loop struct {
 	published sim.TickCompleted
 
 	zoneTimes map[sim.ZoneID]time.Duration
+
+	// Liveness (AW-SRV-066). running is set once run has begun and stopping
+	// once the loop is deliberately ending: a drain, a lost boundary, or the
+	// boot's Draining. nextDue is when the next tick is due, in Unix
+	// nanoseconds, for the lag read at scrape. wedgeMu guards lastDone (the
+	// clock at the newest completed tick, or at start), lastTick, and wedged,
+	// so a probe that finds a wedge and the tick that ends it can't cross.
+	wedgeAfter time.Duration
+	running    atomic.Bool
+	stopping   atomic.Bool
+	nextDue    atomic.Int64
+	wedgeMu    sync.Mutex
+	lastDone   time.Time
+	lastTick   sim.Tick
+	wedged     bool
+
 	// tickCtx is the running tick's span context, the parent for
 	// command.apply spans; set for the duration of tick().
 	tickCtx context.Context
@@ -163,7 +183,11 @@ func New(o Options) (*Loop, error) {
 		clock:     o.Clock,
 		interval:  time.Second / time.Duration(o.TickRate),
 		zoneTimes: map[sim.ZoneID]time.Duration{},
+		// sim.tick_budget_ms × 100, AW-INF-003's liveness condition.
+		wedgeAfter: 100 * o.TickBudget,
 	}
+	lagNow := l.lagNow
+	l.metrics.lagNow.Store(&lagNow)
 	return l, nil
 }
 
@@ -231,6 +255,8 @@ func (l *Loop) Run(ctx context.Context) error {
 		return err
 	case <-ctx.Done():
 	}
+	// A wedged tick that the drain now waits on is not a reason to restart.
+	l.stopping.Store(true)
 	if l.opts.DrainTimeout == 0 {
 		return <-done
 	}
@@ -264,12 +290,27 @@ func (l *Loop) run(ctx context.Context) error {
 	// the anchor never moves, so lag is the honest distance behind schedule
 	// rather than a number the loop can reset by falling behind (AC-6, AC-8).
 	base := e.Tick()
+	// A loop that returns for any reason is no longer one that can wedge.
+	defer l.stopping.Store(true)
+	// The wedge clock starts here, at the first tick (AW-SRV-066 AC-4).
+	l.wedgeMu.Lock()
+	l.lastDone, l.lastTick = start, base
+	l.wedgeMu.Unlock()
+	l.nextDue.Store(start.UnixNano())
+	l.running.Store(true)
 	for {
 		if ctx.Err() != nil {
 			return l.stop(e)
 		}
 		tick := e.Tick() + 1
 		due := start.Add(time.Duration(tick-base-1) * l.interval)
+		l.nextDue.Store(due.Add(l.interval).UnixNano())
+		if l.opts.BeforeTick != nil {
+			l.opts.BeforeTick(ctx, l.clock.Now())
+			if ctx.Err() != nil {
+				return l.stop(e)
+			}
+		}
 		now := l.clock.Now()
 		lag := now.Sub(due)
 		if lag < 0 {
@@ -296,6 +337,7 @@ func (l *Loop) run(ctx context.Context) error {
 			l.lagNanos.Store(0)
 		}
 		l.liveTicks.Add(1)
+		l.completed(ctx, tick)
 
 		if now = l.clock.Now(); now.Sub(lastLog) >= time.Second {
 			lastLog = now
@@ -533,6 +575,7 @@ func (l *Loop) checkpoint(ctx context.Context, tc sim.TickCompleted) {
 // stopLost is the drain a lost boundary triggers (AW-SRV-026): it names
 // the loss, drains, and returns it for the process to exit 5.
 func (l *Loop) stopLost(e *sim.Engine, lost *BoundaryLostError) error {
+	l.stopping.Store(true)
 	l.reportLost(lost)
 	l.drainAs(e, StopReasonBoundaryLost)
 	return lost
@@ -554,6 +597,7 @@ func (l *Loop) reportLost(lost *BoundaryLostError) {
 // exits 5 (review of #355). A loss reported between ticks is otherwise acted
 // on by the next tick, which a shutdown can pre-empt.
 func (l *Loop) stop(e *sim.Engine) error {
+	l.stopping.Store(true)
 	if lost := l.lost.Load(); lost != nil {
 		return l.stopLost(e, lost)
 	}
