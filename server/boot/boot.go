@@ -194,8 +194,8 @@ type Runtime struct {
 	// set only by a fault build's injector (AW-SRV-066), nil otherwise.
 	BeforeTick func(ctx context.Context, now time.Time)
 	// loop is the running tick loop, as /livez sees it (AW-SRV-066): nil
-	// until StartTickLoop. Atomic because the recovery server's probes are
-	// served while StartTickLoop runs.
+	// until StartTickLoop. Atomic because Drain runs on the gateway's
+	// goroutine, and a Drain before StartTickLoop must reach the loop.
 	loop atomic.Pointer[tickloop.Loop]
 	// probeOnce registers andara_probe_state with the first Handler.
 	probeOnce sync.Once

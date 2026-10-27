@@ -12,6 +12,7 @@ import (
 	"time"
 
 	"github.com/valesordev/andara/server/fault"
+	"github.com/valesordev/andara/server/recovery"
 )
 
 // probeStates reads andara_probe_state from a scrape, by probe; a missing
@@ -172,4 +173,65 @@ func TestLivez_AWedgedLoopIs503(t *testing.T) {
 		t.Errorf("livez while draining = %d, want 200", rr.Code)
 	}
 	wantProbes(t, rt, 1, 0, 1)
+	// The drain reaches the loop, so the lag reads the loop's set value and
+	// stops rising (AC-9).
+	draining := simLag(t, rt)
+	time.Sleep(50 * time.Millisecond)
+	if again := simLag(t, rt); again != draining {
+		t.Errorf("lag while draining moved from %v to %v, want the set value held", draining, again)
+	}
+}
+
+// AC-9: a drain that began before the tick loop existed reaches the loop when
+// it starts, so a wedge behind it never shows as rising lag.
+func TestLivez_ADrainBeforeTheLoopReachesIt(t *testing.T) {
+	rt, logs := runtime(t, fixture(t, "valid"), false)
+	if code := rt.LoadContent(context.Background()); code != ExitOK {
+		t.Fatalf("exit %d; logs=%s", code, logs.String())
+	}
+	sb := liveLogs(rt)
+	rt.BeforeTick = fault.WedgeTickAfter(0, rt.Tel.Log)
+	rt.Drain()
+	startMemoryLoop(t, rt)
+	deadline := time.Now().Add(10 * time.Second)
+	for !strings.Contains(sb.String(), `"msg":"fault: wedging the tick loop"`) {
+		if time.Now().After(deadline) {
+			t.Fatal("the loop never wedged")
+		}
+		time.Sleep(10 * time.Millisecond)
+	}
+	// Past startMemoryLoop's 1 s threshold, and a little more.
+	time.Sleep(1200 * time.Millisecond)
+	first := simLag(t, rt)
+	time.Sleep(50 * time.Millisecond)
+	if next := simLag(t, rt); next != first || first > 0.5 {
+		t.Errorf("lag %v then %v with a drain before the loop, want the set value held", first, next)
+	}
+	if rr := get(rt.Handler(), "/livez"); rr.Code != http.StatusOK {
+		t.Errorf("livez = %d, want 200 while draining", rr.Code)
+	}
+}
+
+// AW-SRV-054 AC-7 is untouched: a scrape of andara_probe_state reads
+// readiness without ending the deploy interruption; the first /readyz does.
+func TestProbeStateScrapeDoesNotEndTheInterruption(t *testing.T) {
+	head := time.Unix(1_760_000_000, 0)
+	rt, logs, _ := deployRuntime(t, head.Add(42*time.Second))
+	rt.noteRecovered(context.Background(), nil, recovery.Report{HeadProducedAt: head})
+	h := rt.Handler()
+	for range 3 {
+		wantProbes(t, rt, 0, 1, 1)
+	}
+	if got := histCount(t, rt.deploy.hist); got != 0 {
+		t.Fatalf("a scrape observed the interruption %d times", got)
+	}
+	if strings.Contains(logs.String(), "deploy interruption") {
+		t.Fatalf("a scrape logged the interruption:\n%s", logs)
+	}
+	if rr := get(h, "/readyz"); rr.Code != http.StatusOK {
+		t.Fatalf("readyz = %d", rr.Code)
+	}
+	if got := histCount(t, rt.deploy.hist); got != 1 {
+		t.Fatalf("readyz observed the interruption %d times, want 1", got)
+	}
 }

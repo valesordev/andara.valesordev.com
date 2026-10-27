@@ -27,14 +27,14 @@ func (l *Loop) Wedged() bool {
 		l.wedgeMu.Unlock()
 		return false
 	}
-	first := !l.wedged
-	l.wedged = true
-	last := l.lastTick
-	l.wedgeMu.Unlock()
-	if first {
+	// Logged under the lock, so a tick completing now logs its resumed line
+	// after this one, never before.
+	if !l.wedged {
+		l.wedged = true
 		l.log.LogAttrs(context.Background(), slog.LevelWarn, "tick loop wedged",
-			slog.Uint64("last_tick", uint64(last)), slog.Float64("since_seconds", since.Seconds()))
+			slog.Uint64("last_tick", uint64(l.lastTick)), slog.Float64("since_seconds", since.Seconds()))
 	}
+	l.wedgeMu.Unlock()
 	return true
 }
 
@@ -51,13 +51,12 @@ func (l *Loop) live() bool { return l.running.Load() && !l.stopping.Load() }
 func (l *Loop) completed(ctx context.Context, tick sim.Tick) {
 	now := l.clock.Now()
 	l.wedgeMu.Lock()
-	prev, was := l.lastDone, l.wedged
-	l.lastDone, l.lastTick, l.wedged = now, tick, false
-	l.wedgeMu.Unlock()
-	if was {
+	defer l.wedgeMu.Unlock()
+	if l.wedged {
 		l.log.LogAttrs(ctx, slog.LevelInfo, "tick loop resumed",
-			slog.Uint64("last_tick", uint64(tick)), slog.Float64("wedged_seconds", now.Sub(prev).Seconds()))
+			slog.Uint64("last_tick", uint64(tick)), slog.Float64("wedged_seconds", now.Sub(l.lastDone).Seconds()))
 	}
+	l.lastDone, l.lastTick, l.wedged = now, tick, false
 }
 
 // lagNow is andara_simulation_lag_seconds at scrape (AW-SRV-066 AC-9): the

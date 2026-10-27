@@ -24,6 +24,9 @@ type wedgeHarness struct {
 	release chan struct{}
 	cancel  context.CancelFunc
 	done    chan error
+	// ignoreCtx makes the wedged tick deaf to the loop's context, as a real
+	// stuck handler is: only release ends it.
+	ignoreCtx bool
 }
 
 func newWedgeHarness(t *testing.T, wedge int) *wedgeHarness {
@@ -37,6 +40,10 @@ func newWedgeHarness(t *testing.T, wedge int) *wedgeHarness {
 				return
 			}
 			close(w.entered)
+			if w.ignoreCtx {
+				<-w.release
+				return
+			}
 			select {
 			case <-w.release:
 			case <-ctx.Done():
@@ -64,16 +71,21 @@ func (w *wedgeHarness) start() {
 // lag is andara_simulation_lag_seconds as a scrape reads it.
 func (w *wedgeHarness) lag() float64 {
 	w.t.Helper()
-	mfs, err := w.reg.Gather()
+	return gatherLag(w.t, w.reg)
+}
+
+func gatherLag(t *testing.T, reg *prometheus.Registry) float64 {
+	t.Helper()
+	mfs, err := reg.Gather()
 	if err != nil {
-		w.t.Fatal(err)
+		t.Fatal(err)
 	}
 	for _, mf := range mfs {
 		if mf.GetName() == "andara_simulation_lag_seconds" {
 			return mf.GetMetric()[0].GetGauge().GetValue()
 		}
 	}
-	w.t.Fatal("andara_simulation_lag_seconds not gathered")
+	t.Fatal("andara_simulation_lag_seconds not gathered")
 	return 0
 }
 
@@ -171,17 +183,27 @@ func TestLiveness_DrainingIsNeverWedged(t *testing.T) {
 	}
 }
 
-// AC-5: once the loop's context ends, the drain waiting on a stuck tick is not
-// a wedge.
+// AC-5: once the loop's context ends, the drain waiting on a tick that won't
+// finish is not a wedge, though no tick completes and nothing reaches stop.
 func TestLiveness_StoppingIsNeverWedged(t *testing.T) {
 	w := newWedgeHarness(t, 5)
+	w.ignoreCtx = true
 	w.start()
 	w.cancel()
+	deadline := time.Now().Add(5 * time.Second)
+	for !w.loop.stopping.Load() {
+		if time.Now().After(deadline) {
+			t.Fatal("Run never saw its context end")
+		}
+		time.Sleep(time.Millisecond)
+	}
+	w.clock.Advance(time.Minute)
+	wedged := w.loop.Wedged()
+	close(w.release)
 	<-w.done
 	w.done <- nil // for the cleanup
-	w.clock.Advance(time.Minute)
-	if w.loop.Wedged() {
-		t.Fatal("a stopped loop is wedged")
+	if wedged {
+		t.Fatal("wedged while the drain waits on a stuck tick")
 	}
 }
 
@@ -209,12 +231,37 @@ func TestLiveness_StarvedTicksAreLive(t *testing.T) {
 	}
 }
 
-// AC-9: between ticks the next tick isn't due yet, so the lag at scrape is the
-// loop's own value.
+// AC-9: asleep between ticks, after a tick that took 20 ms of its budget, the
+// next tick isn't due yet, so the lag at scrape is the loop's own value.
 func TestLiveness_LagBetweenTicksIsTheSetValue(t *testing.T) {
-	w := newWedgeHarness(t, 5)
-	w.start()
-	if got, set := w.lag(), gaugeValue(w.loop.Metrics().Lag); got != set {
-		t.Errorf("lag = %v, want the set value %v", got, set)
+	reg := prometheus.NewRegistry()
+	var h *harness
+	h = newHarness(t, func(o *Options) {
+		o.Registry = reg
+		o.OnTick = func(sim.StepResult, time.Duration) { h.clock.Advance(20 * time.Millisecond) }
+	})
+	asleep, hold := make(chan struct{}), make(chan struct{})
+	var sleeps atomic.Int64
+	h.clock.OnSleep = func(time.Time) bool {
+		if sleeps.Add(1) == 3 {
+			close(asleep)
+			<-hold
+		}
+		return true
+	}
+	ctx, cancel := context.WithCancel(context.Background())
+	done := make(chan error, 1)
+	go func() { done <- h.loop.Run(ctx) }()
+	select {
+	case <-asleep:
+	case <-time.After(10 * time.Second):
+		t.Fatal("the loop never slept")
+	}
+	got, set := gatherLag(t, reg), gaugeValue(h.loop.Metrics().Lag)
+	cancel()
+	close(hold)
+	<-done
+	if got != set {
+		t.Errorf("lag asleep between ticks = %v, want the set value %v", got, set)
 	}
 }

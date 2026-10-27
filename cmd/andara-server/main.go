@@ -126,16 +126,17 @@ func run(args []string, env config.EnvLookup, stdout, stderr io.Writer) (exit in
 		return boot.ExitFail
 	}
 
-	// The tick loop (AW-SRV-002), recovered from the log and running before
-	// anything is served: the content in effect is whatever the log recorded
-	// (AW-SRV-012), and ReconcileContent below brings the World to what the
-	// content source names through the loop. A bad broker fails the boot
-	// here, before anything is served.
 	// A fault build's injectors (AW-SRV-066); nothing in production.
 	if err := installFaults(rt, env, tel.Log); err != nil {
 		tel.Log.Error("fault", "detail", err.Error())
 		return boot.ExitFail
 	}
+
+	// The tick loop (AW-SRV-002), recovered from the log and running before
+	// anything is served: the content in effect is whatever the log recorded
+	// (AW-SRV-012), and ReconcileContent below brings the World to what the
+	// content source names through the loop. A bad broker fails the boot
+	// here, before anything is served.
 	loop, err := rt.StartTickLoop(ctx)
 	if err != nil {
 		tel.Log.Error("tick loop", "detail", err.Error())

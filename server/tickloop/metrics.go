@@ -4,6 +4,8 @@
 package tickloop
 
 import (
+	"sync/atomic"
+
 	"github.com/prometheus/client_golang/prometheus"
 	dto "github.com/prometheus/client_model/go"
 )
@@ -33,9 +35,10 @@ type Metrics struct {
 	HandoffPlacedEntries prometheus.Gauge   // andara_handoff_placed_entries
 
 	// lagNow reads andara_simulation_lag_seconds at scrape from the value Lag
-	// was last set to (AW-SRV-066 AC-9); nil reads that value. Lag itself is
-	// what the loop sets, and what a test reads.
-	lagNow func(set float64) float64
+	// was last set to (AW-SRV-066 AC-9); unset reads that value. Lag itself is
+	// what the loop sets, and what a test reads. Atomic because the collector
+	// is registered before the loop that sets it exists.
+	lagNow atomic.Pointer[func(set float64) float64]
 }
 
 // lagCollector exports andara_simulation_lag_seconds as Metrics.lagNow reads
@@ -47,8 +50,8 @@ func (c lagCollector) Describe(ch chan<- *prometheus.Desc) { ch <- c.m.Lag.Desc(
 
 func (c lagCollector) Collect(ch chan<- prometheus.Metric) {
 	v := gaugeValue(c.m.Lag)
-	if c.m.lagNow != nil {
-		v = c.m.lagNow(v)
+	if fn := c.m.lagNow.Load(); fn != nil {
+		v = (*fn)(v)
 	}
 	ch <- prometheus.MustNewConstMetric(c.m.Lag.Desc(), prometheus.GaugeValue, v)
 }

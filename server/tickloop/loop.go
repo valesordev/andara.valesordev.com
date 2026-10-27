@@ -186,7 +186,8 @@ func New(o Options) (*Loop, error) {
 		// sim.tick_budget_ms × 100, AW-INF-003's liveness condition.
 		wedgeAfter: 100 * o.TickBudget,
 	}
-	l.metrics.lagNow = l.lagNow
+	lagNow := l.lagNow
+	l.metrics.lagNow.Store(&lagNow)
 	return l, nil
 }
 
