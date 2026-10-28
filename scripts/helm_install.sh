@@ -244,16 +244,8 @@ if kube_kubectl -n "$NS" get certificate andara-edge >/dev/null 2>&1; then
   else
     echo "helm-install:   andara-cli --server-address $HOST:$PORT ...   (public issuer; the system trust store suffices)"
   fi
-  # The line above dials by DNS. A name with no DNS yet (CI's andara.local) reaches the edge only
-  # through 127.0.0.1, and so does an overridden port: the kind edge's 8443 listens on 127.0.0.1
-  # only (deploy/kind/cluster.yaml), and the public name resolves to the tailnet, where only nginx
-  # listens (ADR-0013 amendment 24). Then name the dial that does connect.
-  ADDRS="$(getent ahostsv4 "$HOST" 2>/dev/null | awk '{print $1}' | sort -u)"
-  if [[ -z "$ADDRS" ]]; then
-    echo "helm-install:   $HOST does not resolve here; dial it with curl --resolve $HOST:$PORT:127.0.0.1"
-  elif [[ -n "${ANDARA_EDGE_PORT:-}" ]] && ! grep -qx '127\.0\.0\.1' <<<"$ADDRS"; then
-    echo "helm-install:   $HOST does not resolve to 127.0.0.1 here, and $PORT listens only there; dial it with curl --resolve $HOST:$PORT:127.0.0.1"
-  fi
+  # The line above dials by DNS; where that can't connect, name the dial that does.
+  "$REPO/scripts/edge_hint.sh" "$HOST" "$PORT"
 else
   echo "helm-install: ingress.enabled=false — no edge; private CA written to $CA_DIR/ca.pem"
 fi

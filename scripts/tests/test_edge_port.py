@@ -46,12 +46,50 @@ class EdgePort(unittest.TestCase):
                     subprocess.run(["rm", "-rf", run.work])
                 self.assertEqual(run.address, want)
 
-    def test_the_shell_scripts_dial_port(self):
-        for rel, dial in (("scripts/helm_install.sh", "--server-address $HOST:$PORT"),
-                          ("scripts/stream_soak.sh", '-connect "$RESOLVE:$PORT"')):
+    def test_every_dial_site_uses_port(self):
+        for rel, site, want in (("scripts/helm_install.sh", r"--server-address (\S+)", "$HOST:$PORT"),
+                                ("scripts/stream_soak.sh", r"-connect (\S+)", '"$RESOLVE:$PORT"')):
             with self.subTest(script=rel):
                 with open(os.path.join(REPO, rel)) as f:
-                    self.assertIn(dial, f.read())
+                    found = re.findall(site, f.read())
+                self.assertTrue(found, rel)
+                self.assertEqual(set(found), {want}, "%s: a dial site without $PORT: %s" % (rel, found))
+
+
+class Hint(unittest.TestCase):
+    """helm-install's --resolve hint (scripts/edge_hint.sh), on a stub getent: it never fails the
+    install, and names the --resolve dial only where the DNS dial can't connect (ADR-0013 amendment 24)."""
+
+    def hint(self, answer, override):
+        with tempfile.TemporaryDirectory() as d:
+            p = os.path.join(d, "getent")
+            with open(p, "w") as f:
+                # getent exits 2 for a name it can't resolve.
+                f.write("#!/bin/sh\n" + ("printf '%s STREAM x\\n'\n" % answer if answer else "exit 2\n"))
+            os.chmod(p, 0o755)
+            environ = {k: v for k, v in os.environ.items() if k != "ANDARA_EDGE_PORT"}
+            environ["PATH"] = d + os.pathsep + os.environ["PATH"]
+            if override:
+                environ["ANDARA_EDGE_PORT"] = override
+            r = subprocess.run(["bash", "-euo", "pipefail", "scripts/edge_hint.sh", "x.example", override or "443"],
+                               cwd=REPO, capture_output=True, text=True, env=environ)
+        self.assertEqual(r.returncode, 0, r.stderr)
+        return r.stdout
+
+    def test_each_case(self):
+        for answer, override, want in (("", None, "does not resolve here"),           # CI's andara.local
+                                       ("", "8443", "does not resolve here"),
+                                       ("100.79.240.98", None, ""),                   # the box, through nginx
+                                       ("100.79.240.98", "8443", "does not resolve to 127.0.0.1"),
+                                       ("127.0.0.1", None, ""),
+                                       ("127.0.0.1", "8443", "")):
+            with self.subTest(answer=answer, override=override):
+                out = self.hint(answer, override)
+                if want:
+                    self.assertIn(want, out)
+                    self.assertIn("--resolve x.example:%s:127.0.0.1" % (override or "443"), out)
+                else:
+                    self.assertEqual(out, "")
 
 
 class Profile(unittest.TestCase):
