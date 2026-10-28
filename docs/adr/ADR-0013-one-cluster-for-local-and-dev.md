@@ -701,27 +701,35 @@ detail; this is the decision and its reason.
 
 ### 2026-10-28, `AW-INF-060` in progress
 
+These record rulings on questions SRE raised while building `AW-INF-060`. As with the blocks above, where they differ
+from the decisions and earlier amendments, they win.
+
 24. **The scripts dial the public name on 443, through `nginx`; 8443 is the override for a loopback dial** (amends
-    decision 11's "Client address" and "Scripts that talk to the edge" rows). Decision 11 assumed a CLI on the box
-    resolves the public name to loopback. It does not: `local.andara.valesordev.com` and
-    `andara-dev.solo7.valesordev.com` resolve to the box's tailnet address, where only `nginx`'s 443 listens. A
-    default of 8443 is then refused for every caller that uses DNS, `make env-recover ENV=dev` (the M2 gate) included.
-    Dialing `127.0.0.1:8443` with the name only as SNI gets a 404 from the Ingress's `host:` rule; only a
-    `--resolve`-style dial, which sends the name as both SNI and authority, reaches the server. So:
-    `ANDARA_EDGE_PORT` defaults to **443** in `scripts/helm_install.sh`, `scripts/env_recover.py`,
-    `scripts/stream_soak.sh` and `internal/smoke/soak_test.go`, still named once per script and never as a bare
-    literal at a dial site. **8443** is the value an operator sets for `--resolve <name>:8443:127.0.0.1`. CI needs no
-    override. Through `nginx` the PROXY header carries the box's tailnet address, so `local`'s Admin allowlist adds
-    `100.64.0.0/10`, as `dev`'s already has. The tailnet is the owner's, and the residual risk stated in decision 11
-    is unchanged. An `andara-cli` dial-address override (a loopback dial that sends the public name as authority) is
-    not needed and not decided here. (`AW-INF-060`.)
+    decision 11's "Client address" and "Scripts that talk to the edge" rows, and amendment 8's "flips the default to
+    8443 and sets 443 in CI's workflow"). Decision 11 assumed a CLI on the box resolves the public name to loopback. It
+    does not: `local.andara.valesordev.com` and `andara-dev.solo7.valesordev.com` resolve to the box's tailnet address,
+    where nothing listens on 8443 (the kind edge is `127.0.0.1:8443` only) and `nginx` listens on 443. A default of
+    8443 is then refused for every caller that uses DNS, `make env-recover ENV=dev` (the M2 gate) included. Dialing
+    `127.0.0.1:8443` with the name only as SNI gets a 404 from the Ingress's `host:` rule; only a `--resolve`-style
+    dial, which sends the name as both SNI and authority, reaches the server. So `ANDARA_EDGE_PORT` defaults to
+    **443** in `scripts/helm_install.sh`, `scripts/env_recover.py` and `scripts/stream_soak.sh`, as it already does in
+    `internal/smoke/soakaddr_test.go`, which keeps its default. Each script names the default once and no dial site
+    carries a port literal. **8443** is the value an operator sets for `--resolve <name>:8443:127.0.0.1`. CI needs no
+    override. Through `nginx` the PROXY header carries the dialing address, the box's tailnet address for a DNS dial
+    (**[verify in `AW-INF-060` AC-17]**: the allowlist's refusal names it), so `local`'s Admin allowlist adds
+    `100.64.0.0/10`, as `dev`'s already has. `127.0.0.0/8` stays in both, for a `--resolve <name>:443:127.0.0.1` dial
+    through `nginx`. The tailnet is the owner's, and the residual risk stated in decision 11 is unchanged. An
+    `andara-cli` dial-address override (a loopback dial that sends the public name as authority) is not needed and
+    not decided here. (`AW-INF-060`.)
 25. **A test that boots a whole server names the sim's consumer group itself.** The sim's group is
-    `"andara-sim-" + telemetry.environment` (`server/boot/tick.go`). A test that boots a server with the environment
+    `"andara-sim-" + cfg.Environment` (`server/boot/tick.go`). A test that boots a server with the environment
     `it<nonce>` gets `andara-sim-it<nonce>`, which amendment 17's `PREFIXED it-` group ACL refuses, and which
     amendment 17 already rules out ("never boots a process whose group is derived from `telemetry.environment`"). The
-    fix is a `boot.Config` field for the sim's group, empty by default, meaning `andara-sim-<environment>`. It is not a
-    config key or an environment variable, so a deployed server cannot set it. The tests set it to `it-sim-<nonce>`.
-    A second group ACL on `andara-sim-it` is refused: it would give `andara-it` a grant shaped like a real
-    environment's group, and the AC-12 check's exception for it would become permanent. Until the field lands,
-    `scripts/it_groups_exceptions.txt` keeps its one line, and `AW-INF-060` AC-7 waits on it. (`AW-INF-060`, an
-    implementation story PM writes.)
+    fix is an exported field on `boot.Runtime` for the sim's group, beside `ContentReadOnly`, that `StartTickLoop`
+    reads; empty means `andara-sim-<environment>`. It is not on `config.Config`, not a config key and not an
+    environment variable, and `cmd/andara-server` never sets it, so a deployed server cannot. The tests set it to
+    `it-sim-<nonce>` and delete that group on cleanup. A second group ACL on `andara-sim-it` is refused: it would give
+    `andara-it` a grant shaped like a real environment's group, and the `make check` group-ID check's exception for
+    it would become permanent. Until the field lands, that exception (`scripts/it_groups_exceptions.txt`, added by
+    `AW-INF-060`) keeps its one line, naming the implementation story that removes it, and `AW-INF-060` AC-7 waits on
+    that story. (`AW-INF-060`, an implementation story PM writes.)
