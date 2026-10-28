@@ -245,8 +245,9 @@ if kube_kubectl -n "$NS" get certificate andara-edge >/dev/null 2>&1; then
   fi
   # The direct port listens on 127.0.0.1 only (deploy/kind/cluster.yaml), and the public name
   # resolves to the workstation's nginx, which has no $PORT (ADR-0013 decision 11): unless the name
-  # resolves to loopback, the line above doesn't connect, so name the dial that does.
-  if ! getent hosts "$HOST" 2>/dev/null | awk '{print $1}' | grep -qxE '127\.[0-9.]+|::1'; then
+  # resolves to 127.0.0.1 itself (not ::1 or 127.0.1.1), the line above doesn't connect, so name
+  # the dial that does.
+  if ! getent ahostsv4 "$HOST" 2>/dev/null | awk '{print $1}' | grep -qx '127\.0\.0\.1'; then
     echo "helm-install:   $HOST does not resolve to 127.0.0.1 here, and $PORT listens only there; dial it with curl --resolve $HOST:$PORT:127.0.0.1"
   fi
 else
