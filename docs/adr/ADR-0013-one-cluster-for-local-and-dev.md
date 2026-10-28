@@ -698,3 +698,30 @@ detail; this is the decision and its reason.
     Kafka by `ANDARA_KAFKA_NAMESPACE` (default `andara-shared`). The `drills` job's server runs with `telemetry.environment=local` and
     `kafka.topic_prefix=local` on its unshared broker, so no new environment value enters `topics.yaml`, the `stamp`
     table or the rules. Its `ci-kafka-*` targets refuse any context but `kind-ci`. (`AW-INF-055`, `AW-INF-061`.)
+
+### 2026-10-28, `AW-INF-060` in progress
+
+24. **The scripts dial the public name on 443, through `nginx`; 8443 is the override for a loopback dial** (amends
+    decision 11's "Client address" and "Scripts that talk to the edge" rows). Decision 11 assumed a CLI on the box
+    resolves the public name to loopback. It does not: `local.andara.valesordev.com` and
+    `andara-dev.solo7.valesordev.com` resolve to the box's tailnet address, where only `nginx`'s 443 listens. A
+    default of 8443 is then refused for every caller that uses DNS, `make env-recover ENV=dev` (the M2 gate) included.
+    Dialing `127.0.0.1:8443` with the name only as SNI gets a 404 from the Ingress's `host:` rule; only a
+    `--resolve`-style dial, which sends the name as both SNI and authority, reaches the server. So:
+    `ANDARA_EDGE_PORT` defaults to **443** in `scripts/helm_install.sh`, `scripts/env_recover.py`,
+    `scripts/stream_soak.sh` and `internal/smoke/soak_test.go`, still named once per script and never as a bare
+    literal at a dial site. **8443** is the value an operator sets for `--resolve <name>:8443:127.0.0.1`. CI needs no
+    override. Through `nginx` the PROXY header carries the box's tailnet address, so `local`'s Admin allowlist adds
+    `100.64.0.0/10`, as `dev`'s already has. The tailnet is the owner's, and the residual risk stated in decision 11
+    is unchanged. An `andara-cli` dial-address override (a loopback dial that sends the public name as authority) is
+    not needed and not decided here. (`AW-INF-060`.)
+25. **A test that boots a whole server names the sim's consumer group itself.** The sim's group is
+    `"andara-sim-" + telemetry.environment` (`server/boot/tick.go`). A test that boots a server with the environment
+    `it<nonce>` gets `andara-sim-it<nonce>`, which amendment 17's `PREFIXED it-` group ACL refuses, and which
+    amendment 17 already rules out ("never boots a process whose group is derived from `telemetry.environment`"). The
+    fix is a `boot.Config` field for the sim's group, empty by default, meaning `andara-sim-<environment>`. It is not a
+    config key or an environment variable, so a deployed server cannot set it. The tests set it to `it-sim-<nonce>`.
+    A second group ACL on `andara-sim-it` is refused: it would give `andara-it` a grant shaped like a real
+    environment's group, and the AC-12 check's exception for it would become permanent. Until the field lands,
+    `scripts/it_groups_exceptions.txt` keeps its one line, and `AW-INF-060` AC-7 waits on it. (`AW-INF-060`, an
+    implementation story PM writes.)
