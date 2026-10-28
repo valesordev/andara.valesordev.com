@@ -37,9 +37,9 @@ ISSUER="$(kube_helm -n "$NS" get values andara --all -o json | "$PY" -c 'import 
 # neither the box nor a CI runner needs an /etc/hosts line; the default is the kind
 # port mapping on this machine.
 RESOLVE="${ANDARA_SOAK_RESOLVE:-127.0.0.1}"
-# The edge's port (ADR-0013 decision 11): 8443 dials the box cluster directly. CI's cluster still
-# publishes the standard HTTPS port, and the kind workflow sets ANDARA_EDGE_PORT to it.
-PORT="${ANDARA_EDGE_PORT:-8443}"
+# The edge's port (ADR-0013 amendment 24): by default the box's nginx, which passes TLS through to
+# the kind edge, and CI's cluster's edge itself. ANDARA_EDGE_PORT=8443 skips nginx on the box.
+PORT="${ANDARA_EDGE_PORT:-443}"
 CA=""
 if [[ "$ISSUER" == "andara-ca" ]]; then
   CA="$REPO/.local/tls/cluster/$ENVNAME/ca.pem"

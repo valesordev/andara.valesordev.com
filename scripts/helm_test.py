@@ -754,6 +754,14 @@ def test_content_configmaps():
                        ("172.16.0.0/12", "the box's docker bridge (docker-proxy's source)")):
         if cidr not in ranges:
             fail("dev: the Admin allow-list %r doesn't admit %s (%s)" % (ranges, what, cidr))
+    # local's too: through nginx a DNS dial arrives as the box's tailnet address, a --resolve dial as
+    # 127.0.0.1 (ADR-0013 amendment 24, AW-INF-060 AC-17).
+    mw = [d for d in docs(render("local")[1]) if d.get("kind") == "Middleware" and "ipAllowList" in d.get("spec", {})]
+    ranges = mw[0]["spec"]["ipAllowList"]["sourceRange"] if mw else []
+    for cidr, what in (("100.64.0.0/10", "the tailnet (a DNS dial through nginx)"),
+                       ("127.0.0.0/8", "loopback (a --resolve dial through nginx)")):
+        if cidr not in ranges:
+            fail("local: the Admin allow-list %r doesn't admit %s (%s)" % (ranges, what, cidr))
     cfg = find(docs(render("dev")[1]), "ConfigMap", "andara-config")["data"]
     # One trace per operator action on dev; prod never trusts a client's traceparent.
     if cfg.get("ANDARA_TRUST_INBOUND_TRACEPARENT") != "true":

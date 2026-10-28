@@ -105,9 +105,10 @@ tls:
 
 admin:
   # Source ranges the Admin Ingress admits; everything else is 403 at the edge and the
-  # server never sees it. On the box, a CLI through the workstation's nginx arrives as
-  # 127.0.0.1 (PROXY protocol), and one that dials 127.0.0.1:8443 directly arrives from the
-  # kind network's gateway in 172.16.0.0/12 — see values/local.yaml.
+  # server never sees it. On the box, a CLI through the workstation's nginx arrives as the
+  # address it dialed from (PROXY protocol): the tailnet's 100.64.0.0/10 by DNS, 127.0.0.1 by
+  # --resolve; one that dials 127.0.0.1:8443 directly arrives from the kind network's gateway in
+  # 172.16.0.0/12 — see values/local.yaml.
   allowedCIDRs: ["10.0.0.0/8", "192.168.0.0/16"]
 
 networkPolicy:

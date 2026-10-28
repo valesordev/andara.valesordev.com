@@ -227,9 +227,10 @@ kube_kubectl -n "$NS" get pvc -l app=andara
 # issuing CA into ca.crt). Its own path, not .local/tls/ca.pem — that is the compose
 # stack's CA (`make tls`), and the two must not overwrite each other.
 HOST="$(vget host)"
-# The edge's port (ADR-0013 decision 11): 8443 dials the box cluster directly; CI's cluster still
-# publishes the standard HTTPS port, and the kind workflow sets ANDARA_EDGE_PORT to it.
-PORT="${ANDARA_EDGE_PORT:-8443}"
+# The edge's port (ADR-0013 amendment 24): the default is the public name through the workstation's
+# nginx, and CI's cluster publishes its edge on the same port. ANDARA_EDGE_PORT=8443 is the kind
+# edge itself, for a `--resolve <name>:8443:127.0.0.1` dial.
+PORT="${ANDARA_EDGE_PORT:-443}"
 ISSUER="$(kube_helm -n "$NS" get values andara --all -o json | "${PY:-python3}" -c 'import json,sys; print(json.load(sys.stdin)["tls"]["issuer"])')"
 CA_DIR="$REPO/.local/tls/cluster/$ENVNAME"
 mkdir -p "$CA_DIR"
@@ -243,11 +244,14 @@ if kube_kubectl -n "$NS" get certificate andara-edge >/dev/null 2>&1; then
   else
     echo "helm-install:   andara-cli --server-address $HOST:$PORT ...   (public issuer; the system trust store suffices)"
   fi
-  # The direct port listens on 127.0.0.1 only (deploy/kind/cluster.yaml), and the public name
-  # resolves to the workstation's nginx, which has no $PORT (ADR-0013 decision 11): unless the name
-  # resolves to 127.0.0.1 itself (not ::1 or 127.0.1.1), the line above doesn't connect, so name
-  # the dial that does.
-  if ! getent ahostsv4 "$HOST" 2>/dev/null | awk '{print $1}' | grep -qx '127\.0\.0\.1'; then
+  # The line above dials by DNS. A name with no DNS yet (CI's andara.local) reaches the edge only
+  # through 127.0.0.1, and so does an overridden port: the kind edge's 8443 listens on 127.0.0.1
+  # only (deploy/kind/cluster.yaml), and the public name resolves to the tailnet, where only nginx
+  # listens (ADR-0013 amendment 24). Then name the dial that does connect.
+  ADDRS="$(getent ahostsv4 "$HOST" 2>/dev/null | awk '{print $1}' | sort -u)"
+  if [[ -z "$ADDRS" ]]; then
+    echo "helm-install:   $HOST does not resolve here; dial it with curl --resolve $HOST:$PORT:127.0.0.1"
+  elif [[ -n "${ANDARA_EDGE_PORT:-}" ]] && ! grep -qx '127\.0\.0\.1' <<<"$ADDRS"; then
     echo "helm-install:   $HOST does not resolve to 127.0.0.1 here, and $PORT listens only there; dial it with curl --resolve $HOST:$PORT:127.0.0.1"
   fi
 else

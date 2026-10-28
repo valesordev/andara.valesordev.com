@@ -84,7 +84,8 @@ tls:
 admin:
 # Loopback (127.0.0.0/8): the edge is 127.0.0.1:8443 behind the workstation's nginx (ADR-0013
 # decision 11), and websecure trusts the PROXY protocol from the kind network's gateway (AW-INF-054),
-# so a CLI on the workstation, through nginx, arrives as 127.0.0.1.
+# so a CLI on the workstation that dials nginx at 127.0.0.1 (--resolve) arrives as 127.0.0.1; by
+# DNS it arrives as its tailnet address (amendment 24).
 # The docker bridges (172.16.0.0/12, as values/local.yaml has them): a connection that dials
 # 127.0.0.1:8443 directly, skipping nginx, is carried by Docker's userland proxy and reaches Traefik
 # from the kind network's gateway, with no PROXY header. On 2026-10-02 that path got 403 before the

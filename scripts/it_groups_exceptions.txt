@@ -5,6 +5,8 @@
 # <path>                                <group literal>   <story>
 # The server-booting tests in server/boot run the server under environment it<nonce>, and the server
 # names its sim group andara-sim-<environment> (server/boot/tick.go), which no environment value
-# can make start with it-. andara-it's group ACL doesn't admit it; the decision is architecture's,
-# asked on AW-INF-060, and lands before the suite runs as andara-it.
+# can make start with it-. andara-it's group ACL doesn't admit it, and no ACL will (ADR-0013
+# amendment 25): an implementation story adds a field on boot.Runtime that the tests set to
+# it-sim-<nonce>, and deletes this line. Until PM opens it, the line names AW-INF-060, whose AC-7
+# waits on it.
 server/boot/purge_integration_test.go   andara-sim-it     AW-INF-060

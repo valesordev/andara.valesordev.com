@@ -5,8 +5,8 @@
 # Account store in memory, no broker credential, snapshots on the PVC, no projector.
 #
 # CI's cluster publishes the edge on the runner's standard HTTPS port (deploy/kind/config.yaml),
-# not the box's 8443, so the workflow sets ANDARA_EDGE_PORT for every script that dials it. The
-# chart's schema refuses a null, so each key local.yaml sets is overridden with its empty value.
+# the scripts' ANDARA_EDGE_PORT default, so the workflow sets no port. The chart's schema refuses
+# a null, so each key local.yaml sets is overridden with its empty value.
 server:
   telemetry:
     # Empty disables OTLP export. The pod is still scraped by annotation (AW-INF-008).

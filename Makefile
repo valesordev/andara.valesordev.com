@@ -350,7 +350,7 @@ kind-load:
 	$(KIND) load docker-image $(IMAGE):$(TAG) --name "$$cluster"
 	echo "kind-load: $(IMAGE):$(TAG) -> kind/$$cluster"
 
-## helm-install: idempotent `helm upgrade --install` of the chart into namespace andara-<env> — ENV=<env> [TAG=<tag>]; PROFILE=ci (ENV=local only) adds values/ci.yaml after local's (CI's lifecycle job), ANDARA_EDGE_PORT (default 8443) is the edge port it prints
+## helm-install: idempotent `helm upgrade --install` of the chart into namespace andara-<env> — ENV=<env> [TAG=<tag>]; PROFILE=ci (ENV=local only) adds values/ci.yaml after local's (CI's lifecycle job), ANDARA_EDGE_PORT (default 443, the name through nginx; 8443 the kind edge) is the edge port it prints
 # IMAGE/TAG override a registry environment's values only when given explicitly: their
 # defaults name the local build (scripts/helm_image_args.sh).
 helm-install:
@@ -656,7 +656,7 @@ gcx-only-check:
 observe-unavailable:
 	@$(PY) $(SCRIPTS)/observe_unavailable.py "$(ENV)"
 
-## stream-soak: hold a Subscribe through the edge for SOAK (default 5m), renewing the edge certificate mid-stream — ENV=<env> SOAK=<duration>; dials ANDARA_EDGE_PORT (default 8443, the box cluster's edge; CI sets its own)
+## stream-soak: hold a Subscribe through the edge for SOAK (default 5m), renewing the edge certificate mid-stream — ENV=<env> SOAK=<duration>; dials ANDARA_EDGE_PORT (default 443, through nginx on the box and the edge on CI; 8443 skips nginx)
 stream-soak:
 	@GO=$(GO) PY=$(PY) $(SCRIPTS)/stream_soak.sh "$(ENV)" "$(SOAK)"
 

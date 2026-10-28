@@ -317,8 +317,9 @@ class Run:
 
     def setup_cli(self):
         values = yaml.safe_load(open(os.path.join(REPO, "deploy", "helm", "values", "%s.yaml" % self.env)))
-        # The edge's port (ADR-0013 decision 11): 8443 dials the box cluster directly.
-        self.address = "%s:%s" % (values["host"], self.environ.get("ANDARA_EDGE_PORT") or "8443")
+        # The edge's port (ADR-0013 amendment 24): the public name through nginx by default;
+        # ANDARA_EDGE_PORT=8443 is the kind edge, for a name resolved to 127.0.0.1.
+        self.address = "%s:%s" % (values["host"], self.environ.get("ANDARA_EDGE_PORT") or "443")
         cfg = os.path.join(self.work, "cli.yaml")
         with open(cfg, "w") as f:
             f.write("server:\n  address: %s\n" % self.address)

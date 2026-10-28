@@ -1,7 +1,8 @@
 # SPDX-License-Identifier: Apache-2.0
 # Copyright 2026 Valesor Development
 
-"""The edge's port is ANDARA_EDGE_PORT, default 8443, in every script that dials it (AW-INF-060 AC-4)."""
+"""The edge's port is ANDARA_EDGE_PORT, default 443 (the public name through nginx), in every script that
+dials it; 8443 is the override for the kind edge (AW-INF-060 AC-4, ADR-0013 amendment 24)."""
 import io
 import os
 import re
@@ -17,25 +18,40 @@ import values_get  # noqa: E402
 
 SCRIPTS = ("scripts/helm_install.sh", "scripts/env_recover.py", "scripts/stream_soak.sh")
 BARE = re.compile(r"(?<![0-9])443(?![0-9])")
-DEFAULTS = {".sh": re.compile(r'"\$\{ANDARA_EDGE_PORT:-8443\}"'),
-            ".py": re.compile(r'environ\.get\("ANDARA_EDGE_PORT"\) or "8443"')}
+DEFAULTS = {".sh": re.compile(r'"\$\{ANDARA_EDGE_PORT:-443\}"'),
+            ".py": re.compile(r'environ\.get\("ANDARA_EDGE_PORT"\) or "443"')}
 
 
 class EdgePort(unittest.TestCase):
 
-    def test_no_script_hard_codes_443(self):
+    def test_443_appears_only_as_the_default(self):
         for rel in SCRIPTS:
             with self.subTest(script=rel):
                 with open(os.path.join(REPO, rel)) as f:
-                    hits = [n for n, line in enumerate(f, 1) if BARE.search(line)]
-                self.assertEqual(hits, [], "%s has a bare 443 on line(s) %s" % (rel, hits))
+                    hits = [line.strip() for line in f if BARE.search(line)]
+                self.assertEqual(len(hits), 1, "%s: 443 outside its one default: %s" % (rel, hits))
+                self.assertRegex(hits[0], DEFAULTS[os.path.splitext(rel)[1]])
 
-    def test_each_reads_andara_edge_port_defaulting_to_8443(self):
-        for rel in SCRIPTS:
+    def test_env_recover_dials_the_override(self):
+        import env_recover
+        for environ, want in (({}, "local.andara.valesordev.com:443"),
+                              ({"ANDARA_EDGE_PORT": "8443"}, "local.andara.valesordev.com:8443")):
+            with self.subTest(environ=environ):
+                run = env_recover.Run("local", "andara-local", environ)
+                try:
+                    # No ANDARA_BOOTSTRAP_OPERATOR: it stops after choosing the address, before any dial.
+                    with self.assertRaises(env_recover.Failed):
+                        run.setup_cli()
+                finally:
+                    subprocess.run(["rm", "-rf", run.work])
+                self.assertEqual(run.address, want)
+
+    def test_the_shell_scripts_dial_port(self):
+        for rel, dial in (("scripts/helm_install.sh", "--server-address $HOST:$PORT"),
+                          ("scripts/stream_soak.sh", '-connect "$RESOLVE:$PORT"')):
             with self.subTest(script=rel):
                 with open(os.path.join(REPO, rel)) as f:
-                    text = f.read()
-                self.assertRegex(text, DEFAULTS[os.path.splitext(rel)[1]])
+                    self.assertIn(dial, f.read())
 
 
 class Profile(unittest.TestCase):

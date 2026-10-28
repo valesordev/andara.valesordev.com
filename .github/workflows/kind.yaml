@@ -69,11 +69,10 @@ jobs:
     # context (AW-INF-053, ADR-0013 decision 1). kind-action names the cluster `ci`.
     env:
       ANDARA_KUBE_CONTEXT: kind-ci
-      # CI's cluster publishes the edge on the runner's 443 (deploy/kind/config.yaml), not the box's
-      # 8443, and has no shared services: every install of local here is `PROFILE=ci`, values/local.yaml
-      # with the overlay values/ci.yaml (andara.local, memory sources, no broker) (ADR-0013 decisions 8 and 11,
-      # AW-INF-060 AC-4, AC-10). Without the port the job fails: nothing listens on 8443.
-      ANDARA_EDGE_PORT: "443"
+      # CI's cluster has no shared services: every install of local here is `PROFILE=ci`,
+      # values/local.yaml with the overlay values/ci.yaml (andara.local, memory sources, no broker)
+      # (ADR-0013 decision 8, AW-INF-060 AC-10). Its edge is on the runner's 443
+      # (deploy/kind/config.yaml), the scripts' ANDARA_EDGE_PORT default (amendment 24).
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-go@v5
