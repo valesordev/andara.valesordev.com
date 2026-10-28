@@ -45,7 +45,7 @@ chart, and one `Deployment` per projector. Story: [AW-INF-003](https://github.co
 | `make image-check ENV=<env> [TAG=dev] [REGISTRY_ONLY=1]` | prove a published tag pulls anonymously (and a `sha-` tag carries its commit), then from the cluster with a throwaway `/bin/true` pod in `andara-<env>` |
 | `make kind-load` | load the image into the kind cluster `ANDARA_KUBE_CONTEXT` names, without its `kind-` prefix (`andara` by default); a context that isn't a `kind-` one exits 2 |
 | `make kube-context-check` | no `kubectl`, `helm` or `kind` call in `scripts/`, the `Makefile` or a workflow's `run:` step acts on the ambient context, and none moves `current-context`; in `make check` (AW-INF-053) |
-| `make helm-install ENV=<env> [TAG=]` | idempotent `helm upgrade --install` into namespace `andara-<env>`; `local` installs the kind-loaded `IMAGE:TAG`, any other environment its values file's image, with `TAG=` pinning one (`scripts/helm_image_args.sh`), and a tag without a digest pinned to the digest it names now; `ENV=dev` refuses without `TAG=sha-<12>[@sha256:…]`, since `:dev` no longer moves (AW-INF-059); refuses unless the ClusterIssuers it needs (`andara-ca`, and `tls.issuer`) are Ready, and applies none of them; the chart renders the content ConfigMaps from `testdata/content/valid` and `content/core/templates` (`contentVolume.render`, through symlinks under `files/`); refuses a namespace an Argo CD Application deploys; writes the CA bundle to `.local/tls/cluster/<env>/ca.pem` and prints the `andara-cli` line and the `/etc/hosts` hint |
+| `make helm-install ENV=<env> [TAG=]` | idempotent `helm upgrade --install` into namespace `andara-<env>`; `local` installs the kind-loaded `IMAGE:TAG`, any other environment its values file's image, with `TAG=` pinning one (`scripts/helm_image_args.sh`), and a tag without a digest pinned to the digest it names now; `ENV=dev` refuses without `TAG=sha-<12>[@sha256:…]`, since `:dev` no longer moves (AW-INF-059); refuses unless the ClusterIssuers it needs (`andara-ca`, and `tls.issuer`) are Ready, and applies none of them; the chart renders the content ConfigMaps from `testdata/content/valid` and `content/core/templates` (`contentVolume.render`, through symlinks under `files/`); refuses a namespace an Argo CD Application deploys; writes the CA bundle to `.local/tls/cluster/<env>/ca.pem` and prints the `andara-cli` line at `ANDARA_EDGE_PORT` (default `8443`) and, when the host doesn't resolve, the `--resolve` form; `PROFILE=ci` (with `ENV=local` only; any other `PROFILE` exits 2) adds `values/ci.yaml` after `local.yaml`, in the same namespace `andara-local` (CI's lifecycle job); refuses before the install when a Secret the values name is missing, naming `make kafka-creds` or `make objectstore-install` |
 | `make platform-up [PROFILE=box\|ci] [REQUIRE_LETSENCRYPT=1]` | install and reconcile the platform at `deploy/platform/versions.yaml`'s pins against `ANDARA_KUBE_CONTEXT` (default `kind-andara`): a release whose version or values differ is upgraded, one that matches prints `unchanged`. `box`: cert-manager, the CA root restore, `andara-ca`, the `letsencrypt` issuers (skipped without `CLOUDFLARE_API_TOKEN`, read from `.local/box.env`), Traefik, the namespace `andara-shared`, Strimzi watching it, Argo CD. `ci`: cert-manager, `andara-ca`, Traefik (AW-INF-054) |
 | `make platform-check` | `versions.yaml` is valid and no script or workflow pins a platform item outside it; in `make check` |
 | `make stream-soak ENV=<env> [SOAK=5m]` | hold a Subscribe through the edge for `SOAK`, renew the edge certificate mid-stream, assert Traefik counted gRPC; nightly at 60 m in CI |
@@ -159,10 +159,18 @@ The cluster's side of the contract with the workstation `nginx` (ADR-0013 decisi
 
 ## Environments
 
-`local` is kind on the developer's box (v1.36.1): `pullPolicy: Never`, content from a ConfigMap,
-1 Gi claim, OTLP export off (the CI kind cluster has no collector), `host: andara.local` (an `/etc/hosts` line; `make helm-install` prints
-it), and `172.16.0.0/12` in the Admin allowlist because a connection from the box reaches Traefik
-from the docker bridge, not from 127.0.0.1. `dev` and `prod` are `andara-dev.solo7.valesordev.com` and `andara.solo7.valesordev.com` on the
+`local` is the namespace `andara-local` on the box's kind cluster `andara` (v1.36.1), beside `andara-dev`
+and on the same shared services (ADR-0013 decision 8, AW-INF-060): `pullPolicy: Never`, content from a ConfigMap,
+the sim, the Account store and the projector on the shared Kafka under the prefix `local` as `andara-server-local`
+and `andara-projector-state-local`, snapshots in `andara-snapshots-local` on the shared object store, OTLP to the
+cluster's receiver, and `host: local.andara.valesordev.com` on the private CA. That name is public DNS through the
+workstation's `nginx`, which passes TLS through to `127.0.0.1:8443`; until it exists, dial it with
+`--resolve local.andara.valesordev.com:8443:127.0.0.1` (`make helm-install` prints the line). The Admin
+allowlist has `127.0.0.0/8` for a CLI through `nginx` (PROXY protocol) and `172.16.0.0/12` for `--resolve`,
+which reaches Traefik from the kind network's gateway. Scripts that dial the edge read `ANDARA_EDGE_PORT`
+(default `8443`). CI's lifecycle cluster has no shared services: it installs `local` with the overlay
+`values/ci.yaml` (`make helm-install ENV=local PROFILE=ci`: `andara.local`, memory sources, no broker, OTLP off, no
+projector) and `ANDARA_EDGE_PORT=443`, because its cluster still publishes 80 and 443. `dev` and `prod` are `andara-dev.solo7.valesordev.com` and `andara.solo7.valesordev.com` on the
 cluster's `letsencrypt` ClusterIssuer (clients need no CA file), and pull from `ghcr.io/valesordev/andara-server`,
 which CI publishes on every merge to `main` (AW-INF-013): `dev` runs the `sha-<12 hex>@sha256:…` the Git tag `dev`
 pins (`make promote`, AW-INF-059). `prod`'s tag is always overridden by `make deploy TAG=`

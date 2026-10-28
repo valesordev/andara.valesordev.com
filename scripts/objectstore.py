@@ -357,14 +357,9 @@ def install_shared(env, cmd="install"):
     if state == "updated":
         # envFrom is read at container start: a running server or projector keeps the old pair, and
         # its snapshot writes are refused until it restarts.
-        if env == "dev":
-            how = ("run `make server-stop ENV=dev && make server-start ENV=dev` and "
-                   "`make projector-stop ENV=dev && make projector-start ENV=dev`")
-        else:
-            # server-stop/-start and projector-stop/-start take dev and prod only (AW-INF-037, AW-INF-025).
-            how = ("restart them: `kubectl -n andara-local rollout restart statefulset/andara` and "
-                   "`kubectl -n andara-local rollout restart deployment -l app.kubernetes.io/name=andara` "
-                   "(the projectors; no local target yet)")
+        # The same targets for local as for dev since AW-INF-060 (AC-15); for local they make no Argo call.
+        how = ("run `make server-stop ENV={0} && make server-start ENV={0}` and "
+               "`make projector-stop ENV={0} && make projector-start ENV={0}`".format(env))
         say(cmd, "the pair changed: a running server and projector in %s keep the old one until restarted; %s"
             % (env_ns(env), how))
     rclone(env_ns(env), "lsf", "s3:" + bucket(env), endpoint=SHARED_ENDPOINT, check_bucket=False)

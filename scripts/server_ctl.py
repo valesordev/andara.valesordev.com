@@ -4,8 +4,8 @@
 
 """Take the server down and back up on a cluster environment (AW-INF-037).
 
-    scripts/server_ctl.py stop <env>     make server-stop ENV=<dev|prod>
-    scripts/server_ctl.py start <env>    make server-start ENV=<dev|prod>
+    scripts/server_ctl.py stop <env>     make server-stop ENV=<local|dev|prod>
+    scripts/server_ctl.py start <env>    make server-start ENV=<local|dev|prod>
 
 stop   suspends the Argo CD Application's automated sync (selfHeal would scale the StatefulSet
        back up within seconds), scales statefulset/andara to 0, and waits for the pod to go,
@@ -22,6 +22,9 @@ no longer has one) keeps the original. `start` removes the annotation after rest
 
 Only `syncPolicy.automated` is suspended; `syncOptions` (RespectIgnoreDifferences) stay.
 
+local has no Argo CD Application (`make helm-install ENV=local` is its only deploy path), so for
+local neither step reads or writes one (AW-INF-060 AC-15).
+
 Exit codes: 0 done; 1 a step or a bound failed; 2 usage or an unknown environment.
 """
 
@@ -36,7 +39,9 @@ import world_reset  # noqa: E402
 
 ANNOTATION = "andara.valesordev.com/server-stop-sync-policy"
 DEFAULTS = {"SERVER_STOP_TIMEOUT": "120s", "SERVER_START_TIMEOUT": "300s"}
-ENVS = ("dev", "prod")
+ENVS = ("local", "dev", "prod")
+# Environments no Argo CD Application deploys: no sync to suspend or restore, and no call to Argo.
+NO_ARGO = ("local",)
 SUSPENDED_LINE = "server-stop: automated sync is suspended; make server-start restores it"
 REPO = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 
@@ -139,7 +144,11 @@ def restore(ns):
 def stop(env, ns):
     t0 = time.time()
     bound = seconds("SERVER_STOP_TIMEOUT")
-    suspended = suspend(ns)
+    if env in NO_ARGO:
+        say("stop", "%s has no Argo CD Application; nothing to suspend" % ns)
+        suspended = False
+    else:
+        suspended = suspend(ns)
     try:
         world_reset.scale(ns, world_reset.SERVER, 0)
         say("stop", "scaled %s to 0" % world_reset.SERVER)
@@ -162,7 +171,8 @@ def start(env, ns):
     n = chart_replicas(env)
     world_reset.scale(ns, world_reset.SERVER, n)
     say("start", "scaled %s to %d" % (world_reset.SERVER, n))
-    restore(ns)
+    if env not in NO_ARGO:
+        restore(ns)
     state = world_reset.wait_up(ns, deadline=bound)
     if state == "waiting":
         say("start", "%s is started and waiting for content (AW-SRV-042). Next: make content-seed ENV=%s"
@@ -173,14 +183,12 @@ def start(env, ns):
 
 def main(argv):
     if len(argv) != 2 or argv[0] not in ("stop", "start"):
-        return usage("usage: make server-<stop|start> ENV=<dev|prod>")
+        return usage("usage: make server-<stop|start> ENV=<local|dev|prod>")
     cmd, env = argv
     if not env:
-        return usage("ENV is missing: make server-%s ENV=<dev|prod>" % cmd)
-    if env == "local":
-        return usage("ENV=local: the local server is `make down` and `make up`")
+        return usage("ENV is missing: make server-%s ENV=<local|dev|prod>" % cmd)
     if env not in ENVS:
-        return usage("ENV=%s is unknown; expected dev or prod" % env)
+        return usage("ENV=%s is unknown; expected local, dev or prod" % env)
     ns = "andara-" + env
     try:
         (stop if cmd == "stop" else start)(env, ns)

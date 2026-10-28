@@ -350,12 +350,13 @@ kind-load:
 	$(KIND) load docker-image $(IMAGE):$(TAG) --name "$$cluster"
 	echo "kind-load: $(IMAGE):$(TAG) -> kind/$$cluster"
 
-## helm-install: idempotent `helm upgrade --install` of the chart into namespace andara-<env> — ENV=<env> [TAG=<tag>]
+## helm-install: idempotent `helm upgrade --install` of the chart into namespace andara-<env> — ENV=<env> [TAG=<tag>]; PROFILE=ci (ENV=local only) adds values/ci.yaml after local's (CI's lifecycle job), ANDARA_EDGE_PORT (default 8443) is the edge port it prints
 # IMAGE/TAG override a registry environment's values only when given explicitly: their
 # defaults name the local build (scripts/helm_image_args.sh).
 helm-install:
 	@PY=$(PY) $(SCRIPTS)/helm_install.sh "$(ENV)" "$(IMAGE)" "$(TAG)" \
-	  "$(if $(filter file,$(origin IMAGE)),,1)" "$(if $(filter file,$(origin TAG)),,1)"
+	  "$(if $(filter file,$(origin IMAGE)),,1)" "$(if $(filter file,$(origin TAG)),,1)" \
+	  "$(if $(filter command line,$(origin PROFILE)),$(PROFILE),)"
 
 ## stack-smoke: open a Session on the running stack and verify Prometheus counted it — needs `make up`
 stack-smoke:
@@ -447,9 +448,10 @@ kafka-install:
 kafka-broker-bounce:
 	@PY=$(PY) $(SCRIPTS)/kafka.sh bounce "$(ENV)"
 
-## kafka-users-check: the KafkaUsers rendered from deploy/kafka/topics.yaml grant no environment principal a topic Create, Alter or AlterConfigs, and no literal `*`; kafka.yaml has no unauthenticated listener and exactly the declared superuser, andara-operator, whose Secret no chart value names (AW-INF-055 AC-9, AW-INF-056 AC-8, AC-14)
+## kafka-users-check: the KafkaUsers rendered from deploy/kafka/topics.yaml grant no environment principal a topic Create, Alter or AlterConfigs, and no literal `*`; kafka.yaml has no unauthenticated listener and exactly the declared superuser, andara-operator, whose Secret no chart value names; every consumer group in a *_integration_test.go starts with `it-`, the only group prefix andara-it may use (AW-INF-055 AC-9, AW-INF-056 AC-8, AC-14, AW-INF-060 AC-12)
 kafka-users-check:
 	@$(PY) $(SCRIPTS)/kafka_users.py check
+	@$(PY) $(SCRIPTS)/it_groups_check.py
 
 ## kafka-users: print the KafkaUser manifests rendered from deploy/kafka/topics.yaml (`make shared-up` applies them, AW-INF-056)
 kafka-users:
@@ -491,23 +493,23 @@ objectstore-install:
 objectstore-check:
 	@$(PY) $(SCRIPTS)/objectstore.py check
 
-## projector-stop: scale the state projector to 0 and wait for its consumer group to empty — ENV=<dev|prod> [PROJECTOR_STOP_TIMEOUT=120s] (AW-INF-025)
+## projector-stop: scale the state projector to 0 and wait for its consumer group to empty — ENV=<local|dev|prod> [PROJECTOR_STOP_TIMEOUT=120s] (AW-INF-025)
 projector-stop:
 	@$(PY) $(SCRIPTS)/projector.py stop "$(if $(filter command line,$(origin ENV)),$(ENV))"
 
-## projector-start: scale the state projector to 1 and wait for Ready — ENV=<dev|prod> [PROJECTOR_START_TIMEOUT=300s] (AW-INF-025)
+## projector-start: scale the state projector to 1 and wait for Ready — ENV=<local|dev|prod> [PROJECTOR_START_TIMEOUT=300s] (AW-INF-025)
 projector-start:
 	@$(PY) $(SCRIPTS)/projector.py start "$(if $(filter command line,$(origin ENV)),$(ENV))"
 
-## projector-rebuild: stop the state projector, run `andara-projector state --rebuild` as a one-shot Job until it catches up, then start it — ENV=<dev|prod> [PROJECTOR_REBUILD_TIMEOUT=30m] (AW-INF-025)
+## projector-rebuild: stop the state projector, run `andara-projector state --rebuild` as a one-shot Job until it catches up, then start it — ENV=<local|dev|prod> [PROJECTOR_REBUILD_TIMEOUT=30m] (AW-INF-025)
 projector-rebuild:
 	@$(PY) $(SCRIPTS)/projector.py rebuild "$(if $(filter command line,$(origin ENV)),$(ENV))"
 
-## server-stop: suspend Argo CD's automated sync, scale the server to 0 and wait for the pod to go — ENV=<dev|prod> [SERVER_STOP_TIMEOUT=120s] (AW-INF-037)
+## server-stop: suspend Argo CD's automated sync (none on local, which has no Application), scale the server to 0 and wait for the pod to go — ENV=<local|dev|prod> [SERVER_STOP_TIMEOUT=120s] (AW-INF-037)
 server-stop:
 	@$(PY) $(SCRIPTS)/server_ctl.py stop "$(if $(filter command line,$(origin ENV)),$(ENV))"
 
-## server-start: scale the server to the chart's replica count, restore the sync policy server-stop suspended, wait for Ready — ENV=<dev|prod> [SERVER_START_TIMEOUT=300s] (AW-INF-037)
+## server-start: scale the server to the chart's replica count, restore the sync policy server-stop suspended (none on local), wait for Ready — ENV=<local|dev|prod> [SERVER_START_TIMEOUT=300s] (AW-INF-037)
 server-start:
 	@$(PY) $(SCRIPTS)/server_ctl.py start "$(if $(filter command line,$(origin ENV)),$(ENV))"
 
@@ -654,7 +656,7 @@ gcx-only-check:
 observe-unavailable:
 	@$(PY) $(SCRIPTS)/observe_unavailable.py "$(ENV)"
 
-## stream-soak: hold a Subscribe through the edge for SOAK (default 5m), renewing the edge certificate mid-stream — ENV=<env> SOAK=<duration>
+## stream-soak: hold a Subscribe through the edge for SOAK (default 5m), renewing the edge certificate mid-stream — ENV=<env> SOAK=<duration>; dials ANDARA_EDGE_PORT (default 8443, the box cluster's edge; CI sets its own)
 stream-soak:
 	@GO=$(GO) PY=$(PY) $(SCRIPTS)/stream_soak.sh "$(ENV)" "$(SOAK)"
 

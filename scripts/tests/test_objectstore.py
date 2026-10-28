@@ -575,11 +575,12 @@ class PairChanged(unittest.TestCase):
         self.assertIn("make server-stop ENV=dev && make server-start ENV=dev", out)
         self.assertIn("make projector-stop ENV=dev && make projector-start ENV=dev", out)
 
-    def test_local_restarts_the_server_and_the_projectors(self):
+    def test_local_names_the_same_targets(self):
+        # AW-INF-060 AC-15: a target, not a kubectl line (CLAUDE.md §9).
         out = self.install("local", "updated")
-        self.assertIn("rollout restart statefulset/andara", out)
-        self.assertIn("rollout restart deployment -l app.kubernetes.io/name=andara", out)
-        self.assertNotIn("ENV=local", out)  # those targets don't take local
+        self.assertIn("make server-stop ENV=local && make server-start ENV=local", out)
+        self.assertIn("make projector-stop ENV=local && make projector-start ENV=local", out)
+        self.assertNotIn("kubectl", out)
 
 
 class Manifest(unittest.TestCase):

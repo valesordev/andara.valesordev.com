@@ -463,11 +463,20 @@ class Prefixed(unittest.TestCase):
             self.assertIn((topic, "segment.ms"), altered)
         self.assertNotIn("data loss accepted", out)
 
-    def test_local_on_compose_still_writes_redpandas_settings(self):
-        b = FakeBroker({})
-        code, _, _ = self.apply(b, "local", rp=True)
-        self.assertEqual(code, 0)
-        self.assertIn(["cluster", "config", "set", "some.local.setting", "1"], b.calls)
+    def test_no_broker_writes_cluster_settings(self):
+        # AW-INF-060: topics-apply writes no broker setting, compose's Redpanda included; the compose
+        # Redpanda's two are scripts/stack.sh's.
+        for rp in (True, False):
+            with self.subTest(rp=rp):
+                b = FakeBroker({})
+                code, _, _ = self.apply(b, "local", rp=rp)
+                self.assertEqual(code, 0)
+                self.assertFalse([c for c in b.calls if c[:3] == ["cluster", "config", "set"]])
+
+    def test_the_declaration_has_no_redpanda_block(self):
+        # AW-INF-060 AC-9 (ADR-0013, "Is local's broker still Redpanda?"): broker.assert only.
+        _, _, broker = topics.parse_declaration(topics.DECL)
+        self.assertEqual(sorted(broker), ["assert"])
 
     def test_a_lower_retention_bytes_is_data_loss(self):
         self.assertTrue(topics.destructive("retention.bytes", "-1", "67108864"))

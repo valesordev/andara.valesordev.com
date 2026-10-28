@@ -35,8 +35,9 @@ def fail(msg):
 
 
 def render(env, *extra):
-    cmd = ["helm", "template", "andara", CHART, "--kube-version", KUBE_VERSION,
-           "--values", os.path.join(VALUES, env + ".yaml"), *extra]
+    """`env` is a values file, or `local+ci` for local with CI's lifecycle overlay (AW-INF-060)."""
+    files = [a for part in env.split("+") for a in ("--values", os.path.join(VALUES, part + ".yaml"))]
+    cmd = ["helm", "template", "andara", CHART, "--kube-version", KUBE_VERSION, *files, *extra]
     p = subprocess.run(cmd, capture_output=True, text=True)
     return p.returncode, p.stdout, p.stderr
 
@@ -525,10 +526,11 @@ def test_kafka_on_the_box():
     """AW-INF-014 AC-8: dev points at the shared Kafka in andara-shared under its topic prefix
     (AW-INF-059 AC-11) and prod at a bare bootstrap on its own cluster (ADR-0013 decision 10), and
     both run the sim and the Account store on it (the chart renders only what is set, so the memory
-    switches must be absent, leaving the `kafka` defaults). local names the shared Kafka under
-    `local` (AW-INF-055) but keeps its sim and Account store in memory until AW-INF-060."""
+    switches must be absent, leaving the `kafka` defaults). local is on the shared Kafka under
+    `local` too (AW-INF-060); CI's lifecycle overlay (local+ci) keeps both in memory, broker-free."""
     shared = "andara-log-kafka-bootstrap.andara-shared.svc:9092"
-    wants = {"dev": (shared, "dev"),
+    wants = {"local": (shared, "local"),
+             "dev": (shared, "dev"),
              "prod": ("andara-log-kafka-bootstrap:9092", None)}
     for env, (want, prefix) in wants.items():
         rc, out, err = render(env)
@@ -543,16 +545,42 @@ def test_kafka_on_the_box():
         for key in ("ANDARA_SIM_SOURCE", "ANDARA_AUTH_STORE"):
             if data.get(key, "kafka") != "kafka":
                 fail("%s: %s is %r; the sim and Account store run on the broker" % (env, key, data[key]))
-    rc, out, err = render("local")
+    rc, out, err = render("local+ci")
+    if rc:
+        return fail("local+ci: render failed: %s" % err.strip())
     data = find(docs(out), "ConfigMap", "andara-config")["data"]
     if data.get("ANDARA_SIM_SOURCE") != "memory" or data.get("ANDARA_AUTH_STORE") != "memory":
-        fail("local: expected the broker-free switches, got sim=%r auth=%r"
+        fail("local+ci: expected the broker-free switches, got sim=%r auth=%r"
              % (data.get("ANDARA_SIM_SOURCE"), data.get("ANDARA_AUTH_STORE")))
-    if data.get("ANDARA_KAFKA_TOPIC_PREFIX") != "local":
-        fail("local: ANDARA_KAFKA_TOPIC_PREFIX is %r, want 'local'" % data.get("ANDARA_KAFKA_TOPIC_PREFIX"))
-    if data.get("ANDARA_KAFKA_BROKERS") != shared:
-        fail("local: ANDARA_KAFKA_BROKERS is %r, want the shared broker %r"
-             % (data.get("ANDARA_KAFKA_BROKERS"), shared))
+
+
+def test_ci_overlay():
+    """AW-INF-060 AC-10 (ADR-0013 decision 8): CI's lifecycle job installs local with values/ci.yaml
+    over it, and gets what that job had before local moved onto the shared services: host
+    andara.local, no broker credential, no OTLP export, snapshots on the PVC, no projector."""
+    rc, out, err = render("local+ci")
+    if rc:
+        return fail("local+ci: render failed: %s" % err.strip())
+    ds = docs(out)
+    data = find(ds, "ConfigMap", "andara-config")["data"]
+    sts = find(ds, "StatefulSet", "andara")
+    hosts = sorted({r["host"] for d in ds if d.get("kind") == "Ingress" for r in d["spec"]["rules"]})
+    if hosts != ["andara.local"]:
+        fail("local+ci: Ingress hosts are %r, want andara.local" % hosts)
+    if data.get("ANDARA_KAFKA_SASL_USERNAME") or kafka_creds_volume(sts) is not None:
+        fail("local+ci: the server authenticates as %r with Secret %r, want neither"
+             % (data.get("ANDARA_KAFKA_SASL_USERNAME"), kafka_creds_volume(sts)))
+    if data.get("ANDARA_OTLP_ENDPOINT"):
+        fail("local+ci: ANDARA_OTLP_ENDPOINT is %r, want empty" % data["ANDARA_OTLP_ENDPOINT"])
+    if data.get("ANDARA_SNAPSHOT_STORE", "fs") != "fs" or env_from_secrets(sts):
+        fail("local+ci: snapshots on %r with Secrets %r, want fs and none"
+             % (data.get("ANDARA_SNAPSHOT_STORE"), env_from_secrets(sts)))
+    if find(ds, "Deployment", "andara-projector-state") is not None:
+        fail("local+ci: renders a projector")
+    rc, out, err = render("local")
+    hosts = sorted({r["host"] for d in docs(out) if d.get("kind") == "Ingress" for r in d["spec"]["rules"]})
+    if hosts != ["local.andara.valesordev.com"]:
+        fail("local: Ingress hosts are %r, want local.andara.valesordev.com (ADR-0013 decision 11)" % hosts)
 
 
 def test_topic_prefix_required_for_local():
@@ -817,15 +845,20 @@ def test_snapshot_s3_and_projector_creds():
     if "kafka-creds" in {v["name"] for v in proj["spec"]["template"]["spec"]["volumes"]}:
         fail("projector: falls back to secrets.kafkaCreds when its own kafkaCreds is empty")
 
-    # local is unchanged: fs, no snapshot Secret, no projector.
+    # local is on local's bucket, with its pair and its projector, since AW-INF-060; CI's overlay
+    # keeps neither (test_ci_overlay).
     code, out, err = render("local")
     ds = docs(out)
-    if find(ds, "ConfigMap", "andara-config")["data"].get("ANDARA_SNAPSHOT_STORE", "fs") != "fs":
-        fail("local: snapshot store moved off fs")
-    if env_from_secrets(find(ds, "StatefulSet", "andara")):
-        fail("local: the server takes a snapshot Secret")
-    if find(ds, "Deployment", "andara-projector-state") is not None:
-        fail("local: renders a projector")
+    cfg = find(ds, "ConfigMap", "andara-config")["data"]
+    if (cfg.get("ANDARA_SNAPSHOT_STORE"), cfg.get("ANDARA_SNAPSHOT_S3_BUCKET")) != ("s3", "andara-snapshots-local"):
+        fail("local: snapshots on %r in %r, want s3 in andara-snapshots-local"
+             % (cfg.get("ANDARA_SNAPSHOT_STORE"), cfg.get("ANDARA_SNAPSHOT_S3_BUCKET")))
+    proj = find(ds, "Deployment", "andara-projector-state")
+    if proj is None:
+        fail("local: renders no projector")
+    for name, d in (("server", find(ds, "StatefulSet", "andara")), ("projector", proj)):
+        if d is not None and env_from_secrets(d) != ["andara-snapshot-s3"]:
+            fail("local: %s envFrom secrets are %r, want andara-snapshot-s3" % (name, env_from_secrets(d)))
 
 
 def env_value(d, name):
@@ -850,11 +883,6 @@ def test_kafka_sasl_credentials():
         server_user = find(ds, "ConfigMap", "andara-config")["data"].get("ANDARA_KAFKA_SASL_USERNAME")
         sts, proj = find(ds, "StatefulSet", "andara"), find(ds, "Deployment", "andara-projector-state")
         want = {"server": "andara-server-" + env, "projector": "andara-projector-state-" + env}
-        if env == "local":
-            # local's server runs on the memory source until AW-INF-060 and never dials the broker,
-            # and a required Secret that only a shared-Kafka cluster holds stops the pod at
-            # FailedMount where there is none (CI's lifecycle job, ADR-0013 decision 12).
-            want["server"] = None
         if server_user != want["server"] or kafka_creds_volume(sts) != want["server"]:
             fail("%s: the server authenticates as %r with Secret %r, want %s for both"
                  % (env, server_user, kafka_creds_volume(sts), want["server"]))
@@ -912,6 +940,7 @@ def main():
     test_image_source()
     test_label_values()
     test_kafka_on_the_box()
+    test_ci_overlay()
     test_topic_prefix_required_for_local()
     test_spawn_room_is_purgatory()
     test_argocd_application()

@@ -128,14 +128,43 @@ class Refusals(unittest.TestCase):
 
     def test_no_env_says_what_it_expected(self):
         for target in ("server-stop", "server-start"):
-            self.assertRefused(make(target), "ENV is missing: make %s ENV=<dev|prod>" % target)
+            self.assertRefused(make(target), "ENV is missing: make %s ENV=<local|dev|prod>" % target)
 
     def test_an_unknown_env_says_what_it_expected(self):
         for target in ("server-stop", "server-start"):
-            self.assertRefused(make(target, "ENV=staging"), "ENV=staging is unknown; expected dev or prod")
+            self.assertRefused(make(target, "ENV=staging"), "ENV=staging is unknown; expected local, dev or prod")
 
-    def test_local_points_at_make_down(self):
-        self.assertRefused(make("server-stop", "ENV=local"), "`make down`")
+
+class Local(unittest.TestCase):
+    """AW-INF-060 AC-15: local has no Argo CD Application, so neither step makes an Argo call."""
+
+    def argo_calls(self, c):
+        return [x for x in c.calls if x[0] == world_reset.ARGO_NS]
+
+    def test_stop_scales_without_reading_argo(self):
+        c = Cluster()
+        out = run(c, "stop", env="local")
+        self.assertEqual(c.replicas, 0)
+        self.assertEqual(self.argo_calls(c), [])
+        self.assertIn("andara-local has no Argo CD Application; nothing to suspend", out)
+        self.assertNotIn("is suspended", out)
+
+    def test_start_scales_and_waits_without_reading_argo(self):
+        c = Cluster(pod=False)
+        c.replicas = 0
+        out = run(c, "start", env="local")
+        self.assertEqual(c.replicas, 1)
+        self.assertEqual(self.argo_calls(c), [])
+        self.assertIn("Ready", out)
+
+    def test_main_accepts_local(self):
+        c = Cluster()
+        with mock.patch.object(world_reset, "kubectl", c.kubectl), \
+                mock.patch.object(world_reset.time, "sleep", lambda s: None), \
+                contextlib.redirect_stdout(io.StringIO()):
+            self.assertEqual(server_ctl.main(["stop", "local"]), 0)
+        self.assertEqual(c.replicas, 0)
+        self.assertEqual(self.argo_calls(c), [])
 
 
 class Stop(unittest.TestCase):

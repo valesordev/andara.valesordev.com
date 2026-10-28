@@ -138,6 +138,17 @@ case "$ACTION" in
     dc --profile "$PROFILE" up -d --wait --remove-orphans \
       || fail "one or more services did not become healthy; \`make logs\` shows why"
 
+    # The compose Redpanda's own cluster settings, which Kafka doesn't have (they were topics.yaml's
+    # `broker.local` until AW-INF-060; this broker is disposable and retired by AW-INF-067).
+    # Per-partition consumer lag is a dashboard panel and a runbook diagnostic (AW-SRV-002), and the
+    # broker computes it only when asked. log_segment_ms_min: Redpanda floors every topic's
+    # segment.ms at 10 min and never compacts the active segment, so without 1 s no test can watch
+    # compaction (AW-SRV-019 AC-5); every declared topic keeps its own segment.ms.
+    for kv in "enable_consumer_group_metrics=[group,partition,consumer_lag]" "log_segment_ms_min=1000"; do
+      dc exec -T redpanda rpk cluster config set "${kv%%=*}" "${kv#*=}" >/dev/null \
+        || fail "could not set the compose Redpanda's ${kv%%=*}"
+    done
+
     # Topics come from deploy/kafka/topics.yaml, applied by AW-INF-004's tool. The compose
     # file deliberately holds no topic configuration of its own: one declaration, applied
     # to local and production alike, or they drift.

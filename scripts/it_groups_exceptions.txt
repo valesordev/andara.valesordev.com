@@ -1,0 +1,10 @@
+# scripts/it_groups_check.py's exception list (AW-INF-060 AC-12, ADR-0013 amendment 17).
+# Each integration-test group site that may keep a prefix other than `it-`, and the story that
+# removes it. That story deletes its line; a line that matches no site fails the check.
+#
+# <path>                                <group literal>   <story>
+# The server-booting tests in server/boot run the server under environment it<nonce>, and the server
+# names its sim group andara-sim-<environment> (server/boot/tick.go), which no environment value
+# can make start with it-. andara-it's group ACL doesn't admit it; the decision is architecture's,
+# asked on AW-INF-060, and lands before the suite runs as andara-it.
+server/boot/purge_integration_test.go   andara-sim-it     AW-INF-060

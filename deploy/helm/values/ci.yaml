@@ -1,0 +1,44 @@
+# CI's lifecycle job (.github/workflows/kind.yaml): an overlay on values/local.yaml, applied after
+# it (`make helm-install ENV=local PROFILE=ci`), for a single-node cluster with the
+# platform and no shared services (ADR-0013 decision 8, AW-INF-060). It keeps the coverage that job
+# had before local moved onto the shared Kafka and object store: host andara.local, the sim and the
+# Account store in memory, no broker credential, snapshots on the PVC, no projector.
+#
+# CI's cluster publishes the edge on the runner's standard HTTPS port (deploy/kind/config.yaml),
+# not the box's 8443, so the workflow sets ANDARA_EDGE_PORT for every script that dials it. The
+# chart's schema refuses a null, so each key local.yaml sets is overridden with its empty value.
+server:
+  telemetry:
+    # Empty disables OTLP export. The pod is still scraped by annotation (AW-INF-008).
+    otlp_endpoint: ""
+  auth:
+    # No broker, so Accounts live in memory and are lost on restart; the bootstrap operator is
+    # re-created on every boot for the same reason.
+    store: memory
+  sim:
+    # The tick loop runs on the memory source: the World ticks with no Command input and
+    # publishes nothing.
+    source: memory
+  kafka:
+    # Empty is no SASL: there is no broker to authenticate to.
+    sasl_username: ""
+  # Back to the snapshot PVC.
+  snapshot:
+    store: fs
+    s3_bucket: ""
+    s3_endpoint: ""
+
+# Reached by curl --resolve andara.local:<port>:127.0.0.1, so no DNS is needed.
+host: andara.local
+
+secrets:
+  snapshotS3:
+    secretName: ""
+  kafkaCreds:
+    secretName: ""
+
+projectors:
+  state:
+    enabled: false
+    kafkaCreds:
+      secretName: ""

@@ -578,15 +578,8 @@ def run_action(action, env, allow_data_loss, run, decl=DECL, out=sys.stdout, err
                       % (name, key, "(unreported)" if have is None else have, want,
                          " (data loss accepted)" if destructive(key, have, want) else ""))
 
-    # A local broker is disposable, so broker settings are applied to it. The shared Kafka
-    # and prod are asserted against, never rewritten by a make target; and these settings
-    # are Redpanda's own, which Kafka doesn't have.
-    if rp and action == "apply":
-        for key, val in sorted(broker.get("local", {}).items()):
-            res = run(["cluster", "config", "set", key, val])
-            if res.returncode != 0:
-                die("could not set broker config %s=%s: %s"
-                    % (key, val, (res.stderr or res.stdout).strip()))
+    # Broker settings are asserted, never written, on every broker: the compose Redpanda's own
+    # two are scripts/stack.sh's since AW-INF-060 removed topics.yaml's `broker.local`.
 
     # The shared broker's ACLs (AW-INF-056); the compose Redpanda runs none.
     if action == "diff" and not rp:

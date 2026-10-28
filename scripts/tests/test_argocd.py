@@ -628,7 +628,9 @@ class IssuerRefusal(unittest.TestCase):
         with tempfile.TemporaryDirectory() as d:
             log = os.path.join(d, "calls")
             env = stub_bin(d, log, {"kubectl": self.KUBECTL, "helm": "exit 0"})
-            p = subprocess.run([os.path.join(SCRIPTS, "helm_install.sh"), "local", "andara-server", "dev", "", ""],
+            # PROFILE=ci, CI's broker-free local (AW-INF-060): plain local now waits on the shared
+            # broker first, which this stub cluster doesn't have.
+            p = subprocess.run([os.path.join(SCRIPTS, "helm_install.sh"), "local", "andara-server", "dev", "", "", "ci"],
                                capture_output=True, text=True, env=env)
             self.assertEqual(p.returncode, 1, p.stderr)
             self.assertIn("ClusterIssuer andara-ca is not Ready; run `make platform-up`", p.stderr)

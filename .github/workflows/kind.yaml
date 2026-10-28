@@ -25,6 +25,7 @@ on:
       - "deploy/kind/**"
       - "deploy/compose/Dockerfile.server"
       - "scripts/helm_install.sh"
+      - "scripts/values_get.py"
       - "scripts/k8s_dry.sh"
       - "deploy/platform/**"
       - "scripts/platform_up.py"
@@ -45,6 +46,7 @@ on:
       - "deploy/kind/**"
       - "deploy/compose/Dockerfile.server"
       - "scripts/helm_install.sh"
+      - "scripts/values_get.py"
       - "scripts/k8s_dry.sh"
       - "deploy/platform/**"
       - "scripts/platform_up.py"
@@ -67,6 +69,11 @@ jobs:
     # context (AW-INF-053, ADR-0013 decision 1). kind-action names the cluster `ci`.
     env:
       ANDARA_KUBE_CONTEXT: kind-ci
+      # CI's cluster publishes the edge on the runner's 443 (deploy/kind/config.yaml), not the box's
+      # 8443, and has no shared services: every install of local here is `PROFILE=ci`, values/local.yaml
+      # with the overlay values/ci.yaml (andara.local, memory sources, no broker) (ADR-0013 decisions 8 and 11,
+      # AW-INF-060 AC-4, AC-10). Without the port the job fails: nothing listens on 8443.
+      ANDARA_EDGE_PORT: "443"
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-go@v5
@@ -126,7 +133,7 @@ jobs:
       - name: kind-load
         run: make kind-load
       - name: helm-install
-        run: make helm-install ENV=local
+        run: make helm-install ENV=local PROFILE=ci
       - name: pod is ready because /readyz says so
         run: |
           set -euo pipefail
@@ -148,7 +155,7 @@ jobs:
           helm --kube-context "$ANDARA_KUBE_CONTEXT" -n $NS uninstall andara
           sleep 5
           kubectl --context "$ANDARA_KUBE_CONTEXT" -n $NS get pvc snapshots-andara-0 -o jsonpath='{.status.phase}' | grep -q Bound
-          make helm-install ENV=local
+          make helm-install ENV=local PROFILE=ci
           after="$(kubectl --context "$ANDARA_KUBE_CONTEXT" -n $NS get pvc snapshots-andara-0 -o jsonpath='{.spec.volumeName}')"
           echo "pv after:  $after"
           [[ "$pv" == "$after" ]]
@@ -318,8 +325,8 @@ jobs:
           after="$(helm --kube-context "$ANDARA_KUBE_CONTEXT" list -n argocd -o json | python3 -c 'import json,sys; print(sorted((r["name"], r["revision"]) for r in json.load(sys.stdin)))')"
           [ "$before" = "$after" ] || { echo "::error::the second argocd-install changed a release: $before -> $after"; exit 1; }
           [ "$(grep -c 'already installed' /tmp/second.txt)" = 1 ]
-      # The committed Application, pointed at this commit with local's values (no broker,
-      # the kind-loaded image), adopting the andara release the steps above installed: the
+      # The committed Application, pointed at this commit with local's values and CI's overlay
+      # (no broker, the kind-loaded image), adopting the andara release the steps above installed: the
       # same adoption dev's move makes. Synced/Healthy within the deadline, and the pod the
       # release left is the one still running (the move doesn't roll it).
       - name: an Application at this commit adopts andara-local, Synced and Healthy (AW-INF-019)
@@ -336,7 +343,7 @@ jobs:
           app = yaml.safe_load(open("deploy/argocd/andara-dev.yaml"))
           app["metadata"]["name"] = "andara-ci"
           app["spec"]["source"]["targetRevision"] = sys.argv[1]
-          app["spec"]["source"]["helm"]["valueFiles"] = ["../values/local.yaml"]
+          app["spec"]["source"]["helm"]["valueFiles"] = ["../values/local.yaml", "../values/ci.yaml"]
           app["spec"]["destination"]["namespace"] = "andara-local"
           print(json.dumps(app))
           PY

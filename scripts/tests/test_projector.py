@@ -2,6 +2,8 @@
 # Copyright 2026 Valesor Development
 
 """`make projector-stop/-start/-rebuild` refusals and the rebuild Job (AW-INF-025)."""
+import contextlib
+import io
 import json
 import os
 import subprocess
@@ -50,10 +52,26 @@ class Usage(unittest.TestCase):
             self.assertEqual(r.returncode, 2, target)
             self.assertIn("ENV is missing", r.stderr)
 
-    def test_local_is_usage(self):
-        r = make("projector-stop", "ENV=local")
+    def test_an_unknown_env_is_usage(self):
+        r = make("projector-stop", "ENV=staging")
         self.assertEqual(r.returncode, 2)
-        self.assertIn("ENV=local", r.stderr)
+        self.assertIn("ENV=staging", r.stderr)
+
+
+class Local(unittest.TestCase):
+    """AW-INF-060 AC-15: ENV=local is accepted, and its consumer group is read on the shared Kafka,
+    never on compose's Redpanda (which topics.py picks for local while deploy/compose/ exists)."""
+
+    def test_local_reads_the_cluster_broker(self):
+        brokers = []
+        with mock.patch.object(projector.topics, "rpk_runner", lambda env, broker=None: brokers.append((env, broker))), \
+                mock.patch.object(projector, "stop", lambda env, ns, run: "stopped"), \
+                mock.patch.object(projector, "rebuild", lambda env, ns, run: "rebuilt"), \
+                contextlib.redirect_stdout(io.StringIO()):
+            self.assertEqual(projector.main(["stop", "local"]), 0)
+            self.assertEqual(projector.main(["rebuild", "local"]), 0)
+            self.assertEqual(projector.main(["stop", "dev"]), 0)
+        self.assertEqual(brokers, [("local", "cluster"), ("local", "cluster"), ("dev", None)])
 
 
 def fake_kubectl(objects, calls):

@@ -1,5 +1,9 @@
-# kind on the developer's box (decided 2026-09-10, v1.36.1). The image is built by
-# `make image` and loaded with `make kind-load`; nothing is pulled.
+# andara-local on the box's kind cluster `andara` (ADR-0013 decision 8, AW-INF-060), beside
+# andara-dev and on the same shared services in andara-shared. The image is built by `make image`
+# and loaded with `make kind-load`; nothing is pulled. `make local-up` does both and installs this.
+#
+# CI's lifecycle cluster has no shared services: it installs these with the overlay values/ci.yaml
+# (`make helm-install ENV=local PROFILE=ci`), which puts the sim and the Account store back in memory.
 image:
   repository: andara-server
   tag: dev
@@ -10,45 +14,45 @@ server:
     environment: local
     log_format: text
     log_level: debug
-    # Empty disables export: the CI kind cluster installs these values and has no collector.
-    # On the box the pod is still scraped by annotation (AW-INF-008); only OTLP is off.
-    otlp_endpoint: ""
+    # The cluster's Alloy OTLP receiver (Grafana k8s-monitoring, AW-INF-065), as dev's, so local's
+    # traces and log records reach solo7dev with environment="local". values/ci.yaml empties it.
+    otlp_endpoint: k8s-monitoring-alloy-receiver.observability.svc:4317
   content:
     source: dir
     path: /content
   auth:
-    # No broker in the local cluster yet, so Accounts live in memory and are lost on
-    # restart; the bootstrap operator is re-created on every boot for the same reason.
-    store: memory
-    # The mount the chart gives secrets.tokenKey; scripts/helm_install.sh writes the
-    # Secret from `make auth-keys`.
+    # The Account store is on the broker (the chart's default, kafka), under local's prefix.
+    # Mount the chart gives secrets.tokenKey; scripts/helm_install.sh writes the Secret from
+    # `make auth-keys`.
     token_key_file: /etc/andara/secrets/token-key/token.keys
   character:
     # Where a new Character enters the World (AW-SRV-014): Purgatory, in every environment
     # (Brian, 2026-09-26; AW-INF-024). Required outside local, and set explicitly in local
     # too, so the server's compiled-in default (town/plaza) no longer matters anywhere.
     spawn_room: purgatory/start
-  sim:
-    # Same reason: the tick loop runs on the memory source — the World ticks with no
-    # Command input and publishes nothing — until the local cluster has a broker.
-    source: memory
-  # The shared Kafka in andara-shared (AW-INF-055), under local's own topic prefix. Nothing
-  # above reads it yet: the memory switches move to the broker with AW-INF-060.
+  # The shared Kafka `andara-log` in andara-shared (AW-INF-055), under local's own topic prefix:
+  # the sim's command log and the Account store live there, as sim.source and auth.store default to.
   kafka:
     brokers: andara-log-kafka-bootstrap.andara-shared.svc:9092
     topic_prefix: local
-    # No sasl_username or secrets.kafkaCreds yet: nothing here dials the broker until AW-INF-060,
-    # which must set both to andara-server-local (the Secret alone is no SASL). A required Secret that only a cluster with the
-    # shared Kafka holds would stop andara-0 at FailedMount everywhere else, CI's lifecycle job
-    # among them (ADR-0013 decision 12). `make kafka-creds ENV=local` copies it all the same.
-# The box's Traefik holds :80/:443 on the kind control plane (the kind port mapping was
-# made for it), so the chart binds no host port of its own (AC-8). `andara.local` resolves
-# by the /etc/hosts line `make helm-install` prints. Connections from the box arrive at
-# Traefik from the docker bridge, not from 127.0.0.1, hence the 172.16/12 allowlist entry.
-host: andara.local
-# 127.0.0.0/8: websecure trusts the PROXY protocol from the kind network's gateway (AW-INF-054), so a
-# CLI on the workstation that reaches the edge through nginx arrives as 127.0.0.1. 172.16/12 stays for
-# the --resolve path that skips nginx, and for CI.
+    # local's server principal on the SASL listener (AW-INF-056). The username and the Secret are
+    # both needed: the Secret alone is no SASL. `make kafka-creds ENV=local` copies the password.
+    sasl_username: andara-server-local
+  # Snapshots in local's bucket on the shared object store (AW-INF-058); `make objectstore-install
+  # ENV=local` writes the pair into andara-snapshot-s3.
+  snapshot:
+    store: s3
+    s3_bucket: andara-snapshots-local
+    s3_endpoint: http://andara-objectstore.andara-shared.svc:9000
+
+# Public name under valesordev.com, served by the workstation's nginx, which passes TLS through
+# to the cluster's edge on 127.0.0.1:8443 (ADR-0013 decision 11). Until its DNS and nginx exist,
+# dial it with `--resolve local.andara.valesordev.com:8443:127.0.0.1`. The private CA signs it.
+host: local.andara.valesordev.com
+# Where the Admin Ingress sees a connection from. Through nginx: websecure trusts the PROXY
+# protocol from the kind network's gateway (AW-INF-054), so a CLI on the workstation arrives as
+# 127.0.0.1. With --resolve straight to 127.0.0.1:8443, skipping nginx: Docker's userland proxy
+# carries it, and it arrives from that gateway, an address in the docker bridges' 172.16.0.0/12.
 admin:
   allowedCIDRs: ["10.0.0.0/8", "192.168.0.0/16", "172.16.0.0/12", "127.0.0.0/8"]
 
@@ -57,10 +61,15 @@ secrets:
     secretName: andara-server-token-key
   bootstrapOperator:
     secretName: andara-server-bootstrap
+  snapshotS3:
+    secretName: andara-snapshot-s3
+  kafkaCreds:
+    secretName: andara-server-local
 
-# Off on local; when it's on, its own principal (ADR-0011 decision 6).
+# The state projector, on its own principal (ADR-0011 decision 6); `make kafka-creds ENV=local`.
 projectors:
   state:
+    enabled: true
     kafkaCreds:
       secretName: andara-projector-state-local
 
