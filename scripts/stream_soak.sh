@@ -34,8 +34,8 @@ INGRESS_NS="$(kube_helm -n "$NS" get values andara --all -o json | "$PY" -c 'imp
 ISSUER="$(kube_helm -n "$NS" get values andara --all -o json | "$PY" -c 'import json,sys; print(json.load(sys.stdin)["tls"]["issuer"])')"
 
 # Where the edge is. ANDARA_SOAK_RESOLVE pins the dial address (curl's --resolve) so
-# neither the box nor a CI runner needs an /etc/hosts line; the default is the kind
-# port mapping on this machine.
+# neither the box nor a CI runner needs an /etc/hosts line; the default, 127.0.0.1, is the
+# box's nginx on the default port (the kind edge with ANDARA_EDGE_PORT=8443) and CI's edge.
 RESOLVE="${ANDARA_SOAK_RESOLVE:-127.0.0.1}"
 # The edge's port (ADR-0013 amendment 24): by default the box's nginx, which passes TLS through to
 # the kind edge, and CI's cluster's edge itself. ANDARA_EDGE_PORT=8443 skips nginx on the box.

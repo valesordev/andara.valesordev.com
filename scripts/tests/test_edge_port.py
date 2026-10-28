@@ -48,11 +48,13 @@ class EdgePort(unittest.TestCase):
 
     def test_every_dial_site_uses_port(self):
         for rel, site, want in (("scripts/helm_install.sh", r"--server-address (\S+)", "$HOST:$PORT"),
-                                ("scripts/stream_soak.sh", r"-connect (\S+)", '"$RESOLVE:$PORT"')):
-            with self.subTest(script=rel):
+                                ("scripts/helm_install.sh", r'edge_hint\.sh" (.+)$', '"$HOST" "$PORT"'),
+                                ("scripts/stream_soak.sh", r"-connect (\S+)", '"$RESOLVE:$PORT"'),
+                                ("scripts/stream_soak.sh", r"ANDARA_SOAK_ADDR=(\S+)", '"$HOST:$PORT"')):
+            with self.subTest(script=rel, site=site):
                 with open(os.path.join(REPO, rel)) as f:
-                    found = re.findall(site, f.read())
-                self.assertTrue(found, rel)
+                    found = re.findall(site, f.read(), re.M)
+                self.assertTrue(found, "%s: no %s" % (rel, site))
                 self.assertEqual(set(found), {want}, "%s: a dial site without $PORT: %s" % (rel, found))
 
 
@@ -81,6 +83,7 @@ class Hint(unittest.TestCase):
                                        ("", "8443", "does not resolve here"),
                                        ("100.79.240.98", None, ""),                   # the box, through nginx
                                        ("100.79.240.98", "8443", "does not resolve to 127.0.0.1"),
+                                       ("100.79.240.98", "9443", "does not resolve to 127.0.0.1"),
                                        ("127.0.0.1", None, ""),
                                        ("127.0.0.1", "8443", "")):
             with self.subTest(answer=answer, override=override):
