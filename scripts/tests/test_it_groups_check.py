@@ -61,6 +61,21 @@ class Tree(unittest.TestCase):
         self.write("p/c_test.go", 'package p\nvar group = "andara-sim-dev"\n')
         self.assertEqual(self.check(), [])
 
+    def test_an_environment_named_group_through_a_helper_fails(self):
+        # A helper's positional argument is no group position, but a literal named like a real
+        # environment's group is caught wherever it appears, across lines too.
+        for args in ('t, c, e, s,\n\t\tfmt.Sprintf("andara-projector-state-dev-%d", nonce))',
+                     't, c, e, s, "andara-sim-local"+nonce)'):
+            with self.subTest(args=args):
+                self.write("p/e_integration_test.go", "package p\n\nfunc f() {\n\tb := newBrokerNamed(%s\n}\n" % args)
+                errors = self.check()
+                self.assertEqual(len(errors), 1, errors)
+                self.assertRegex(errors[0], r"'andara-(projector-state-dev-%d|sim-local)'")
+
+    def test_a_comparison_is_not_an_assignment(self):
+        self.write("p/f_integration_test.go", 'package p\nfunc f() { if group == "sim-x" || group != "sim-y" {} }\n')
+        self.assertEqual(self.check(), [])
+
     def test_an_exception_admits_its_site_and_a_stale_one_fails(self):
         self.write("p/d_integration_test.go", 'package p\nfunc f() { group := "andara-sim-it" + n }\n')
         self.assertEqual(self.check({("p/d_integration_test.go", "andara-sim-it"): "AW-INF-060"}), [])

@@ -617,6 +617,48 @@ def calls(log):
         return f.read().splitlines()
 
 
+class SecretRefusal(unittest.TestCase):
+    """AW-INF-060: helm-install refuses before the install when a Secret the values name is missing,
+    naming the target that writes it; CI's overlay names none, so none is read."""
+
+    # The shared broker and both issuers Ready, no Argo CD; `get secret <MISSING>` fails, and so does
+    # creating the token-key Secret, which is the first write after the check: the run never gets
+    # further than that, whatever the check does.
+    KUBECTL = ('case "$*" in\n'
+               '  "get crd applications.argoproj.io") exit 1;;\n'
+               '  *"get kafka andara-log"*|*"get clusterissuer"*) printf True; exit 0;;\n'
+               '  *"get secret $MISSING"*) exit 1;;\n'
+               '  *"create secret generic"*) exit 1;;\n'
+               'esac\nexit 0')
+
+    def install(self, missing, *profile):
+        with tempfile.TemporaryDirectory() as d:
+            log = os.path.join(d, "calls")
+            env = stub_bin(d, log, {"kubectl": self.KUBECTL, "helm": "exit 1"})
+            env.update(MISSING=missing, ANDARA_AUTH_DIR=os.path.join(d, "auth"))
+            p = subprocess.run([os.path.join(SCRIPTS, "helm_install.sh"), "local", "andara-server", "dev", "", "", *profile],
+                               capture_output=True, text=True, env=env)
+            return p, calls(log)
+
+    def test_each_missing_secret_names_its_target(self):
+        for secret, key, target in (("andara-server-local", "secrets.kafkaCreds.secretName", "kafka-creds"),
+                                    ("andara-snapshot-s3", "secrets.snapshotS3.secretName", "objectstore-install"),
+                                    ("andara-projector-state-local", "projectors.state.kafkaCreds.secretName", "kafka-creds")):
+            with self.subTest(secret=secret):
+                p, made = self.install(secret)
+                self.assertEqual(p.returncode, 1, p.stderr)
+                self.assertIn("no secret %s in andara-local (%s); run `make %s ENV=local` first" % (secret, key, target),
+                              p.stderr)
+                self.assertFalse([c for c in made if "create secret" in c or c.startswith("helm ")], made)
+
+    def test_the_ci_overlay_reads_no_secret(self):
+        p, made = self.install("andara-server-local", "ci")
+        self.assertNotIn("no secret", p.stderr)
+        self.assertEqual([c for c in made if " get secret " in c], [])
+        # It went past the check, to the token-key Secret the stub refuses.
+        self.assertTrue([c for c in made if "create secret generic andara-server-token-key" in c], made)
+
+
 class IssuerRefusal(unittest.TestCase):
     """AW-INF-054 AC-13: with andara-ca absent, helm-install and argocd-install exit 1 naming `make
     platform-up`, and apply nothing under deploy/k8s/cert-manager/."""

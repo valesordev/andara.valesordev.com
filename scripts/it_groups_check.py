@@ -17,7 +17,10 @@ A group ID is the first string literal of the expression in a group position:
     DeleteGroups(ctx, <expr>, ...)      kadm's cleanup, every argument after the context
 
 An expression with no string literal (a variable passed on) is skipped: the variable's own
-assignment is what gets checked. scripts/it_groups_exceptions.txt names the sites that may keep
+assignment is what gets checked. A group handed to a test helper as a plain argument
+(`newBrokerNamed(t, …, group)`) sits in no position, so one more rule covers the groups that
+matter most: any string literal starting `andara-sim-` or `andara-projector-`, the real
+environments' group names, is a group wherever it appears. scripts/it_groups_exceptions.txt names the sites that may keep
 another prefix and the story that removes each; a line that matches nothing fails the check.
 
 Exit codes: 0 clean; 1 a group without the prefix, or a stale exception; 2 usage.
@@ -31,10 +34,11 @@ EXCEPTIONS = os.path.join(REPO, "scripts", "it_groups_exceptions.txt")
 PREFIX = "it-"
 SKIP_DIRS = {".git", ".claude", "bin", "node_modules", "vendor", ".local"}
 
+ENV_GROUP = re.compile(r"andara-(sim|projector)-")
 LITERAL = re.compile(r'"((?:[^"\\]|\\.)*)"|`([^`]*)`')
 POSITIONS = (
     re.compile(r"\bGroup:\s*(?P<expr>[^,}]+)"),
-    re.compile(r"\bgroup\s*:?=\s*(?P<expr>.+)$"),
+    re.compile(r"\bgroup\s*:?=(?!=)\s*(?P<expr>.+)$"),
     re.compile(r"\bConsumerGroup\((?P<expr>[^)]*)\)"),
     re.compile(r"\bDeleteGroups\(\s*[A-Za-z_][A-Za-z0-9_]*\s*,(?P<expr>[^)]*)\)"),
 )
@@ -69,6 +73,10 @@ def groups_in(text):
                     lit = first_literal(part)
                     if lit is not None:
                         found.append((n, lit, part.strip()))
+        for m in LITERAL.finditer(code):
+            lit = m.group(1) if m.group(1) is not None else m.group(2)
+            if ENV_GROUP.match(lit) and not any(f[0] == n and f[1] == lit for f in found):
+                found.append((n, lit, m.group(0)))
     return found
 
 

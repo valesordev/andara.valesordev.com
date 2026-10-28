@@ -108,8 +108,8 @@ constraints` after the broker is already healthy. The compose file raises `nofil
 
 **Consumer-lag metrics are off by default.** Redpanda computes
 `redpanda_kafka_consumer_group_lag_*` only when `enable_consumer_group_metrics` includes
-`consumer_lag`. That setting is in the declaration under `broker.local` and is applied at
-`make up`. No dashboard reads them since AW-INF-049; the broker drills query them directly.
+`consumer_lag`. `make up` sets it on the compose broker (`scripts/stack.sh`, before
+`topics.py apply`), since the topic declaration names no broker's cluster settings. No dashboard reads them since AW-INF-049; the broker drills query them directly.
 
 ## Where the local broker and the production broker differ
 
@@ -118,7 +118,7 @@ Redpanda locally, real Kafka in production (ADR-0002 §7). Three differences mat
 - `unclean.leader.election.enable` has no Redpanda equivalent — Raft replication cannot
   elect a leader missing committed records. The declaration asserts it against real Kafka
   and does not try to set it locally.
-- `log_segment_ms_min` is 1 s locally (`broker.local` in the declaration), not Redpanda's
+- `log_segment_ms_min` is 1 s locally (set at `make up` by `scripts/stack.sh`), not Redpanda's
   10 min. The lower floor exists so a test can watch compaction on a throwaway topic
   (`AW-SRV-019` AC-5). No declared topic changes: each keeps its own `segment.ms`.
 - Rebalance and tiered-storage behavior are where the two can genuinely diverge. M1

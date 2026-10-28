@@ -6,9 +6,9 @@
     scripts/values_get.py <dotted.key> --values <file> [--values <file> ...]
 
 A later file wins, a mapping merges key by key, and a null deletes the key. Prints the empty
-string when the key is unset. scripts/helm_install.sh and scripts/stream_soak.sh read the
-environment's values with the overlay `PROFILE=ci` adds (values/ci.yaml on CI's lifecycle
-cluster) through this, so neither reads one file where helm installed two.
+string when the key is unset. scripts/helm_install.sh reads the environment's values with the
+overlay `PROFILE=ci` adds (values/ci.yaml on CI's lifecycle cluster) through this, so it never
+reads one file where helm installed two.
 """
 import sys
 

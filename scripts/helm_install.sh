@@ -243,9 +243,11 @@ if kube_kubectl -n "$NS" get certificate andara-edge >/dev/null 2>&1; then
   else
     echo "helm-install:   andara-cli --server-address $HOST:$PORT ...   (public issuer; the system trust store suffices)"
   fi
-  if ! getent hosts "$HOST" >/dev/null 2>&1; then
-    # No /etc/hosts line: the name is public DNS through the workstation's nginx (ADR-0013 decision 11).
-    echo "helm-install:   $HOST does not resolve here; until it does, dial it with curl --resolve $HOST:$PORT:127.0.0.1"
+  # The direct port listens on 127.0.0.1 only (deploy/kind/cluster.yaml), and the public name
+  # resolves to the workstation's nginx, which has no $PORT (ADR-0013 decision 11): unless the name
+  # resolves to loopback, the line above doesn't connect, so name the dial that does.
+  if ! getent hosts "$HOST" 2>/dev/null | awk '{print $1}' | grep -qxE '127\.[0-9.]+|::1'; then
+    echo "helm-install:   $HOST does not resolve to 127.0.0.1 here, and $PORT listens only there; dial it with curl --resolve $HOST:$PORT:127.0.0.1"
   fi
 else
   echo "helm-install: ingress.enabled=false — no edge; private CA written to $CA_DIR/ca.pem"

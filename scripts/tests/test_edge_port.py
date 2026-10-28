@@ -7,6 +7,7 @@ import os
 import re
 import subprocess
 import sys
+import tempfile
 import unittest
 from unittest import mock
 
@@ -41,9 +42,24 @@ class Profile(unittest.TestCase):
     """`make helm-install ENV=local PROFILE=ci` is the only overlay; any other PROFILE exits 2 (AW-INF-060 AC-10)."""
 
     def run_install(self, env, profile):
-        # The refusal comes before any helm or kubectl call, so no cluster is reached.
-        return subprocess.run(["bash", "scripts/helm_install.sh", env, "andara-server", "dev", "", "", profile],
-                              cwd=REPO, capture_output=True, text=True)
+        """helm_install.sh on stub kubectl and helm that log and fail, against the fixture kubeconfig:
+        a refusal that regressed would otherwise install into the ambient cluster."""
+        with tempfile.TemporaryDirectory() as d:
+            log = os.path.join(d, "calls")
+            for tool in ("kubectl", "helm"):
+                p = os.path.join(d, tool)
+                with open(p, "w") as f:
+                    f.write('#!/bin/sh\nprintf "%%s\\n" "%s $*" >> "%s"\nexit 1\n' % (tool, log))
+                os.chmod(p, 0o755)
+            environ = {k: v for k, v in os.environ.items() if k != "ANDARA_KUBE_CONTEXT"}
+            environ.update(PATH=d + os.pathsep + os.environ["PATH"],
+                           KUBECONFIG=os.path.join(REPO, "scripts", "tests", "fixtures", "kubeconfig"))
+            r = subprocess.run(["bash", "scripts/helm_install.sh", env, "andara-server", "dev", "", "", profile],
+                               cwd=REPO, capture_output=True, text=True, env=environ)
+            made = open(log).read().splitlines() if os.path.exists(log) else []
+        # The refusal comes before any helm or kubectl call.
+        self.assertEqual(made, [], r.stderr)
+        return r
 
     def test_an_unknown_profile_exits_2(self):
         for profile in ("full", "min", "box", "../ci"):
