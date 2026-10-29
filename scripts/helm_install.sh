@@ -210,6 +210,18 @@ PYEOF
     IMAGE_ARGS+=(--set "image.tag=${eff_tag}@${digest}")
     echo "helm-install: $eff_repo:$eff_tag is $digest"
   fi
+else
+  # local's tag never moves and its image is never pulled, so the pod spec is the same for every
+  # build: the build's ID, as a pod-template annotation, is what rolls the pods onto a new one
+  # (AW-INF-060). It's the ID `make kind-load` loads, so build and load before installing, as
+  # `make local-up` does. With no such image here, nothing is stamped and the pods stay.
+  IMAGE_ID="$(docker image inspect "$IMAGE:$TAG" --format '{{.Id}}' 2>/dev/null || true)"
+  if [[ "$IMAGE_ID" =~ ^sha256:[0-9a-f]{64}$ ]]; then
+    IMAGE_ARGS+=(--set-string "image.id=$IMAGE_ID")
+    echo "helm-install: $IMAGE:$TAG is the build $IMAGE_ID"
+  else
+    echo "helm-install: no local image $IMAGE:$TAG to stamp; a running pod keeps the build it has"
+  fi
 fi
 
 kube_helm upgrade --install andara "$CHART" \

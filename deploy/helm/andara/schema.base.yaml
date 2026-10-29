@@ -22,6 +22,8 @@ properties:
       repository: {type: string, minLength: 1}
       tag: {type: string, minLength: 1}
       pullPolicy: {type: string, enum: [Always, IfNotPresent, Never]}
+      # local's build ID, set by helm-install ENV=local; empty renders nothing (AW-INF-060).
+      id: {type: string, pattern: "^(sha256:[0-9a-f]{64})?$"}
   server:
     type: object
     description: GENERATED from keys.yaml — see values.schema.json.

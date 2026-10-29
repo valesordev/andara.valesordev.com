@@ -29,6 +29,10 @@ spec:
         app.kubernetes.io/component: projector-{{ $name }}
       annotations:
         checksum/config: {{ include "andara.serverEnv" $ | sha256sum }}
+        {{- with $.Values.image.id }}
+        # The same image as the server's, so the same build rolls it (AW-INF-060).
+        andara.valesordev.com/image-id: {{ . | quote }}
+        {{- end }}
         {{- if $.Values.contentVolume.render }}
         # The replica must load the content the server loads, or it diverges: a fixture change
         # rolls both (AW-INF-025).
