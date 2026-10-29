@@ -476,31 +476,32 @@ def test_image_source():
             fail("image args %s: server image %s, want %s" % (args, got, want))
 
 
-IMAGE_ID_KEY = "andara.valesordev.com/image-id"
+BUILD_KEY = "andara.valesordev.com/build"
 
 
-def test_image_id():
+def test_image_build():
     """AW-INF-060: local's image is a kind-loaded build under an unchanging tag with pullPolicy
-    Never, so only the build's ID tells a new build from the running one. helm_install.sh sets
-    image.id; it rolls the server and the projector, and unset it renders nothing."""
-    image_id = "sha256:" + "fedcba9876543210" * 4
+    Never, so only the build (a hash of its binaries) tells a new build from the running one.
+    helm_install.sh sets image.build; it rolls the server and the projector, and unset it renders
+    nothing."""
+    build = "sha256:" + "fedcba9876543210" * 4
 
     def stamped(out):
         ds = docs(out)
         pods = [find(ds, "StatefulSet", "andara"), find(ds, "Deployment", "andara-projector-state")]
-        return [(d["spec"]["template"]["metadata"].get("annotations") or {}).get(IMAGE_ID_KEY) for d in pods if d]
-    rc, out, err = render("local", "--set-string", "image.id=" + image_id)
+        return [(d["spec"]["template"]["metadata"].get("annotations") or {}).get(BUILD_KEY) for d in pods if d]
+    rc, out, err = render("local", "--set-string", "image.build=" + build)
     if rc:
-        fail("local with image.id: render failed: %s" % err.strip())
-    elif stamped(out) != [image_id, image_id]:
-        fail("local with image.id: pod templates carry %r, want the id on the server and the projector"
+        fail("local with image.build: render failed: %s" % err.strip())
+    elif stamped(out) != [build, build]:
+        fail("local with image.build: pod templates carry %r, want it on the server and the projector"
              % stamped(out))
     rc, out, err = render("local")
     if rc == 0 and any(stamped(out)):
-        fail("local without image.id: pod templates carry %r, want none" % stamped(out))
-    code, _, err = render("local", "--set-string", "image.id=latest")
-    if code == 0 or "/image/id" not in err:
-        fail("image.id=latest rendered or its rejection doesn't name /image/id: %s" % err.strip()[-200:])
+        fail("local without image.build: pod templates carry %r, want none" % stamped(out))
+    code, _, err = render("local", "--set-string", "image.build=latest")
+    if code == 0 or "/image/build" not in err:
+        fail("image.build=latest rendered or its rejection doesn't name /image/build: %s" % err.strip()[-200:])
 
 
 LABEL_VALUE = re.compile(r"^(([A-Za-z0-9][-A-Za-z0-9_.]*)?[A-Za-z0-9])?$")
@@ -973,7 +974,7 @@ def main():
     test_projectors_render_when_enabled()
     test_spawn_room_required_outside_local()
     test_image_source()
-    test_image_id()
+    test_image_build()
     test_label_values()
     test_kafka_on_the_box()
     test_ci_overlay()

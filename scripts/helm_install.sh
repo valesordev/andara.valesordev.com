@@ -212,15 +212,19 @@ PYEOF
   fi
 else
   # local's tag never moves and its image is never pulled, so the pod spec is the same for every
-  # build: the build's ID, as a pod-template annotation, is what rolls the pods onto a new one
-  # (AW-INF-060). It's the ID `make kind-load` loads, so build and load before installing, as
-  # `make local-up` does. With no such image here, nothing is stamped and the pods stay.
-  IMAGE_ID="$(docker image inspect "$IMAGE:$TAG" --format '{{.Id}}' 2>/dev/null || true)"
-  if [[ "$IMAGE_ID" =~ ^sha256:[0-9a-f]{64}$ ]]; then
-    IMAGE_ARGS+=(--set-string "image.id=$IMAGE_ID")
-    echo "helm-install: $IMAGE:$TAG is the build $IMAGE_ID"
+  # build: the build, as a pod-template annotation, is what rolls the pods onto a new one
+  # (AW-INF-060). The build is a hash of the two binaries in the image `make kind-load` loads,
+  # not the image's ID, which every rebuild changes (its layers' timestamps) when nothing that
+  # runs has. Build and load before installing, as `make local-up` does. With no such image
+  # here, nothing is stamped and the pods keep the build they have.
+  BINARIES="$(docker run --rm --entrypoint sha256sum "$IMAGE:$TAG" \
+    /usr/local/bin/andara-server /usr/local/bin/andara-projector 2>/dev/null || true)"
+  if [[ "$(grep -c '^[0-9a-f]\{64\}  ' <<<"$BINARIES")" == 2 ]]; then
+    BUILD="sha256:$(sha256sum <<<"$BINARIES" | awk '{print $1}')"
+    IMAGE_ARGS+=(--set-string "image.build=$BUILD")
+    echo "helm-install: $IMAGE:$TAG carries the build $BUILD"
   else
-    echo "helm-install: no local image $IMAGE:$TAG to stamp; a running pod keeps the build it has"
+    echo "helm-install: no local image $IMAGE:$TAG with both binaries to stamp; a running pod keeps the build it has"
   fi
 fi
 

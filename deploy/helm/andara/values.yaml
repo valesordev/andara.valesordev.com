@@ -12,10 +12,12 @@ image:
   repository: andara-server
   tag: dev
   pullPolicy: IfNotPresent
-  # The local build's image ID, which helm-install ENV=local sets: local's tag never changes and
-  # its image is never pulled, so this pod-template annotation is what rolls the pods onto a new
-  # build (AW-INF-060). Empty renders nothing; a registry image is pinned by its digest instead.
-  id: ""
+  # The local build: a hash of the binaries the image carries, which helm-install ENV=local sets.
+  # local's tag never changes and its image is never pulled, so this pod-template annotation is
+  # what rolls the pods onto a new build, and only then: the image's own ID changes on every
+  # rebuild, the binaries only when what they're built from does (AW-INF-060). Empty renders
+  # nothing; a registry image is pinned by its digest instead.
+  build: ""
 
 server:
   telemetry:
