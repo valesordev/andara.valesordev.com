@@ -43,6 +43,16 @@ class ImageBuild(unittest.TestCase):
         self.assertEqual(run([SERVER, PROJECTOR])[0].stdout, run([SERVER, PROJECTOR])[0].stdout)
         self.assertNotEqual(run([SERVER, PROJECTOR])[0].stdout, run([SERVER, SERVER.replace("5256", "5257")])[0].stdout)
 
+    def test_dockers_reason_is_kept(self):
+        with tempfile.TemporaryDirectory() as d:
+            with open(os.path.join(d, "docker"), "w") as f:
+                f.write("#!/bin/sh\necho 'permission denied while trying to connect to the docker API' >&2\nexit 1\n")
+            os.chmod(os.path.join(d, "docker"), 0o755)
+            r = subprocess.run(["bash", "scripts/image_build.sh", "andara-server:dev"], cwd=REPO, capture_output=True,
+                               text=True, env=dict(os.environ, PATH=d + os.pathsep + os.environ["PATH"]))
+        self.assertEqual(r.returncode, 1)
+        self.assertIn("docker: permission denied while trying to connect", r.stderr)
+
     def test_no_build_without_both(self):
         for lines, rc in (([], 125), ([SERVER], 1), ([SERVER, "sha256sum: can't open"], 1), ([], 0)):
             with self.subTest(lines=lines, rc=rc):

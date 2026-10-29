@@ -521,7 +521,7 @@ local-up:
 local-down:
 	@$(PY) $(SCRIPTS)/local.py down "$(if $(filter command line,$(origin ENV)),$(ENV))"
 
-## local-reset: local-down, then delete every `local.` topic and local's consumer groups on the shared Kafka and empty andara-snapshots-local; refuses (exit 1, nothing deleted) any name outside local's prefix (AW-INF-060)
+## local-reset: local-down, then empty andara-snapshots-local and delete every `local.` topic and local's consumer groups on the shared Kafka, in that order; refuses (exit 1, nothing deleted) any name outside local's prefix (AW-INF-060)
 local-reset:
 	@$(PY) $(SCRIPTS)/local.py reset "$(if $(filter command line,$(origin ENV)),$(ENV))"
 

@@ -12,6 +12,7 @@ import sys
 import tempfile
 import types
 import unittest
+from unittest import mock
 
 REPO = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 sys.path.insert(0, os.path.join(REPO, "scripts"))
@@ -228,6 +229,14 @@ class Broker:
 
 class Groups(unittest.TestCase):
 
+    def test_only_the_groups_own_row_counts(self):
+        """A row for a group whose name starts with this one's isn't this one's."""
+        def run(args):
+            return res(0, "GROUP                 STATUS\nandara-sim-local-x    OK\n"
+                          "andara-sim-local      NON_EMPTY_GROUP: The group is not empty.\n")
+        with self.assertRaises(local.Failed):
+            local.delete_groups(log()[0], run, ["andara-sim-local"])
+
     def test_each_groups_outcome_is_read_from_its_status(self):
         lg, out = log()
         local.delete_groups(lg, Broker(), ["andara-sim-local", "andara-content-local"])
@@ -337,6 +346,7 @@ class Reset(unittest.TestCase):
                     os.unlink(path)
                 self.assertIsInstance(err, local.Failed)
                 self.assertIn("nothing deleted", str(err))
+                self.assertNotIn("part-way", str(err))
                 self.assertNothingDeleted(broker, helm, emptied)
 
     def test_a_group_outside_local_deletes_nothing(self):
@@ -346,12 +356,52 @@ class Reset(unittest.TestCase):
         finally:
             os.unlink(path)
         self.assertIn("andara-sim-dev", str(err))
+        self.assertNotIn("part-way", str(err))
         self.assertNothingDeleted(broker, helm, emptied)
 
     def test_another_bucket_deletes_nothing(self):
         broker, helm, emptied, _, err = self.run_reset(bucket="andara-snapshots-dev")
         self.assertIn("andara-snapshots-dev", str(err))
+        self.assertNotIn("part-way", str(err))
         self.assertNothingDeleted(broker, helm, emptied)
+
+    def test_a_failed_down_has_changed_nothing(self):
+        broker = Broker()
+        with self.assertRaises(local.Failed) as e:
+            local.reset(log()[0], run=broker, helm=Helm(res(1, "", "Kubernetes cluster unreachable")),
+                        empty=lambda env: self.fail("emptied"))
+        self.assertNotIn("part-way", str(e.exception))
+        self.assertEqual([c for c in broker.calls if c[1:2] == ["delete"]], [])
+
+    def test_an_exit_of_its_own_part_way_still_says_to_rerun(self):
+        """topics.py and kube.py exit with their own code (3 for a missing credential): after the release
+        is down, the hint carries the run, and the code is theirs."""
+        for raised, code in ((SystemExit(3), 3), (local.objectstore.Missing("no rclone Secret"), None)):
+            with self.subTest(raised=raised):
+                def boom(env):
+                    raise raised
+                err = io.StringIO()
+                with mock.patch("sys.stderr", err), self.assertRaises(type(raised)) as e:
+                    local.reset(log()[0], run=Broker(), helm=Helm(), empty=boom)
+                self.assertIn("run=r1 andara-local is part-way reset: rerun `make local-reset`", err.getvalue())
+                if code is not None:
+                    self.assertEqual(e.exception.code, code)
+
+
+class Main(unittest.TestCase):
+
+    def test_a_systemexit_keeps_its_code_and_prints_the_run(self):
+        err = io.StringIO()
+        with mock.patch.object(local, "down", side_effect=SystemExit(3)), mock.patch("sys.stderr", err), \
+                self.assertRaises(SystemExit) as e:
+            local.main(["down", ""], log=local.Log("r1", io.StringIO()))
+        self.assertEqual(e.exception.code, 3)
+        self.assertIn("run=r1 stopped (exit 3)", err.getvalue())
+
+    def test_objectstore_missing_is_exit_3(self):
+        with mock.patch.object(local, "reset", side_effect=local.objectstore.Missing("no rclone Secret")), \
+                mock.patch("sys.stderr", io.StringIO()):
+            self.assertEqual(local.main(["reset", ""], log=local.Log("r1", io.StringIO())), 3)
 
 
 if __name__ == "__main__":

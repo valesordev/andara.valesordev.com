@@ -19,8 +19,10 @@ down   andara-local's Helm release only. The namespace, its label and its Secret
        and kafka-creds own them, and local-up puts the release back.
 reset  The plan first, checked before anything changes: every live topic under `local.`, local's
        reserved consumer groups and the bucket andara-snapshots-local. A name outside local's
-       prefix stops the run with nothing deleted. Then down, the topics (waited on until gone),
-       the groups, and the bucket emptied. `make local-up` recreates the topics and the World.
+       prefix stops the run with nothing deleted. Then down, the bucket emptied, the topics
+       (waited on until gone) and the groups: the bucket before the log, so a failure part-way
+       never leaves a snapshot whose log is gone, and says to rerun. `make local-up` recreates
+       the topics and the World.
 
 Each line is `local: <step> run=<id> ...`, one run ID per invocation.
 
@@ -54,6 +56,7 @@ STEPS = [
 ]
 TELEMETRY = ("observability", "grafana-telemetry", "token")
 TOPIC_DELETE_DEADLINE = 120
+PART_WAY = "andara-local is part-way reset: rerun `make local-reset`"
 # GNU make reports a failed recipe as its own exit 2; the recipe's code is on this line.
 MAKE_ERROR = re.compile(r"^\S*make(?:\[\d+\])?: \*\*\* \[[^\]]*\] Error (\d+)\s*$")
 
@@ -202,8 +205,8 @@ def reset(log, run=None, helm=helm_run, empty=objectstore.empty, decl=topics.DEC
     run = run or topics.rpk_runner(ENV, "cluster")
     names, groups, bucket = plan(run, decl, bucket)
     log("reset", "plan: %d topic(s) under local., %d consumer group(s), bucket %s" % (len(names), len(groups), bucket))
+    down(log, helm)  # a failure here has deleted nothing
     try:
-        down(log, helm)
         try:
             empty(ENV)
         except objectstore.Failed as e:
@@ -212,7 +215,11 @@ def reset(log, run=None, helm=helm_run, empty=objectstore.empty, decl=topics.DEC
         delete_topics(log, run, names, sleep=sleep)
         delete_groups(log, run, groups)
     except Failed as e:
-        raise Failed("%s; andara-local is part-way reset: rerun `make local-reset`" % e)
+        raise Failed("%s; %s" % (e, PART_WAY))
+    except (SystemExit, objectstore.Missing, kube.Missing):
+        # Exits of their own (a missing credential is 3): the hint, then their code.
+        print("make: local-reset: run=%s %s" % (log.run, PART_WAY), file=sys.stderr)
+        raise
     log("reset", "andara-local is reset; `make local-up` recreates its topics and World")
 
 
