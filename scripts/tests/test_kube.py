@@ -268,6 +268,7 @@ SWEEP = [
     ("world_reset.py", [PY, "scripts/world_reset.py", "dev", "andara-dev"]),
     ("env_destroy.py", [PY, "scripts/env_destroy.py", "dev", "andara-dev"]),
     ("server_ctl.py", [PY, "scripts/server_ctl.py", "stop", "dev"]),
+    ("local.py", [PY, "scripts/local.py", "down", ""]),
     ("projector.py", [PY, "scripts/projector.py", "stop", "dev"]),
     ("objectstore.py", [PY, "scripts/objectstore.py", "install", "dev"]),
     ("topics.py", [PY, "scripts/topics.py", "diff", "--env", "dev"]),
