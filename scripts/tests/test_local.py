@@ -161,8 +161,12 @@ LIVE = ["local.andara.commands.v1", "local.andara.events.v1", "local.andara.cont
 
 
 class Broker:
-    def __init__(self, live=LIVE):
-        self.live, self.calls = list(live), []
+    """rpk as the shared Kafka answers: `group delete` exits 0 and reports each group's outcome in
+    its STATUS column, GROUP_ID_NOT_FOUND for one that isn't there."""
+
+    def __init__(self, live=LIVE, groups=("andara-sim-local",), group_status=None):
+        self.live, self.groups, self.calls = list(live), set(groups), []
+        self.group_status = group_status or {}
 
     def __call__(self, args):
         self.calls.append(list(args))
@@ -170,7 +174,31 @@ class Broker:
             return res(0, json.dumps([{"name": n, "partitions": 1} for n in self.live]))
         if args[:2] == ["topic", "delete"]:
             self.live.remove(args[2])
+        if args[:2] == ["group", "delete"]:
+            g = args[2]
+            status = self.group_status.get(g) or ("OK" if g in self.groups else
+                                                  "GROUP_ID_NOT_FOUND: The group id does not exist.")
+            return res(0, "GROUP%sSTATUS\n%s  %s\n" % (" " * (len(g) - 3), g, status))
         return res()
+
+
+class Groups(unittest.TestCase):
+
+    def test_each_groups_outcome_is_read_from_its_status(self):
+        lg, out = log()
+        local.delete_groups(lg, Broker(), ["andara-sim-local", "andara-content-local"])
+        self.assertIn("deleted consumer group andara-sim-local", out.getvalue())
+        self.assertIn("consumer group andara-content-local was not there", out.getvalue())
+        self.assertNotIn("deleted consumer group andara-content-local", out.getvalue())
+
+    def test_a_refused_delete_fails_though_rpk_exits_0(self):
+        for status in ("NON_EMPTY_GROUP: The group is not empty.",
+                       "GROUP_AUTHORIZATION_FAILED: Not authorized to access group."):
+            with self.subTest(status=status):
+                broker = Broker(group_status={"andara-sim-local": status})
+                with self.assertRaises(local.Failed) as e:
+                    local.delete_groups(log()[0], broker, ["andara-sim-local"])
+                self.assertIn(status.split(":")[0], str(e.exception))
 
 
 def decl_with(old, new):

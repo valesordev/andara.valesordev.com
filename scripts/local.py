@@ -172,12 +172,19 @@ def delete_topics(log, run, names, sleep=time.sleep, clock=time.monotonic):
 
 
 def delete_groups(log, run, groups):
+    """rpk exits 0 whatever happens to each group, and reports it in a STATUS column: OK deleted it,
+    GROUP_ID_NOT_FOUND means there was none, and anything else (a group with members, a refused
+    ACL) is a failure."""
     for group in groups:
         res = run(["group", "delete", group])
-        out = (res.stderr + res.stdout).lower()
-        if res.returncode != 0 and not any(s in out for s in ("not found", "not_found", "does not exist")):
-            raise Failed("delete consumer group %s: %s" % (group, (res.stderr or res.stdout).strip()))
-        log("reset", "deleted consumer group %s" % group)
+        status = next((line.split(None, 1)[1].strip() for line in res.stdout.splitlines()
+                       if line.split(None, 1)[:1] == [group] and len(line.split(None, 1)) == 2), "")
+        if res.returncode == 0 and status == "OK":
+            log("reset", "deleted consumer group %s" % group)
+        elif status.startswith("GROUP_ID_NOT_FOUND"):
+            log("reset", "consumer group %s was not there" % group)
+        else:
+            raise Failed("delete consumer group %s: %s" % (group, status or (res.stderr or res.stdout).strip()))
 
 
 def reset(log, run=None, helm=helm_run, empty=objectstore.empty, decl=topics.DECL, bucket=None):
