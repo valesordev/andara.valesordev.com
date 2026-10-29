@@ -28,14 +28,18 @@ done
 . scripts/kube.sh
 kube_require stream-soak
 
-HOST="$(awk '/^host:/{print $2}' "$VALUES")"
+# The installed release's host, overlay included (values/ci.yaml's andara.local on CI, AW-INF-060).
+HOST="$(kube_helm -n "$NS" get values andara --all -o json | "$PY" -c 'import json,sys; print(json.load(sys.stdin)["host"])')"
 INGRESS_NS="$(kube_helm -n "$NS" get values andara --all -o json | "$PY" -c 'import json,sys; print(json.load(sys.stdin)["networkPolicy"]["ingressNamespace"])')"
 ISSUER="$(kube_helm -n "$NS" get values andara --all -o json | "$PY" -c 'import json,sys; print(json.load(sys.stdin)["tls"]["issuer"])')"
 
 # Where the edge is. ANDARA_SOAK_RESOLVE pins the dial address (curl's --resolve) so
-# neither the box nor a CI runner needs an /etc/hosts line; the default is the kind
-# port mapping on this machine.
+# neither the box nor a CI runner needs an /etc/hosts line; the default, 127.0.0.1, is the
+# box's nginx on the default port (the kind edge with ANDARA_EDGE_PORT=8443) and CI's edge.
 RESOLVE="${ANDARA_SOAK_RESOLVE:-127.0.0.1}"
+# The edge's port (ADR-0013 amendment 24): by default the box's nginx, which passes TLS through to
+# the kind edge, and CI's cluster's edge itself. ANDARA_EDGE_PORT=8443 skips nginx on the box.
+PORT="${ANDARA_EDGE_PORT:-443}"
 CA=""
 if [[ "$ISSUER" == "andara-ca" ]]; then
   CA="$REPO/.local/tls/cluster/$ENVNAME/ca.pem"
@@ -43,13 +47,13 @@ if [[ "$ISSUER" == "andara-ca" ]]; then
 fi
 
 serial() {
-  openssl s_client -connect "$RESOLVE:443" -servername "$HOST" </dev/null 2>/dev/null \
+  openssl s_client -connect "$RESOLVE:$PORT" -servername "$HOST" </dev/null 2>/dev/null \
     | openssl x509 -noout -serial 2>/dev/null | cut -d= -f2
 }
 
 before="$(serial)"
-[[ -n "$before" ]] || { echo "make: stream-soak: no certificate served at $RESOLVE:443 for $HOST" >&2; exit 1; }
-echo "stream-soak: $HOST via $RESOLVE, edge certificate serial $before, holding a Subscribe for $DURATION"
+[[ -n "$before" ]] || { echo "make: stream-soak: no certificate served at $RESOLVE:$PORT for $HOST" >&2; exit 1; }
+echo "stream-soak: $HOST via $RESOLVE:$PORT, edge certificate serial $before, holding a Subscribe for $DURATION"
 
 # Go's -timeout must outlive the soak, or the runner kills the very thing under test.
 secs="$("$PY" -c 'import re,sys
@@ -57,7 +61,7 @@ d=sys.argv[1]; t=0
 for n,u in re.findall(r"(\d+)([hms])", d): t += int(n)*{"h":3600,"m":60,"s":1}[u]
 print(t)' "$DURATION")"
 LOG="$(mktemp -t stream-soak.XXXXXX)"
-ANDARA_SOAK_DURATION="$DURATION" ANDARA_SOAK_ADDR="$HOST:443" ANDARA_SOAK_RESOLVE="$RESOLVE" \
+ANDARA_SOAK_DURATION="$DURATION" ANDARA_SOAK_ADDR="$HOST:$PORT" ANDARA_SOAK_RESOLVE="$RESOLVE" \
 ANDARA_TLS_CA_FILE="$CA" ANDARA_SOAK_OPERATOR="${ANDARA_BOOTSTRAP_OPERATOR:-operator:andara-local}" \
   "$GO" test -tags soak -count=1 -v -timeout "$((secs + 600))s" -run '^TestSoak_' ./internal/smoke/ >"$LOG" 2>&1 &
 soak=$!

@@ -4,9 +4,9 @@
 
 """Operate the state projector on a cluster environment (AW-INF-025, #80).
 
-    scripts/projector.py stop <env>      make projector-stop ENV=<dev|prod>
-    scripts/projector.py start <env>     make projector-start ENV=<dev|prod>
-    scripts/projector.py rebuild <env>   make projector-rebuild ENV=<dev|prod>
+    scripts/projector.py stop <env>      make projector-stop ENV=<local|dev|prod>
+    scripts/projector.py start <env>     make projector-start ENV=<local|dev|prod>
+    scripts/projector.py rebuild <env>   make projector-rebuild ENV=<local|dev|prod>
 
 stop     scales the Deployment to 0 and waits for its pods to go and its consumer group to have
          no members, bounded by PROJECTOR_STOP_TIMEOUT (120s).
@@ -215,20 +215,23 @@ def rebuild(env, ns, run):
 
 def main(argv):
     if len(argv) != 2 or argv[0] not in ("stop", "start", "rebuild"):
-        return usage("usage: make projector-<stop|start|rebuild> ENV=<dev|prod>")
+        return usage("usage: make projector-<stop|start|rebuild> ENV=<local|dev|prod>")
     cmd, env = argv
     if not env:
-        return usage("ENV is missing: make projector-%s ENV=<dev|prod>" % cmd)
-    if env not in ("dev", "prod"):
-        return usage("ENV=%s: the projector runs on dev or prod only" % env)
+        return usage("ENV is missing: make projector-%s ENV=<local|dev|prod>" % cmd)
+    if env not in ("local", "dev", "prod"):
+        return usage("ENV=%s: the projector runs on local, dev or prod only" % env)
     ns = "andara-" + env
+    # local's projector reads the shared Kafka (AW-INF-060), never compose's Redpanda, which
+    # topics.py still picks for local while deploy/compose/ exists.
+    broker = "cluster" if env == "local" else None
     try:
         if cmd == "stop":
-            out = stop(env, ns, topics.rpk_runner(env))
+            out = stop(env, ns, topics.rpk_runner(env, broker))
         elif cmd == "start":
             out = start(env, ns)
         else:
-            out = rebuild(env, ns, topics.rpk_runner(env))
+            out = rebuild(env, ns, topics.rpk_runner(env, broker))
     except Failed as e:
         print("projector-%s: failed in %s: %s" % (cmd, ns, e), file=sys.stderr)
         return 1

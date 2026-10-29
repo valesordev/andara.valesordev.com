@@ -82,15 +82,15 @@ tls:
 # without this every Admin call, a Builder's `content publish` included, is 403 at the edge
 # (AW-INF-021, found on the rollout). The chart's private ranges stay.
 admin:
-# The box's own docker bridges (172.16.0.0/12, as values/local.yaml has them). A connection
-# from the box that Docker's userland proxy carries (docker-proxy holds 0.0.0.0:443), rather
-# than its iptables DNAT, reaches Traefik from the kind network's gateway, 172.19.0.1. That's
-# true over loopback, and plausibly over the tailnet's IPv6 address. On 2026-10-02 Brian's
-# walk-through got 403 that way, while the same box over the tailnet's IPv4 address arrived as
-# 100.79.240.98 (#305).
-# Loopback (127.0.0.0/8): websecure trusts the PROXY protocol from the kind network's gateway
-# (AW-INF-054), so a CLI on the workstation, through nginx, arrives as 127.0.0.1. 172.16.0.0/12 stays
-# until AW-INF-066 removes it, after the CI PROXY test and the rebuild's resolution check pass.
+# Loopback (127.0.0.0/8): the edge is 127.0.0.1:8443 behind the workstation's nginx (ADR-0013
+# decision 11), and websecure trusts the PROXY protocol from the kind network's gateway (AW-INF-054),
+# so a CLI on the workstation that dials nginx at 127.0.0.1 (--resolve) arrives as 127.0.0.1; by
+# DNS it arrives as its tailnet address (amendment 24).
+# The docker bridges (172.16.0.0/12, as values/local.yaml has them): a connection that dials
+# 127.0.0.1:8443 directly, skipping nginx, is carried by Docker's userland proxy and reaches Traefik
+# from the kind network's gateway, with no PROXY header. On 2026-10-02 that path got 403 before the
+# range was added (#305). It stays until AW-INF-066 removes it, after the CI PROXY test and the
+# rebuild's resolution check pass.
   allowedCIDRs: ["10.0.0.0/8", "192.168.0.0/16", "100.64.0.0/10", "172.16.0.0/12", "127.0.0.0/8"]
 
 secrets:

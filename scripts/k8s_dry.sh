@@ -28,19 +28,25 @@ for tool in helm kubeconform; do
   }
 done
 
+# local+ci is local with CI's lifecycle overlay, values/ci.yaml, as the kind workflow installs it
+# (`make helm-install ENV=local PROFILE=ci`, AW-INF-060).
 if [[ "$ENVNAME" == "all" ]]; then
-  envs=(local dev prod)
+  envs=(local local+ci dev prod)
 else
   envs=("$ENVNAME")
 fi
 
 for e in "${envs[@]}"; do
-  values="deploy/helm/values/${e}.yaml"
-  [[ -f "$values" ]] || {
-    echo "make: k8s-dry: no values file at $values for ENV=$e" >&2
-    exit 1
-  }
-  rendered="$(helm template andara "$CHART" --kube-version "$KUBE_VERSION" --values "$values")"
+  args=()
+  for part in ${e//+/ }; do
+    values="deploy/helm/values/${part}.yaml"
+    [[ -f "$values" ]] || {
+      echo "make: k8s-dry: no values file at $values for ENV=$e" >&2
+      exit 1
+    }
+    args+=(--values "$values")
+  done
+  rendered="$(helm template andara "$CHART" --kube-version "$KUBE_VERSION" "${args[@]}")"
   printf '%s\n' "$rendered" | kubeconform -strict -summary -kubernetes-version "$KUBE_VERSION" \
     -schema-location default -schema-location "$CRD_SCHEMAS" \
     | sed "s/^/k8s-dry [$e]: /"

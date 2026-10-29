@@ -8,9 +8,11 @@
 # prod pull the image .github/workflows/publish.yaml pushes to ghcr (AW-INF-013); a TAG= on
 # the command line pins one, and scripts/helm_image_args.sh is the rule.
 #
-# The broker: local runs without one (accounts and commands in memory). dev uses the shared
-# Kafka `andara-log` in andara-shared (AW-INF-014, AW-INF-055, AW-INF-059), which `make shared-up`
-# creates; this script refuses to touch the release until the broker the values file names is Ready.
+# The broker: local and dev use the shared Kafka `andara-log` in andara-shared (AW-INF-014,
+# AW-INF-055, AW-INF-059, AW-INF-060), which `make shared-up` creates; this script refuses to touch
+# the release until the broker the values file names is Ready. CI's lifecycle cluster has no shared
+# Kafka: it installs local with the overlay values/ci.yaml (`make helm-install ENV=local PROFILE=ci`,
+# ADR-0013 decision 8), which keeps the sim and the Account store in memory, and the check is skipped.
 #
 # Content: local and dev read Zone Definitions from a ConfigMap the chart renders out of
 # testdata/content/valid (contentVolume.render), as compose reads a directory, until
@@ -22,11 +24,12 @@
 # its Secret.
 set -euo pipefail
 
-ENVNAME="${1:?usage: helm_install.sh <env> <image> <tag> [image_set] [tag_set]}"
+ENVNAME="${1:?usage: helm_install.sh <env> <image> <tag> [image_set] [tag_set] [profile]}"
 IMAGE="${2:-andara-server}"
 TAG="${3:-dev}"
 IMAGE_SET="${4:-}"
 TAG_SET="${5:-}"
+PROFILE="${6:-}"
 REPO="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 cd "$REPO"
 
@@ -35,6 +38,23 @@ VALUES="deploy/helm/values/${ENVNAME}.yaml"
 NS="andara-${ENVNAME}"
 
 [[ -f "$VALUES" ]] || { echo "make: helm-install: no values file at $VALUES" >&2; exit 1; }
+# PROFILE=ci layers values/ci.yaml after local's, as helm merges them: the CI lifecycle job's
+# overlay (host andara.local, memory sources, no broker), in the same namespace andara-local
+# (AW-INF-060 AC-10). It is the only profile, and only local has it.
+VALUES_ARGS=(--values "$VALUES")
+case "$PROFILE" in
+  "") ;;
+  ci)
+    [[ "$ENVNAME" == "local" ]] \
+      || { echo "make: helm-install: PROFILE=ci is an overlay on local; ENV=$ENVNAME has none" >&2; exit 2; }
+    VALUES_ARGS+=(--values deploy/helm/values/ci.yaml) ;;
+  *) echo "make: helm-install: PROFILE=$PROFILE: must be ci, or unset" >&2; exit 2 ;;
+esac
+# One key of the merged values files, as helm merges them (a later file wins, a null deletes);
+# empty when unset.
+vget() {
+  "${PY:-python3}" "$REPO/scripts/values_get.py" "$1" "${VALUES_ARGS[@]}"
+}
 # main's values/dev.yaml names `:dev`, which nothing moves since AW-INF-059: dev runs what the Git
 # tag `dev` pins. Installing dev by hand (the take-back path) names that build explicitly.
 if [[ "$ENVNAME" == "dev" ]] && { [[ -z "$TAG_SET" ]] || ! [[ "$TAG" =~ ^sha-[0-9a-f]{12}(@sha256:[0-9a-f]{64})?$ ]]; }; then
@@ -56,20 +76,20 @@ if kube_kubectl get crd applications.argoproj.io >/dev/null 2>&1 \
   exit 1
 fi
 
-# dev and prod run the sim and the Account store on Kafka (AW-INF-014 AC-7). Without it the
-# pod would crash-loop on an unreachable broker for the full --wait, so the release is not
-# touched until the broker is Ready. The broker is the one the values file names:
-# andara-log-kafka-bootstrap.<namespace>.svc (dev's is the shared one in andara-shared since
-# AW-INF-059), or a bare name in the environment's own namespace (prod).
-if [[ "$ENVNAME" != "local" ]]; then
-  KNS="$("${PY:-python3}" - "$VALUES" "$NS" <<'PYEOF'
-import sys, yaml
-values, ns = sys.argv[1:3]
-b = str((((yaml.safe_load(open(values)) or {}).get("server") or {}).get("kafka") or {}).get("brokers") or "")
-parts = b.split(":", 1)[0].split(".")
-print(parts[1] if len(parts) > 1 else ns)
-PYEOF
-)"
+# Every install but CI's lifecycle one runs the sim and the Account store on Kafka (AW-INF-014
+# AC-7; the chart's default for both is kafka). Without it the pod would crash-loop on an
+# unreachable broker for the full --wait, so the release is not touched until the broker is
+# Ready. The broker is the one the values file names: andara-log-kafka-bootstrap.<namespace>.svc
+# (local's and dev's are the shared one in andara-shared), or a bare name in the environment's
+# own namespace (prod).
+USES_BROKER=""
+for key in server.sim.source server.auth.store; do
+  [[ "$(vget "$key")" == memory ]] || USES_BROKER=1
+done
+if [[ -n "$USES_BROKER" ]]; then
+  KNS="$(vget server.kafka.brokers)"
+  KNS="${KNS%%:*}"
+  if [[ "$KNS" == *.* ]]; then KNS="${KNS#*.}"; KNS="${KNS%%.*}"; else KNS="$NS"; fi
   # A bare name is a broker in the environment's own namespace: prod's, which isn't on this
   # cluster (ADR-0013 decision 10), so nothing here installs it.
   if [[ "$KNS" == "$NS" ]]; then khint="nothing on this cluster installs a Kafka in $NS (ADR-0013 decision 10)"; else khint="run \`make shared-up\` first"; fi
@@ -80,7 +100,7 @@ PYEOF
   echo "helm-install: kafka/andara-log in $KNS is Ready"
 fi
 
-# The platform the chart is written for: the cluster's Traefik owns :443 (AC-8) and
+# The platform the chart is written for: the cluster's Traefik owns the edge (AC-8) and
 # cert-manager issues every certificate. `make platform-up` installs both and the ClusterIssuers
 # (AW-INF-054); nothing here applies them, because an apply of andara-ca.yaml before platform-up's
 # CA root restore mints a new root. The failure mode otherwise is an Ingress nobody serves and a
@@ -92,11 +112,8 @@ kube_kubectl get crd clusterissuers.cert-manager.io >/dev/null 2>&1 \
 
 # The issuers this environment needs: the private CA for the server certificate's second leg,
 # always, and tls.issuer for the edge.
-EDGE_ISSUER="$("${PY:-python3}" - "$VALUES" <<'PYEOF'
-import sys, yaml
-print(((yaml.safe_load(open(sys.argv[1])) or {}).get("tls") or {}).get("issuer") or "andara-ca")
-PYEOF
-)"
+EDGE_ISSUER="$(vget tls.issuer)"
+EDGE_ISSUER="${EDGE_ISSUER:-andara-ca}"
 for issuer in andara-ca $([[ "$EDGE_ISSUER" != andara-ca ]] && echo "$EDGE_ISSUER"); do
   ready="$(kube_kubectl get clusterissuer "$issuer" \
     -o jsonpath='{.status.conditions[?(@.type=="Ready")].status}' 2>/dev/null || true)"
@@ -110,10 +127,22 @@ echo "helm-install: namespace $NS"
 # The shared Kafka's listener admits an andara pod only from a namespace carrying this label
 # (deploy/k8s/kafka/kafka.yaml, as `make shared-up` sets it). A namespace env-destroy removed and
 # this script recreated would otherwise wait out --wait on a broker it can't reach.
-if [[ "$ENVNAME" != "local" && "${KNS:-$NS}" != "$NS" ]]; then
+if [[ -n "$USES_BROKER" && "${KNS:-$NS}" != "$NS" ]]; then
   kube_kubectl label namespace "$NS" "andara.valesor/env=$ENVNAME" --overwrite >/dev/null
   echo "helm-install: namespace $NS labelled andara.valesor/env=$ENVNAME"
 fi
+
+# The Secrets the values name that other targets write. A missing one holds the pod at FailedMount
+# for the whole --wait, so each is checked here and names its writer (AW-INF-056, AW-INF-058).
+pairs=("secrets.kafkaCreds.secretName=kafka-creds" "secrets.snapshotS3.secretName=objectstore-install")
+# The projector's own principal only when it runs; local and dev name it either way.
+[[ "$(vget projectors.state.enabled)" == True ]] && pairs+=("projectors.state.kafkaCreds.secretName=kafka-creds")
+for pair in "${pairs[@]}"; do
+  secret="$(vget "${pair%%=*}")"
+  [[ -z "$secret" ]] && continue
+  kube_kubectl -n "$NS" get secret "$secret" >/dev/null 2>&1 \
+    || { echo "make: helm-install: no secret $secret in $NS (${pair%%=*}); run \`make ${pair#*=} ENV=$ENVNAME\` first" >&2; exit 1; }
+done
 
 # Environments whose content comes from ConfigMaps (server.content.source: dir) and whose
 # token key and first operator this script provisions. dev leaves this list when
@@ -185,7 +214,7 @@ fi
 
 kube_helm upgrade --install andara "$CHART" \
   --namespace "$NS" \
-  --values "$VALUES" \
+  "${VALUES_ARGS[@]}" \
   "${IMAGE_ARGS[@]}" \
   --wait --timeout 10m
 
@@ -197,7 +226,11 @@ kube_kubectl -n "$NS" get pvc -l app=andara
 # certificate, read from the server certificate's Secret (cert-manager writes the
 # issuing CA into ca.crt). Its own path, not .local/tls/ca.pem — that is the compose
 # stack's CA (`make tls`), and the two must not overwrite each other.
-HOST="$(awk '/^host:/{print $2}' "$VALUES")"
+HOST="$(vget host)"
+# The edge's port (ADR-0013 amendment 24): the default is the public name through the workstation's
+# nginx, and CI's cluster publishes its edge on the same port. ANDARA_EDGE_PORT=8443 is the kind
+# edge itself, for a `--resolve <name>:8443:127.0.0.1` dial.
+PORT="${ANDARA_EDGE_PORT:-443}"
 ISSUER="$(kube_helm -n "$NS" get values andara --all -o json | "${PY:-python3}" -c 'import json,sys; print(json.load(sys.stdin)["tls"]["issuer"])')"
 CA_DIR="$REPO/.local/tls/cluster/$ENVNAME"
 mkdir -p "$CA_DIR"
@@ -207,13 +240,12 @@ if kube_kubectl -n "$NS" get certificate andara-edge >/dev/null 2>&1; then
   kube_kubectl -n "$NS" wait --for=condition=Ready certificate/andara-edge --timeout=120s >/dev/null
   echo "helm-install: edge https://$HOST (issuer $ISSUER); private CA written to $CA_DIR/ca.pem"
   if [[ "$ISSUER" == "andara-ca" ]]; then
-    echo "helm-install:   andara-cli --server-address $HOST:443 --tls-ca $CA_DIR/ca.pem ..."
+    echo "helm-install:   andara-cli --server-address $HOST:$PORT --tls-ca $CA_DIR/ca.pem ..."
   else
-    echo "helm-install:   andara-cli --server-address $HOST:443 ...   (public issuer; the system trust store suffices)"
+    echo "helm-install:   andara-cli --server-address $HOST:$PORT ...   (public issuer; the system trust store suffices)"
   fi
-  if ! getent hosts "$HOST" >/dev/null 2>&1; then
-    echo "helm-install:   $HOST does not resolve here; add to /etc/hosts:   127.0.0.1 $HOST"
-  fi
+  # The line above dials by DNS; where that can't connect, name the dial that does.
+  "$REPO/scripts/edge_hint.sh" "$HOST" "$PORT"
 else
   echo "helm-install: ingress.enabled=false — no edge; private CA written to $CA_DIR/ca.pem"
 fi

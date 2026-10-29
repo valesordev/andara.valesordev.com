@@ -136,16 +136,14 @@ topics:
       The only mutable pointer in the content pipeline: which version is live. Rollback is
       a write to this topic (ADR-0004).
 
-# Broker settings that are not defaults and are not negotiable.
+# Broker settings that are not defaults and are not negotiable: checked against a real
+# Kafka cluster by `make topics-diff`, never written. Silently rewriting a production
+# broker's configuration is not something a make target should do.
 #
-# Split in two because the local broker and the production broker are not the same
-# software (ADR-0002 §7: Redpanda locally, real Kafka in production):
-#
-#   assert  — checked against a real Kafka cluster by `make topics-diff`, never written.
-#             Silently rewriting a production broker's configuration is not something a
-#             make target should do.
-#   local   — applied to the local Redpanda broker by `make topics-apply`, because a local
-#             broker is disposable.
+# local's broker is the shared Strimzi Kafka (ADR-0013, "Is local's broker still Redpanda?"),
+# so the Redpanda-only `local` block that used to sit beside `assert` is gone (AW-INF-060).
+# The compose Redpanda still running until AW-INF-067 gets its two settings from
+# scripts/stack.sh, which owns that broker.
 broker:
   assert:
     unclean.leader.election.enable: "false"
@@ -155,19 +153,6 @@ broker:
     # much as on acks. Redpanda has no equivalent property: its Raft replication cannot
     # elect a leader that is missing committed records, which is one of the few places the
     # local and production brokers genuinely differ rather than merely appearing to.
-
-  local:
-    enable_consumer_group_metrics: "[group,partition,consumer_lag]"
-    # Off by default because computing it costs the broker something. Per-partition
-    # consumer lag is a dashboard panel and a runbook diagnostic (AW-SRV-002), and a metric
-    # the broker never computes is a metric nobody has when the World is behind.
-    log_segment_ms_min: "1000"
-    # Redpanda floors every topic's segment.ms here (10 min by default) and never compacts
-    # the active segment, so without this no test can watch compaction happen. At 1 s, a
-    # throwaway topic declared with segment.ms=1000, min.cleanable.dirty.ratio=0.01 and
-    # delete.retention.ms=1000 rolls, compacts, and drops the tombstone in about 20 s
-    # (AW-SRV-019 AC-5, measured 2026-09-26). The floor only permits small segments; every
-    # topic above keeps its declared segment.ms.
 
 # Consumer groups, reserved by convention. <env> is local, dev, or prod.
 consumer_groups:
