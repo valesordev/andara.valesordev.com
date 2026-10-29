@@ -212,20 +212,12 @@ PYEOF
   fi
 else
   # local's tag never moves and its image is never pulled, so the pod spec is the same for every
-  # build: the build, as a pod-template annotation, is what rolls the pods onto a new one
-  # (AW-INF-060). The build is a hash of the two binaries in the image `make kind-load` loads,
-  # not the image's ID, which every rebuild changes (its layers' timestamps) when nothing that
-  # runs has. Build and load before installing, as `make local-up` does. With no such image
-  # here, nothing is stamped and the pods keep the build they have.
-  BINARIES="$(docker run --rm --entrypoint sha256sum "$IMAGE:$TAG" \
-    /usr/local/bin/andara-server /usr/local/bin/andara-projector 2>/dev/null || true)"
-  if [[ "$(grep -c '^[0-9a-f]\{64\}  ' <<<"$BINARIES")" == 2 ]]; then
-    BUILD="sha256:$(sha256sum <<<"$BINARIES" | awk '{print $1}')"
-    IMAGE_ARGS+=(--set-string "image.build=$BUILD")
-    echo "helm-install: $IMAGE:$TAG carries the build $BUILD"
-  else
-    echo "helm-install: no local image $IMAGE:$TAG with both binaries to stamp; a running pod keeps the build it has"
-  fi
+  # build: the build (scripts/image_build.sh), as a pod-template annotation, is what rolls the
+  # pods onto a new one (AW-INF-060). Without it the install would drop the annotation, which
+  # rolls the pods onto whatever kind holds, so a missing image stops here instead.
+  BUILD="$("$REPO/scripts/image_build.sh" "$IMAGE:$TAG")"
+  IMAGE_ARGS+=(--set-string "image.build=$BUILD")
+  echo "helm-install: $IMAGE:$TAG carries the build $BUILD"
 fi
 
 kube_helm upgrade --install andara "$CHART" \

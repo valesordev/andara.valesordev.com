@@ -6,6 +6,7 @@ the refusals, and that a reset deletes nothing outside local's prefix."""
 import io
 import json
 import os
+import shutil
 import subprocess
 import sys
 import tempfile
@@ -28,11 +29,23 @@ def log():
 
 
 def make(*args):
-    """The target on a PATH with no kubectl, helm, kind or docker, and a kubeconfig with no cluster:
-    a refusal that regressed would fail differently, never act."""
-    env = dict(os.environ, PATH="/usr/bin:/bin", KUBECONFIG=os.path.join(REPO, "scripts", "tests", "fixtures", "kubeconfig"))
-    env.pop("ANDARA_KUBE_CONTEXT", None)
-    return subprocess.run(["make", "-s", "-C", REPO, *args], capture_output=True, text=True, env=env)
+    """The target with kubectl, helm, kind and docker stubbed to log and exit 97 ahead of the real
+    ones (which /usr/bin has on the box), and a scratch copy of the fixture kubeconfig: a refusal
+    that regressed fails differently and never acts. Returns (result, the stubs' calls)."""
+    with tempfile.TemporaryDirectory() as d:
+        calls = os.path.join(d, "calls")
+        for tool in ("kubectl", "helm", "kind", "docker"):
+            p = os.path.join(d, tool)
+            with open(p, "w") as f:
+                f.write('#!/bin/sh\necho "%s $*" >> "%s"\nexit 97\n' % (tool, calls))
+            os.chmod(p, 0o755)
+        kubeconfig = os.path.join(d, "kubeconfig")
+        shutil.copy(os.path.join(REPO, "scripts", "tests", "fixtures", "kubeconfig"), kubeconfig)
+        env = dict(os.environ, PATH=d + os.pathsep + "/usr/bin:/bin", KUBECONFIG=kubeconfig)
+        env.pop("ANDARA_KUBE_CONTEXT", None)
+        r = subprocess.run(["make", "-s", "-C", REPO, *args], capture_output=True, text=True, env=env)
+        made = open(calls).read().splitlines() if os.path.exists(calls) else []
+    return r, made
 
 
 class Refusals(unittest.TestCase):
@@ -40,15 +53,17 @@ class Refusals(unittest.TestCase):
     def test_another_env_is_refused(self):
         for target in ("local-up", "local-down", "local-reset"):
             with self.subTest(target=target):
-                r = make(target, "ENV=dev")
+                r, made = make(target, "ENV=dev")
                 self.assertEqual(r.returncode, 2, r.stderr)  # make's own code for a recipe that failed
                 self.assertIn("acts on andara-local only, not ENV=dev", r.stderr)
                 self.assertIn("Error 1", r.stderr)
+                self.assertEqual(made, [])
 
     def test_local_up_takes_no_profile(self):
-        r = make("local-up", "PROFILE=ci")
+        r, made = make("local-up", "PROFILE=ci")
         self.assertIn("takes no PROFILE", r.stderr)
         self.assertIn("Error 1", r.stderr)
+        self.assertEqual(made, [])
 
     def test_usage(self):
         for argv in ([], ["up", ""], ["down"], ["reset", "", ""], ["nuke", ""]):
@@ -109,6 +124,18 @@ class Up(unittest.TestCase):
                 self.assertIn("have no telemetry credential", out)
                 self.assertIn("make platform-up", out)
 
+    def test_an_unreadable_secret_is_not_called_missing(self):
+        lg, out = log()
+        local.up(lg, step=lambda t, a: 0, kubectl=lambda *a: res(1, "", "Unable to connect to the server"))
+        self.assertIn("could not read observability/grafana-telemetry", out.getvalue())
+        self.assertNotIn("no telemetry credential", out.getvalue())
+
+    def test_the_refusal_names_the_env(self):
+        with self.assertRaises(local.Failed) as e:
+            local.check_env("prod", "up")
+        self.assertIn("andara-prod", str(e.exception))
+        self.assertNotIn("dev", str(e.exception))
+
 
 class MakeStep(unittest.TestCase):
     """GNU make exits 2 for any failed recipe: the recipe's own code is read from its error line."""
@@ -124,15 +151,18 @@ class MakeStep(unittest.TestCase):
 
     def test_a_sub_makes_line(self):
         self.assertEqual(local.MAKE_ERROR.match("make[1]: *** [Makefile:470: kafka-creds] Error 3\n").group(1), "3")
+        self.assertEqual(local.MAKE_ERROR.match("gmake: *** [Makefile:470: kafka-creds] Error 3\n").group(1), "3")
         self.assertIsNone(local.MAKE_ERROR.match("helm-install: Error 3 in a message"))
 
 
 class Helm:
-    def __init__(self, status=res(0, "STATUS: deployed")):
+    def __init__(self, status=res(0, "STATUS: deployed"), events=None):
         self.status, self.calls = status, []
+        self.events = events if events is not None else []
 
     def __call__(self, *args):
         self.calls.append(args)
+        self.events.append("helm " + args[0])
         return self.status if args[0] == "status" else res()
 
 
@@ -142,6 +172,8 @@ class Down(unittest.TestCase):
         helm, (lg, out) = Helm(), log()
         local.down(lg, helm=helm)
         self.assertEqual(helm.calls[1][:4], ("uninstall", "andara", "-n", "andara-local"))
+        # Waited on: a reset deletes the topics next, and nothing may still be writing to them.
+        self.assertIn("--wait", helm.calls[1])
         self.assertEqual(len(helm.calls), 2)
         self.assertIn("local: down run=r1", out.getvalue())
 
@@ -156,24 +188,36 @@ class Down(unittest.TestCase):
             local.down(log()[0], helm=Helm(res(1, "", "Kubernetes cluster unreachable")))
 
 
+# `local` and `localx.…` share local's prefix as a string, not as a segment: never local's.
 LIVE = ["local.andara.commands.v1", "local.andara.events.v1", "local.andara.content.v1",
-        "dev.andara.commands.v1", "andara.test.x", "it123.andara.commands.v1", "_schemas"]
+        "dev.andara.commands.v1", "andara.test.x", "it123.andara.commands.v1", "_schemas",
+        "local", "localx.andara.commands.v1"]
 
 
 class Broker:
     """rpk as the shared Kafka answers: `group delete` exits 0 and reports each group's outcome in
-    its STATUS column, GROUP_ID_NOT_FOUND for one that isn't there."""
+    its STATUS column, GROUP_ID_NOT_FOUND for one that isn't there. A deleted topic stays listed
+    for `linger` listings, as an asynchronous delete does."""
 
-    def __init__(self, live=LIVE, groups=("andara-sim-local",), group_status=None):
+    def __init__(self, live=LIVE, groups=("andara-sim-local",), group_status=None, linger=0, events=None):
         self.live, self.groups, self.calls = list(live), set(groups), []
-        self.group_status = group_status or {}
+        self.group_status, self.linger, self.pending = group_status or {}, linger, {}
+        self.events = events if events is not None else []
 
     def __call__(self, args):
         self.calls.append(list(args))
         if args[:2] == ["topic", "list"]:
+            for name, left in list(self.pending.items()):
+                if left == 0:
+                    self.live.remove(name)
+                    del self.pending[name]
+                else:
+                    self.pending[name] = left - 1
             return res(0, json.dumps([{"name": n, "partitions": 1} for n in self.live]))
+        if args[:2] in (["topic", "delete"], ["group", "delete"]):
+            self.events.append(" ".join(args[:2]))
         if args[:2] == ["topic", "delete"]:
-            self.live.remove(args[2])
+            self.pending[args[2]] = self.linger
         if args[:2] == ["group", "delete"]:
             g = args[2]
             status = self.group_status.get(g) or ("OK" if g in self.groups else
@@ -213,13 +257,22 @@ def decl_with(old, new):
 
 class Reset(unittest.TestCase):
 
-    def run_reset(self, decl=topics.DECL, bucket=None):
-        broker, helm, emptied, (lg, out) = Broker(), Helm(), [], log()
+    def run_reset(self, decl=topics.DECL, bucket=None, empty=None, broker=None):
+        events = []
+        broker = broker or Broker(events=events)
+        broker.events = events
+        helm, emptied, (lg, out) = Helm(events=events), [], log()
+
+        def record(env):
+            events.append("empty " + env)
+            emptied.append(env)
         try:
-            local.reset(lg, run=broker, helm=helm, empty=emptied.append, decl=decl, bucket=bucket)
+            local.reset(lg, run=broker, helm=helm, empty=empty or record, decl=decl, bucket=bucket,
+                        sleep=lambda s: None)
             err = None
         except local.Failed as e:
             err = e
+        self.events = events
         return broker, helm, emptied, out.getvalue(), err
 
     def test_it_deletes_local_only(self):
@@ -227,6 +280,8 @@ class Reset(unittest.TestCase):
         self.assertIsNone(err)
         deleted = [c[2] for c in broker.calls if c[:2] == ["topic", "delete"]]
         self.assertEqual(deleted, ["local.andara.commands.v1", "local.andara.content.v1", "local.andara.events.v1"])
+        self.assertIn("local", broker.live)
+        self.assertIn("localx.andara.commands.v1", broker.live)
         groups = [c[2] for c in broker.calls if c[:2] == ["group", "delete"]]
         self.assertTrue(groups)
         self.assertTrue(all(g.endswith("-local") for g in groups), groups)
@@ -235,8 +290,37 @@ class Reset(unittest.TestCase):
         for name in deleted + ["andara-snapshots-local"]:
             self.assertIn(name, out)
         self.assertIn("andara-sim-local", out)
-        # The release goes first, so nothing writes to what's being deleted.
-        self.assertEqual(helm.calls[1][0], "uninstall")
+
+    def test_the_order(self):
+        """The release first, so nothing writes to what's being deleted; the bucket before the log,
+        so a failure part-way never leaves a snapshot whose log is gone."""
+        self.run_reset()
+        first = {e: self.events.index(e) for e in reversed(self.events)}
+        self.assertLess(first["helm uninstall"], first["empty local"])
+        self.assertLess(first["empty local"], first["topic delete"])
+        self.assertLess(first["empty local"], first["group delete"])
+
+    def test_a_failed_empty_leaves_the_log_and_says_to_rerun(self):
+        def fail(env):
+            raise local.objectstore.Failed("bucket andara-snapshots-local still holds 3 object(s) after delete")
+        broker, helm, _, _, err = self.run_reset(empty=fail)
+        self.assertIsInstance(err, local.Failed)
+        self.assertIn("make local-reset", str(err))
+        self.assertEqual([c for c in broker.calls if c[1:2] == ["delete"]], [])
+
+    def test_it_waits_until_the_topics_are_gone(self):
+        broker, _, _, _, err = self.run_reset(broker=Broker(linger=3))
+        self.assertIsNone(err)
+        lists = [c for c in broker.calls if c[:2] == ["topic", "list"]]
+        self.assertGreaterEqual(len(lists), 1 + 4)  # the plan's, then until the last delete lands
+
+    def test_topics_that_never_go_fail(self):
+        broker = Broker(linger=10 ** 6)
+        ticks = iter(range(0, 10 ** 6, 30))
+        with self.assertRaises(local.Failed) as e:
+            local.delete_topics(log()[0], broker, ["local.andara.commands.v1"], sleep=lambda s: None,
+                                clock=lambda: next(ticks))
+        self.assertIn("still listed", str(e.exception))
 
     def assertNothingDeleted(self, broker, helm, emptied):
         self.assertEqual([c for c in broker.calls if c[1:2] == ["delete"]], [])

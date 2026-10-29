@@ -55,7 +55,7 @@ STEPS = [
 TELEMETRY = ("observability", "grafana-telemetry", "token")
 TOPIC_DELETE_DEADLINE = 120
 # GNU make reports a failed recipe as its own exit 2; the recipe's code is on this line.
-MAKE_ERROR = re.compile(r"^make(?:\[\d+\])?: \*\*\* \[[^\]]*\] Error (\d+)\s*$")
+MAKE_ERROR = re.compile(r"^\S*make(?:\[\d+\])?: \*\*\* \[[^\]]*\] Error (\d+)\s*$")
 
 
 class Failed(Exception):
@@ -94,14 +94,17 @@ def check_env(env, cmd):
     if env and env != ENV:
         raise Failed("local-%s acts on andara-local only, not ENV=%s; %s" % (
             cmd, env, "`make world-reset ENV=%s CONFIRM=andara-%s` starts its World over" % (env, env)
-            if cmd == "reset" else "dev is installed by Argo CD (`make promote`)"))
+            if cmd == "reset" else "andara-%s is installed by Argo CD, not by local-%s" % (env, cmd)))
 
 
 def telemetry(kubectl):
-    """Whether the collectors' Secret has a token. Its value is never read into a line."""
+    """Whether the collectors' Secret has a token, or None when it can't be read (a Secret that
+    isn't there is no token). Its value is never read into a line."""
     ns, name, key = TELEMETRY
     p = kubectl("-n", ns, "get", "secret", name, "-o", "jsonpath={.data.%s}" % key)
-    return p.returncode == 0 and bool(p.stdout.strip())
+    if p.returncode != 0:
+        return False if "notfound" in (p.stderr or "").lower().replace(" ", "") else None
+    return bool(p.stdout.strip())
 
 
 def kubectl_run(*args):
@@ -119,8 +122,12 @@ def up(log, step=make_step, kubectl=kubectl_run):
         if code:
             e = (Missing if code == 3 else Failed)("`make %s` exited %d" % (" ".join([target, *args]), code))
             raise e
-    if telemetry(kubectl):
+    have = telemetry(kubectl)
+    if have:
         log("collectors", "the collectors have a telemetry credential (%s/%s)" % TELEMETRY[:2])
+    elif have is None:
+        log("collectors", "could not read %s/%s; `make collectors-check` says whether the collectors have "
+            "a telemetry credential" % TELEMETRY[:2])
     else:
         log("collectors", "the collectors have no telemetry credential: set GRAFANA_SOLO7DEV_TELEMETRY_TOKEN in "
             ".local/box.env and run `make platform-up`; local's series reach no backend until then")
@@ -187,15 +194,25 @@ def delete_groups(log, run, groups):
             raise Failed("delete consumer group %s: %s" % (group, status or (res.stderr or res.stdout).strip()))
 
 
-def reset(log, run=None, helm=helm_run, empty=objectstore.empty, decl=topics.DECL, bucket=None):
+def reset(log, run=None, helm=helm_run, empty=objectstore.empty, decl=topics.DECL, bucket=None,
+          sleep=time.sleep):
+    """The release first, so nothing writes to what's deleted. Then the bucket before the log: a
+    log with no snapshot replays from its start, while a snapshot whose log is gone is a wrong World
+    (world_reset.py), so a failure part-way must never leave that."""
     run = run or topics.rpk_runner(ENV, "cluster")
     names, groups, bucket = plan(run, decl, bucket)
     log("reset", "plan: %d topic(s) under local., %d consumer group(s), bucket %s" % (len(names), len(groups), bucket))
-    down(log, helm)
-    delete_topics(log, run, names)
-    delete_groups(log, run, groups)
-    empty(ENV)
-    log("reset", "emptied bucket %s" % bucket)
+    try:
+        down(log, helm)
+        try:
+            empty(ENV)
+        except objectstore.Failed as e:
+            raise Failed(str(e))
+        log("reset", "emptied bucket %s" % bucket)
+        delete_topics(log, run, names, sleep=sleep)
+        delete_groups(log, run, groups)
+    except Failed as e:
+        raise Failed("%s; andara-local is part-way reset: rerun `make local-reset`" % e)
     log("reset", "andara-local is reset; `make local-up` recreates its topics and World")
 
 
@@ -226,6 +243,11 @@ def main(argv, log=None):
     except objectstore.Failed as e:
         print("make: local-%s: run=%s %s" % (cmd, log.run, e), file=sys.stderr)
         return 1
+    except SystemExit as e:
+        # kube.py and topics.py exit with their own line (3 for a missing context or credential);
+        # this one carries the run.
+        print("make: local-%s: run=%s stopped (exit %s)" % (cmd, log.run, e.code), file=sys.stderr)
+        raise
     return 0
 
 
