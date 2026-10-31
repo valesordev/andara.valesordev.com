@@ -1,8 +1,9 @@
 # SPDX-License-Identifier: Apache-2.0
 # Copyright 2026 Valesor Development
 
-"""scripts/helm_test.py's rule-coverage check (AW-INF-047): every rule has a promtool case whose
-expected alert carries both environment and namespace."""
+"""scripts/helm_test.py's rule-coverage checks: every rule has a promtool case whose
+expected alert carries both environment and namespace (AW-INF-047), and a group in which it fires
+and later clears (AW-INF-009)."""
 import os
 import sys
 import tempfile
@@ -97,6 +98,19 @@ class RulesWithoutResolvingCase(unittest.TestCase):
 
     def test_the_committed_file_is_covered(self):
         self.assertEqual(helm_test.rules_without_resolving_case(), [])
+
+
+class Seconds(unittest.TestCase):
+
+    def test_every_promtool_unit(self):
+        for text, want in (("90s", 90), ("1h30m", 5400), ("0m", 0), ("1d", 86400), ("1w", 604800),
+                           ("1y", 31536000), ("500ms", 0.5), ("1m500ms", 60.5)):
+            self.assertEqual(helm_test._seconds(text), want, text)
+
+    def test_anything_else_is_refused_not_misread(self):
+        for text in ("1h30", "5", "", "1x", "m5", "1h 30m"):
+            with self.assertRaises(ValueError, msg=text):
+                helm_test._seconds(text)
 
 
 if __name__ == "__main__":

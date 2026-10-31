@@ -33,12 +33,13 @@ diff   as above, read key only: exit 1 when any group would be created, updated 
 The ruler is frozen at AW-INF-047 (ADR-0012 decision 7, amendment of 2026-10-19): `sync` refuses a rule
 file with an `# env:<environment>` line, which is the Grafana-managed rule set, with exit 1 and before any
 key is read, so nothing reaches the network. `diff` reads any file, so the frozen ruler can still be
-compared with the pre-edit one (`ALERTS_FILE=<alerts.yaml at eb42e4c>`, the last file the ruler synced).
+compared with the pre-edit one (`ALERTS_REF=eb42e4c`, the last file the ruler synced).
 
 Exit codes: 0 ok; 1 an API error, drift (diff), or a marked file (sync); 2 usage; 3 a key, address or tenant unset. `make` reports any
 of them as its own exit 2; the script's code is the first line of the failure it prints.
 """
 
+import atexit
 import base64
 import json
 import os
@@ -186,9 +187,29 @@ def apply(rules_file, deleted, env):
     return 0
 
 
+def rules_at(ref):
+    """The chart's alerts.yaml as it was at ref, written to a new temporary directory; its path.
+    CalledProcessError when git can't show it."""
+    shown = subprocess.run(["git", "-C", REPO, "show", "%s:%s" % (ref, os.path.relpath(ALERTS, REPO))],
+                           capture_output=True, text=True, check=True).stdout
+    d = tempfile.mkdtemp(prefix="alerts-ref-")
+    atexit.register(shutil.rmtree, d, True)
+    path = os.path.join(d, "alerts.yaml")
+    with open(path, "w") as f:
+        f.write(shown)
+    return path
+
+
 def run(cmd, rules_file=None, env=None, find_tool=mimirtool):
     env = resolve_env(os.environ if env is None else env)
     # Only a diff reads another file; a sync always writes the chart's, whatever the environment says.
+    # ALERTS_REF names the file by commit instead (the frozen ruler's is alerts.yaml at eb42e4c).
+    if not rules_file and cmd == "diff" and not env.get("ALERTS_FILE") and env.get("ALERTS_REF"):
+        try:
+            rules_file = rules_at(env["ALERTS_REF"])
+        except subprocess.CalledProcessError as e:
+            return fail(1, "ALERTS_REF=%s: git can't show %s there: %s"
+                        % (env["ALERTS_REF"], os.path.relpath(ALERTS, REPO), e.stderr.strip()))
     rules_file = rules_file or (env.get("ALERTS_FILE") if cmd == "diff" else None) or ALERTS
     # The ruler is frozen (ADR-0012 decision 7, amendment of 2026-10-19). A file with an `# env:` line
     # is the Grafana-managed rule set: in solo7's ruler, whose dev series carry no environment, its

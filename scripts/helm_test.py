@@ -442,9 +442,9 @@ def rules_without_labelled_case(alerts=ALERTS, alerts_test=ALERTS_TEST):
 
 
 def _seconds(duration):
-    """A promtool eval_time ("1h30m", "90s") in seconds."""
-    units = {"d": 86400, "h": 3600, "m": 60, "s": 1}
-    parts = re.findall(r"(\d+)([dhms])", str(duration))
+    """A promtool eval_time ("1h30m", "90s", "500ms") in seconds; ValueError on anything else."""
+    units = {"y": 365 * 86400, "w": 7 * 86400, "d": 86400, "h": 3600, "m": 60, "s": 1, "ms": 0.001}
+    parts = re.findall(r"(\d+)(ms|[ywdhms])", str(duration))
     if not parts or "".join(n + u for n, u in parts) != str(duration):
         raise ValueError("eval_time %r is not a duration this check reads" % duration)
     return sum(int(n) * units[u] for n, u in parts)

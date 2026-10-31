@@ -4,6 +4,7 @@
 """`make alerts-sync` and `make alerts-diff` (AW-INF-009) against a stand-in ruler."""
 import http.server
 import os
+import shutil
 import subprocess
 import sys
 import tempfile
@@ -86,8 +87,9 @@ UNMARKED = unmarked()
 
 
 def script(cmd, env=None, rules=None):
-    # A sync always gets the unmarked copy; a diff does unless the test names its file in ALERTS_FILE.
-    if rules is None and (cmd == "sync" or "ALERTS_FILE" not in (env or {})):
+    # A sync always gets the unmarked copy; a diff does unless the test names its file in ALERTS_FILE
+    # or its ref in ALERTS_REF.
+    if rules is None and (cmd == "sync" or not {"ALERTS_FILE", "ALERTS_REF"} & set(env or {})):
         rules = UNMARKED
     full = dict(os.environ, PATH="/usr/bin:/bin")
     for k in alerts_sync.SECRETS:
@@ -447,6 +449,22 @@ class AgainstARuler(unittest.TestCase):
         r = script("diff", dict(self.env, ALERTS_FILE=f.name))
         self.assertEqual(r.returncode, 1)
         self.assertIn(doc["groups"][0]["name"], r.stdout)
+
+    def test_alerts_ref_reads_the_chart_file_at_that_ref(self):
+        """The frozen ruler is compared with alerts.yaml at eb42e4c (alert-routing.md) by ref, not a
+        hand-extracted file. HEAD stands in for eb42e4c, which a shallow CI clone may not hold."""
+        path = alerts_sync.rules_at("HEAD")
+        self.addCleanup(shutil.rmtree, os.path.dirname(path))
+        shown = subprocess.run(["git", "-C", REPO, "show", "HEAD:deploy/helm/andara/files/alerts.yaml"],
+                               capture_output=True, text=True, check=True).stdout
+        with open(path) as f:
+            self.assertEqual(f.read(), shown)
+
+    def test_an_unknown_alerts_ref_exits_1_before_any_key_is_read(self):
+        r = script("diff", {"ALERTS_REF": "no-such-ref-aw-inf-009"})
+        self.assertEqual(r.returncode, 1, r.stderr)
+        self.assertIn("ALERTS_REF=no-such-ref-aw-inf-009", r.stderr)
+        self.assertNotIn("unset", r.stderr)
 
     def test_a_sync_ignores_alerts_file(self):
         with tempfile.NamedTemporaryFile("w", suffix=".yaml", delete=False) as f:

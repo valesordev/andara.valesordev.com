@@ -561,7 +561,7 @@ argocd-uninstall:
 alerts-sync:
 	@$(PY) $(SCRIPTS)/alerts_sync.py sync
 
-## alerts-diff: show how the ruler differs from files/alerts.yaml; exits 1 on drift, 3 without the key, address or tenant; ALERTS_FILE=<path> diffs another rule file (AW-INF-009)
+## alerts-diff: show how the ruler differs from files/alerts.yaml; exits 1 on drift, 3 without the key, address or tenant; ALERTS_FILE=<path> diffs another rule file, ALERTS_REF=<commit> the chart's at that commit (AW-INF-009)
 alerts-diff:
 	@$(PY) $(SCRIPTS)/alerts_sync.py diff
 

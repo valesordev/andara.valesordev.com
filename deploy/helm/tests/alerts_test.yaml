@@ -981,8 +981,8 @@ tests:
               runbook: docs/runbooks/ingress-error-rate.md
 
   # AW-INF-009's every-rule line: each rule fires and then resolves within one group, so a rule
-  # that latches (a `for:` or window that never lets go, a keep_firing_for longer than it should
-  # be) fails a case rather than paging forever. helm_test.py enforces one such group per rule.
+  # that latches (a `for:` or window that never lets go, a keep_firing_for longer than the gap
+  # before the group's clear eval) fails a case rather than paging on. helm_test.py enforces one per rule.
   - name: cluster — a crash loop that stops resolves
     interval: 1m
     input_series:
