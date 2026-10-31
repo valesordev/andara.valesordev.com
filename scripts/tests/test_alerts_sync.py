@@ -535,9 +535,13 @@ class ByRef(unittest.TestCase):
     def test_a_ref_is_never_read_as_an_option(self):
         out = os.path.join(tempfile.mkdtemp(), "written")
         self.addCleanup(shutil.rmtree, os.path.dirname(out))
+        # git would write `--output=<out>:<chart path>`; make that directory exist, so only
+        # --end-of-options stands between the ref and a written file.
+        target = out + ":" + os.path.dirname(os.path.relpath(alerts_sync.ALERTS, REPO))
+        os.makedirs(target)
         with self.assertRaises(subprocess.CalledProcessError):
             alerts_sync.rules_at("--output=" + out)
-        self.assertEqual(os.listdir(os.path.dirname(out)), [])
+        self.assertEqual(os.listdir(target), [])
 
     def test_a_diff_by_ref_plans_that_refs_file(self):
         code, planned, _ = run_recording("diff", ALERTS_REF=FROZEN_REF)
