@@ -2,7 +2,9 @@
 # Copyright 2026 Valesor Development
 
 """`make alerts-sync` and `make alerts-diff` (AW-INF-009) against a stand-in ruler."""
+import contextlib
 import http.server
+import io
 import os
 import shutil
 import subprocess
@@ -95,19 +97,22 @@ def shown(ref):
                           capture_output=True, text=True, check=True).stdout
 
 
-def run_recording(cmd, **env):
-    """alerts_sync.run in-process with plan stubbed: (exit code, the content of each file planned)."""
+def run_recording(cmd, drift=(0, 0, 0), **env):
+    """alerts_sync.run in-process with plan stubbed to report drift: (exit code, the content of each
+    file planned, stderr)."""
     planned = []
 
     def plan(tool, rules_file, e):
         with open(rules_file) as f:
             planned.append(f.read())
-        return (0, 0, 0), [], ""
+        return drift, [], ""
 
     keys = {k: "x" for k in alerts_sync.SECRETS}
-    with mock.patch.object(alerts_sync, "plan", plan), mock.patch("sys.stderr"), mock.patch("sys.stdout"):
+    err = io.StringIO()
+    with mock.patch.object(alerts_sync, "plan", plan), contextlib.redirect_stderr(err), \
+            contextlib.redirect_stdout(io.StringIO()):
         code = alerts_sync.run(cmd, env=dict(keys, **env), find_tool=lambda: "/bin/true")
-    return code, planned
+    return code, planned, err.getvalue()
 
 
 def script(cmd, env=None, rules=None):
@@ -474,42 +479,6 @@ class AgainstARuler(unittest.TestCase):
         self.assertEqual(r.returncode, 1)
         self.assertIn(doc["groups"][0]["name"], r.stdout)
 
-    def test_alerts_ref_reads_the_chart_file_at_that_ref(self):
-        """The frozen ruler is compared with alerts.yaml at eb42e4c (alert-routing.md) by ref, not a
-        hand-extracted file."""
-        path = alerts_sync.rules_at(FROZEN_REF)
-        self.addCleanup(shutil.rmtree, os.path.dirname(path))
-        with open(path) as f:
-            got = f.read()
-        self.assertEqual(got, shown(FROZEN_REF))
-        with open(alerts_sync.ALERTS) as f:
-            self.assertNotEqual(got, f.read())
-
-    def test_a_diff_by_ref_plans_that_refs_file(self):
-        code, planned = run_recording("diff", ALERTS_REF=FROZEN_REF)
-        self.assertEqual(code, 0)
-        self.assertEqual(planned, [shown(FROZEN_REF)])
-
-    def test_alerts_file_wins_over_alerts_ref(self):
-        with tempfile.NamedTemporaryFile("w", suffix=".yaml", delete=False) as f:
-            f.write("groups: []\n")
-        self.addCleanup(os.unlink, f.name)
-        code, planned = run_recording("diff", ALERTS_FILE=f.name, ALERTS_REF="no-such-ref-aw-inf-009")
-        self.assertEqual(code, 0)
-        self.assertEqual(planned, ["groups: []\n"])
-
-    def test_a_sync_ignores_alerts_ref_and_stays_frozen(self):
-        """eb42e4c's file has no `# env:` markers; a sync that read it would get past the freeze."""
-        code, planned = run_recording("sync", ALERTS_REF=FROZEN_REF)
-        self.assertEqual(code, 1)
-        self.assertEqual(planned, [])
-
-    def test_an_unknown_alerts_ref_exits_1_before_any_key_is_read(self):
-        r = script("diff", {"ALERTS_REF": "no-such-ref-aw-inf-009"})
-        self.assertEqual(r.returncode, 1, r.stderr)
-        self.assertIn("ALERTS_REF=no-such-ref-aw-inf-009", r.stderr)
-        self.assertNotIn("unset", r.stderr)
-
     def test_a_sync_ignores_alerts_file(self):
         with tempfile.NamedTemporaryFile("w", suffix=".yaml", delete=False) as f:
             yaml.safe_dump({"groups": [{"name": "stray", "rules": [
@@ -543,6 +512,74 @@ class AgainstARuler(unittest.TestCase):
         r = script("sync", env)
         self.assertEqual(r.returncode, 1)
         self.assertIn("mimirtool rules diff failed", r.stderr)
+
+
+class ByRef(unittest.TestCase):
+    """The frozen ruler is compared with alerts.yaml at eb42e4c (alert-routing.md) by ref, not a
+    hand-extracted file (AW-INF-047). In-process with plan stubbed, so no mimirtool is needed."""
+
+    def test_rules_at_writes_the_refs_file_to_a_temporary_directory(self):
+        path = alerts_sync.rules_at(FROZEN_REF)
+        # Checked before anything is removed: a rules_at that returned the chart's own path would
+        # otherwise have this test delete the chart's files directory.
+        d = os.path.dirname(path)
+        self.assertEqual(os.path.dirname(d), tempfile.gettempdir())
+        self.assertTrue(os.path.basename(d).startswith("alerts-ref-"), d)
+        self.addCleanup(shutil.rmtree, d)
+        with open(path) as f:
+            got = f.read()
+        self.assertEqual(got, shown(FROZEN_REF))
+        with open(alerts_sync.ALERTS) as f:
+            self.assertNotEqual(got, f.read())
+
+    def test_a_ref_is_never_read_as_an_option(self):
+        out = os.path.join(tempfile.mkdtemp(), "written")
+        self.addCleanup(shutil.rmtree, os.path.dirname(out))
+        with self.assertRaises(subprocess.CalledProcessError):
+            alerts_sync.rules_at("--output=" + out)
+        self.assertEqual(os.listdir(os.path.dirname(out)), [])
+
+    def test_a_diff_by_ref_plans_that_refs_file(self):
+        code, planned, _ = run_recording("diff", ALERTS_REF=FROZEN_REF)
+        self.assertEqual(code, 0)
+        self.assertEqual(planned, [shown(FROZEN_REF)])
+
+    def test_alerts_file_wins_over_alerts_ref(self):
+        with tempfile.NamedTemporaryFile("w", suffix=".yaml", delete=False) as f:
+            f.write("groups: []\n")
+        self.addCleanup(os.unlink, f.name)
+        code, planned, _ = run_recording("diff", ALERTS_FILE=f.name, ALERTS_REF="no-such-ref-aw-inf-009")
+        self.assertEqual(code, 0)
+        self.assertEqual(planned, ["groups: []\n"])
+
+    def test_a_sync_ignores_alerts_ref_and_stays_frozen(self):
+        """eb42e4c's file has no `# env:` markers; a sync that read it would get past the freeze."""
+        code, planned, err = run_recording("sync", ALERTS_REF=FROZEN_REF)
+        self.assertEqual((code, planned), (1, []))
+        self.assertIn("carries `# env:` markers", err)
+
+    def test_a_sync_ignores_alerts_file_and_stays_frozen(self):
+        """The same for ALERTS_FILE: the unmarked copy named there must not be what a sync reads."""
+        code, planned, err = run_recording("sync", ALERTS_FILE=UNMARKED)
+        self.assertEqual((code, planned), (1, []))
+        self.assertIn("carries `# env:` markers", err)
+
+    def test_an_unknown_alerts_ref_exits_1_before_any_key_is_read(self):
+        r = script("diff", {"ALERTS_REF": "no-such-ref-aw-inf-009"})
+        self.assertEqual(r.returncode, 1, r.stderr)
+        self.assertIn("ALERTS_REF=no-such-ref-aw-inf-009", r.stderr)
+        self.assertNotIn("unset", r.stderr)
+
+    def test_drift_names_the_file_it_was_measured_against(self):
+        with tempfile.NamedTemporaryFile("w", suffix=".yaml", delete=False) as f:
+            f.write("groups: []\n")
+        self.addCleanup(os.unlink, f.name)
+        for env, want in (({"ALERTS_REF": FROZEN_REF}, "differs from alerts.yaml at %s\n" % FROZEN_REF),
+                          ({"ALERTS_FILE": f.name, "ALERTS_REF": "no-such-ref"}, "differs from %s\n" % f.name),
+                          ({}, "differs from files/alerts.yaml; `make alerts-sync` on main delivers it")):
+            code, _, err = run_recording("diff", drift=(1, 0, 0), **env)
+            self.assertEqual(code, 1, env)
+            self.assertIn(want, err, env)
 
 
 if __name__ == "__main__":
