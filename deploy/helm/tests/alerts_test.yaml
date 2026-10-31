@@ -979,3 +979,192 @@ tests:
             exp_annotations:
               summary: "More than 1% of requests through the Andara edge are 5xx for 10 minutes"
               runbook: docs/runbooks/ingress-error-rate.md
+
+  # AW-INF-009's every-rule line: each rule fires and then resolves within one group, so a rule
+  # that latches (a `for:` or window that never lets go, a keep_firing_for longer than the gap
+  # before the group's clear eval) fails a case rather than paging on. helm_test.py enforces one per rule.
+  - name: cluster — a crash loop that stops resolves
+    interval: 1m
+    input_series:
+      - series: 'kube_pod_container_status_restarts_total{environment="dev", namespace="andara-dev", pod="andara-0", container="server"}'
+        values: '0+1x8 8x17'
+    alert_rule_test:
+      - eval_time: 6m
+        alertname: AndaraServerCrashLooping
+        exp_alerts:
+          - exp_labels: {environment: dev, namespace: andara-dev, pod: andara-0, container: server, severity: page, slo: world-write-availability}
+            exp_annotations:
+              summary: "andara-server restarted more than 3 times in 10 minutes"
+              runbook: docs/runbooks/server-crashlooping.md
+      # Restarts stop at 8m; by 20m the 10m window holds none.
+      - eval_time: 20m
+        alertname: AndaraServerCrashLooping
+        exp_alerts: []
+
+  - name: cluster — a simulation that catches up resolves
+    interval: 1m
+    input_series:
+      - series: 'andara_simulation_lag_seconds{job="andara-server", environment="dev", namespace="andara-dev"}'
+        values: '1x5 0.1x10'
+    alert_rule_test:
+      - eval_time: 4m
+        alertname: SimulationLagging
+        exp_alerts:
+          - exp_labels: {job: andara-server, environment: dev, namespace: andara-dev, severity: page, slo: tick-health}
+            exp_annotations:
+              summary: "The simulation is more than 500 ms behind schedule — the World is responding late"
+              runbook: docs/runbooks/simulation-lagging.md
+      - eval_time: 8m
+        alertname: SimulationLagging
+        exp_alerts: []
+
+  - name: cluster — sessions that stop dropping resolve
+    interval: 1m
+    input_series:
+      - series: 'andara_session_egress_drops_total{reason="buffer_full", environment="dev", namespace="andara-dev"}'
+        values: '0+10x10 100x20'
+      - series: 'andara_stream_subscribers{environment="dev", namespace="andara-dev"}'
+        values: '100x30'
+    alert_rule_test:
+      - eval_time: 9m
+        alertname: SessionsDroppingAtRate
+        exp_alerts:
+          - exp_labels: {environment: dev, namespace: andara-dev, severity: page, slo: session-availability}
+            exp_annotations:
+              summary: "Server-ended Event streams above 1% of open streams per minute for 5 minutes — players are losing the World"
+              runbook: docs/runbooks/sessions-dropping.md
+      # Drops stop at 10m; by 20m the 5m rate is 0.
+      - eval_time: 20m
+        alertname: SessionsDroppingAtRate
+        exp_alerts: []
+
+  - name: cluster — an edge whose 5xx stop resolves
+    interval: 1m
+    input_series:
+      - series: 'traefik_router_requests_total{router="andara-dev-andara-andara-dev@kubernetes", code="500", environment="unknown", namespace="traefik"}'
+        values: '0+10x15 150x20'
+      - series: 'traefik_router_requests_total{router="andara-dev-andara-andara-dev@kubernetes", code="200", environment="unknown", namespace="traefik"}'
+        values: '0+100x35'
+    alert_rule_test:
+      - eval_time: 14m
+        alertname: IngressErrorRateHigh
+        exp_alerts:
+          - exp_labels: {environment: dev, namespace: andara-dev, severity: page, slo: edge-availability}
+            exp_annotations:
+              summary: "More than 1% of requests through the Andara edge are 5xx for 10 minutes"
+              runbook: docs/runbooks/ingress-error-rate.md
+      # 5xx stop at 15m; by 30m the 10m rate is 0.
+      - eval_time: 30m
+        alertname: IngressErrorRateHigh
+        exp_alerts: []
+
+  - name: cluster — a Certificate that renews resolves
+    interval: 1m
+    input_series:
+      # Expires a day after the epoch until 20m, then renewed to 90 days.
+      - series: 'certmanager_certificate_expiration_timestamp_seconds{name="andara-edge", exported_namespace="andara-dev", environment="unknown", namespace="cert-manager"}'
+        values: '86400x20 7776000x20'
+    alert_rule_test:
+      - eval_time: 18m
+        alertname: CertificateExpiringSoon
+        exp_alerts:
+          - exp_labels: {name: andara-edge, environment: dev, namespace: andara-dev, exported_namespace: andara-dev, severity: page, slo: edge-availability}
+            exp_annotations:
+              summary: "Certificate andara-dev/andara-edge expires in under 7 days and has not renewed"
+              runbook: docs/runbooks/certificate-expiring.md
+      - eval_time: 25m
+        alertname: CertificateExpiringSoon
+        exp_alerts: []
+
+  - name: cluster — a server that comes back resolves
+    interval: 1m
+    input_series:
+      - series: 'up{job="andara-server", environment="dev", namespace="andara-dev"}'
+        values: '1x2 0x6 1x10'
+      - series: 'up{job="andara-server", environment="prod", namespace="andara-prod"}'
+        values: '1x18'
+    alert_rule_test:
+      - eval_time: 6m
+        alertname: AndaraServerUnavailable
+        exp_alerts:
+          - exp_labels: {environment: dev, namespace: andara-dev, severity: page, slo: world-write-availability}
+            exp_annotations:
+              summary: "No ready andara-server pod for 2 minutes — players cannot connect"
+              runbook: docs/runbooks/server-unavailable.md
+      - eval_time: 10m
+        alertname: AndaraServerUnavailable
+        exp_alerts: []
+
+  - name: cluster — a simulation consumer that catches up resolves
+    interval: 1m
+    input_series:
+      - series: 'andara_consumer_lag{partition="0", environment="dev", namespace="andara-dev"}'
+        values: '500x5 0x10'
+    alert_rule_test:
+      - eval_time: 4m
+        alertname: SimulationConsumerLagging
+        exp_alerts:
+          - exp_labels: {environment: dev, namespace: andara-dev, severity: page, slo: kafka-availability}
+            exp_annotations:
+              summary: "The simulation is more than 400 offsets behind the Command log on a Partition for 2 minutes — players' Commands are applied late"
+              runbook: docs/runbooks/simulation-consumer-lagging.md
+      - eval_time: 8m
+        alertname: SimulationConsumerLagging
+        exp_alerts: []
+
+  - name: cluster — a snapshot round that completes resolves
+    interval: 1m
+    input_series:
+      - series: 'andara_snapshot_interval_seconds{job="andara-server", environment="dev", namespace="andara-dev"}'
+        values: '60x25'
+      # Stale from 4m (240 s > 180 s); a round completes at 13m and the age starts over.
+      - series: 'andara_snapshot_age_seconds{job="andara-server", environment="dev", namespace="andara-dev"}'
+        values: '0+60x12 0+60x12'
+    alert_rule_test:
+      - eval_time: 11m
+        alertname: SnapshotStale
+        exp_alerts:
+          - exp_labels: {job: andara-server, environment: dev, namespace: andara-dev, severity: ticket, slo: recovery}
+            exp_annotations:
+              summary: "No complete snapshot round in over three cadences — recovery would be slower than the RTO target"
+              runbook: docs/runbooks/snapshot-stale.md
+      - eval_time: 14m
+        alertname: SnapshotStale
+        exp_alerts: []
+
+  - name: cluster — a projector that becomes ready resolves
+    interval: 1m
+    input_series:
+      - series: 'kube_deployment_spec_replicas{deployment="andara-projector-state", environment="dev", namespace="andara-dev"}'
+        values: '1x30'
+      - series: 'up{job="andara-projector-state", environment="dev", namespace="andara-dev"}'
+        values: '0x14 1x15'
+    alert_rule_test:
+      - eval_time: 12m
+        alertname: StateProjectorDown
+        exp_alerts:
+          - exp_labels: {severity: ticket, slo: projection-freshness, projection: state, environment: dev, namespace: andara-dev}
+            exp_annotations:
+              summary: "The state projector should be running and no ready projector pod has been scraped for 10 minutes"
+              runbook: docs/runbooks/state-projector-down.md
+      - eval_time: 16m
+        alertname: StateProjectorDown
+        exp_alerts: []
+
+  - name: cluster — content that goes live resolves
+    interval: 1m
+    input_series:
+      # Pending past 300 s from 6m; the pointer move lands at 15m and the gauge returns to 0.
+      - series: 'andara_content_pending_seconds{environment="dev", namespace="andara-dev", pack="town", job="andara-server"}'
+        values: '0+60x14 0x10'
+    alert_rule_test:
+      - eval_time: 12m
+        alertname: ContentLoadFailing
+        exp_alerts:
+          - exp_labels: {severity: ticket, slo: content-freshness, environment: dev, namespace: andara-dev, pack: town}
+            exp_annotations:
+              summary: "Published content has not gone live for over five minutes — the previous version is still serving"
+              runbook: docs/runbooks/content-load-failing.md
+      - eval_time: 16m
+        alertname: ContentLoadFailing
+        exp_alerts: []

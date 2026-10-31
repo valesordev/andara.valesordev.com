@@ -422,6 +422,9 @@ def test_alert_rules():
         fail("%s: no case in %s expects an alert of %s carrying both environment and namespace "
              "(ADR-0012 decision 1, AW-INF-047)" % (os.path.relpath(ALERTS, REPO),
                                                      os.path.relpath(ALERTS_TEST, REPO), name))
+    for name in rules_without_resolving_case():
+        fail("%s: no group in %s has %s fire and then, at a later eval_time, expect no alert "
+             "(AW-INF-009)" % (os.path.relpath(ALERTS, REPO), os.path.relpath(ALERTS_TEST, REPO), name))
 
 
 def rules_without_labelled_case(alerts=ALERTS, alerts_test=ALERTS_TEST):
@@ -436,6 +439,33 @@ def rules_without_labelled_case(alerts=ALERTS, alerts_test=ALERTS_TEST):
                if any({"environment", "namespace"} <= set(a.get("exp_labels") or {})
                       for a in c.get("exp_alerts") or [])}
     return [n for n in names if n not in covered]
+
+
+def _seconds(duration):
+    """A promtool eval_time ("1h30m", "90s", "500ms") in seconds; ValueError on anything else."""
+    units = {"y": 365 * 86400, "w": 7 * 86400, "d": 86400, "h": 3600, "m": 60, "s": 1, "ms": 0.001}
+    parts = re.findall(r"(\d+)(ms|[ywdhms])", str(duration))
+    if not parts or "".join(n + u for n, u in parts) != str(duration):
+        raise ValueError("eval_time %r is not a duration this check reads" % duration)
+    return sum(int(n) * units[u] for n, u in parts)
+
+
+def rules_without_resolving_case(alerts=ALERTS, alerts_test=ALERTS_TEST):
+    """Every rule has one test group in which it fires and, at a later eval_time, expects no alert
+    (AW-INF-009's every-rule line): a rule that never lets go fails a case rather than paging
+    forever. A silent case before the alert fires, or in another group, proves nothing."""
+    with open(alerts) as f:
+        names = [r["alert"] for g in yaml.safe_load(f)["groups"] for r in g["rules"]]
+    with open(alerts_test) as f:
+        tests = yaml.safe_load(f)["tests"]
+    resolved = set()
+    for t in tests:
+        fired, cleared = {}, {}
+        for c in t.get("alert_rule_test") or []:
+            into = fired if c.get("exp_alerts") else cleared
+            into.setdefault(c["alertname"], []).append(_seconds(c["eval_time"]))
+        resolved |= {n for n in fired if any(e > min(fired[n]) for e in cleared.get(n, []))}
+    return [n for n in names if n not in resolved]
 
 
 def test_degraded_hold_floor():
