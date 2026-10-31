@@ -62,7 +62,7 @@ HAS_GO := $(shell find . -name '*.go' -not -path './.git/*' -not -path './bin/*'
         k8s-dry check-targets clean build build-info goldens \
         values-schema values-schema-check helm-test image image-publish image-check cli-release cli-release-check cli-release-publish kind-load helm-install measure-tick stack-smoke stack-play stack-linkdead stack-recover stack-recover-mismatch \
         platform-up platform-check collectors-check collectors-probe collectors-logs kube-context-check cluster-up cluster-down cluster-rebuild stream-soak content-grammar-check observe-check slo-report dashboard-check observe-unavailable gcx-config gcx-check gcx-only-check scripts-test kafka-install kafka-broker-bounce shared-up shared-down shared-check shared-netcheck kafka-users kafka-users-check kafka-creds kafka-creds-rotate kafka-acl-probe \
-        argocd-install promote promote-log argocd-status argocd-ui argocd-recover argocd-uninstall world-reset content-seed env-destroy env-recover \
+        argocd-install promote promote-log argocd-status argocd-ui argocd-recover argocd-uninstall local-up local-down local-reset world-reset content-seed env-destroy env-recover \
         objectstore-up objectstore-install objectstore-check projector-stop projector-start projector-rebuild server-stop server-start core-versions-check \
         builder-reference builder-reference-check guide-check \
         stack-boundary-lost cli-offline-check stack-projector-check recovery-timing recovery-timing-previous recovery-timing-summary startup-budget-check alerts-sync alerts-diff update-agents \
@@ -512,6 +512,18 @@ server-stop:
 ## server-start: scale the server to the chart's replica count, restore the sync policy server-stop suspended (none on local), wait for Ready — ENV=<local|dev|prod> [SERVER_START_TIMEOUT=300s] (AW-INF-037)
 server-start:
 	@$(PY) $(SCRIPTS)/server_ctl.py start "$(if $(filter command line,$(origin ENV)),$(ENV))"
+
+## local-up: andara-local on the box's cluster against the shared services — cluster-up, platform-up, shared-up, topics-apply and kafka-creds for local, image, kind-load, helm-install ENV=local, then whether the collectors have a telemetry credential; each step idempotent; [TAG=<tag>] (AW-INF-060)
+local-up:
+	@MAKE="$(MAKE)" $(PY) $(SCRIPTS)/local.py up "$(if $(filter command line,$(origin ENV)),$(ENV))" "$(if $(filter command line,$(origin PROFILE)),$(PROFILE))"
+
+## local-down: remove andara-local's Helm release only; the namespace, its label and its Secrets stay, and local-up brings it back (AW-INF-060)
+local-down:
+	@$(PY) $(SCRIPTS)/local.py down "$(if $(filter command line,$(origin ENV)),$(ENV))"
+
+## local-reset: local-down, then empty andara-snapshots-local and delete every `local.` topic and local's consumer groups on the shared Kafka, in that order; refuses (exit 1, nothing deleted) any name outside local's prefix (AW-INF-060)
+local-reset:
+	@$(PY) $(SCRIPTS)/local.py reset "$(if $(filter command line,$(origin ENV)),$(ENV))"
 
 ## world-reset: recreate ENV's World log and Account store, keeping content — destroys every Character and Account — ENV=<env> CONFIRM=andara-<env> [BROKER=cluster, local only] (AW-INF-021, AW-INF-055)
 world-reset:

@@ -210,6 +210,14 @@ PYEOF
     IMAGE_ARGS+=(--set "image.tag=${eff_tag}@${digest}")
     echo "helm-install: $eff_repo:$eff_tag is $digest"
   fi
+else
+  # local's tag never moves and its image is never pulled, so the pod spec is the same for every
+  # build: the build (scripts/image_build.sh), as a pod-template annotation, is what rolls the
+  # pods onto a new one (AW-INF-060). Without it the install would drop the annotation, which
+  # rolls the pods onto whatever kind holds, so a missing image stops here instead.
+  BUILD="$("$REPO/scripts/image_build.sh" "$IMAGE:$TAG")"
+  IMAGE_ARGS+=(--set-string "image.build=$BUILD")
+  echo "helm-install: $IMAGE:$TAG carries the build $BUILD"
 fi
 
 kube_helm upgrade --install andara "$CHART" \
