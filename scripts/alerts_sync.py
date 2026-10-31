@@ -33,7 +33,7 @@ diff   as above, read key only: exit 1 when any group would be created, updated 
 The ruler is frozen at AW-INF-047 (ADR-0012 decision 7, amendment of 2026-10-19): `sync` refuses a rule
 file with an `# env:<environment>` line, which is the Grafana-managed rule set, with exit 1 and before any
 key is read, so nothing reaches the network. `diff` reads any file, so the frozen ruler can still be
-compared with the pre-edit one (`ALERTS_FILE=<alerts.yaml at the merge base>`).
+compared with the pre-edit one (`ALERTS_FILE=<alerts.yaml at eb42e4c>`, the last file the ruler synced).
 
 Exit codes: 0 ok; 1 an API error, drift (diff), or a marked file (sync); 2 usage; 3 a key, address or tenant unset. `make` reports any
 of them as its own exit 2; the script's code is the first line of the failure it prints.

@@ -129,7 +129,7 @@ it held before `AW-INF-047` until `AW-INF-070`'s step 4(ii) deletes the namespac
   any key. Synced to `solo7`, whose `dev` series carry no `environment`, the marked
   `absent(…environment="dev"…)` line would be true and page.
 - `make alerts-diff` still works, so the frozen ruler can be compared with the file as it was:
-  `ALERTS_FILE=<alerts.yaml at the merge base> make alerts-diff`.
+  `ALERTS_FILE=<alerts.yaml at eb42e4c> make alerts-diff` (eb42e4c holds the last file the ruler synced).
 
 The rest of this section describes how the ruler was delivered, for the diff and for `AW-INF-070`.
 
