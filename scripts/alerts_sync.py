@@ -190,7 +190,8 @@ def apply(rules_file, deleted, env):
 def rules_at(ref):
     """The chart's alerts.yaml as it was at ref, written to a new temporary directory; its path.
     CalledProcessError when git can't show it."""
-    shown = subprocess.run(["git", "-C", REPO, "show", "%s:%s" % (ref, os.path.relpath(ALERTS, REPO))],
+    shown = subprocess.run(["git", "-C", REPO, "show", "--end-of-options",
+                            "%s:%s" % (ref, os.path.relpath(ALERTS, REPO))],
                            capture_output=True, text=True, check=True).stdout
     d = tempfile.mkdtemp(prefix="alerts-ref-")
     atexit.register(shutil.rmtree, d, True)
@@ -233,6 +234,11 @@ def run(cmd, rules_file=None, env=None, find_tool=mimirtool):
     if cmd == "diff":
         say("would change %d created, %d updated, %d deleted in namespace %s" % (counts + (NAMESPACE,)))
         if any(counts):
+            # Compared with another file, the drift is against that file, and no sync delivers it.
+            if env.get("ALERTS_FILE"):
+                return fail(1, "the ruler differs from %s" % rules_file)
+            if env.get("ALERTS_REF"):
+                return fail(1, "the ruler differs from alerts.yaml at %s" % env["ALERTS_REF"])
             return fail(1, "the ruler differs from files/alerts.yaml; `make alerts-sync` on main delivers it")
         return 0
     if any(counts):

@@ -86,6 +86,30 @@ def unmarked():
 UNMARKED = unmarked()
 
 
+# The last alerts.yaml the legacy ruler synced (AW-INF-047). CI's check job clones with fetch-depth: 0.
+FROZEN_REF = "eb42e4c"
+
+
+def shown(ref):
+    return subprocess.run(["git", "-C", REPO, "show", "%s:deploy/helm/andara/files/alerts.yaml" % ref],
+                          capture_output=True, text=True, check=True).stdout
+
+
+def run_recording(cmd, **env):
+    """alerts_sync.run in-process with plan stubbed: (exit code, the content of each file planned)."""
+    planned = []
+
+    def plan(tool, rules_file, e):
+        with open(rules_file) as f:
+            planned.append(f.read())
+        return (0, 0, 0), [], ""
+
+    keys = {k: "x" for k in alerts_sync.SECRETS}
+    with mock.patch.object(alerts_sync, "plan", plan), mock.patch("sys.stderr"), mock.patch("sys.stdout"):
+        code = alerts_sync.run(cmd, env=dict(keys, **env), find_tool=lambda: "/bin/true")
+    return code, planned
+
+
 def script(cmd, env=None, rules=None):
     # A sync always gets the unmarked copy; a diff does unless the test names its file in ALERTS_FILE
     # or its ref in ALERTS_REF.
@@ -452,13 +476,33 @@ class AgainstARuler(unittest.TestCase):
 
     def test_alerts_ref_reads_the_chart_file_at_that_ref(self):
         """The frozen ruler is compared with alerts.yaml at eb42e4c (alert-routing.md) by ref, not a
-        hand-extracted file. HEAD stands in for eb42e4c, which a shallow CI clone may not hold."""
-        path = alerts_sync.rules_at("HEAD")
+        hand-extracted file."""
+        path = alerts_sync.rules_at(FROZEN_REF)
         self.addCleanup(shutil.rmtree, os.path.dirname(path))
-        shown = subprocess.run(["git", "-C", REPO, "show", "HEAD:deploy/helm/andara/files/alerts.yaml"],
-                               capture_output=True, text=True, check=True).stdout
         with open(path) as f:
-            self.assertEqual(f.read(), shown)
+            got = f.read()
+        self.assertEqual(got, shown(FROZEN_REF))
+        with open(alerts_sync.ALERTS) as f:
+            self.assertNotEqual(got, f.read())
+
+    def test_a_diff_by_ref_plans_that_refs_file(self):
+        code, planned = run_recording("diff", ALERTS_REF=FROZEN_REF)
+        self.assertEqual(code, 0)
+        self.assertEqual(planned, [shown(FROZEN_REF)])
+
+    def test_alerts_file_wins_over_alerts_ref(self):
+        with tempfile.NamedTemporaryFile("w", suffix=".yaml", delete=False) as f:
+            f.write("groups: []\n")
+        self.addCleanup(os.unlink, f.name)
+        code, planned = run_recording("diff", ALERTS_FILE=f.name, ALERTS_REF="no-such-ref-aw-inf-009")
+        self.assertEqual(code, 0)
+        self.assertEqual(planned, ["groups: []\n"])
+
+    def test_a_sync_ignores_alerts_ref_and_stays_frozen(self):
+        """eb42e4c's file has no `# env:` markers; a sync that read it would get past the freeze."""
+        code, planned = run_recording("sync", ALERTS_REF=FROZEN_REF)
+        self.assertEqual(code, 1)
+        self.assertEqual(planned, [])
 
     def test_an_unknown_alerts_ref_exits_1_before_any_key_is_read(self):
         r = script("diff", {"ALERTS_REF": "no-such-ref-aw-inf-009"})
